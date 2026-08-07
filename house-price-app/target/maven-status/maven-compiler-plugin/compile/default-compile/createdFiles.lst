@@ -1,0 +1,6 @@
+com/example/houseprice/controller/PricePredictionController.class
+com/example/houseprice/controller/PricePredictionController$PredictionResponse.class
+com/example/houseprice/service/PricePredictionService.class
+com/example/houseprice/controller/PricePredictionController$ErrorResponse.class
+com/example/houseprice/controller/PricePredictionController$RmseResponse.class
+com/example/houseprice/HousepriceApplication.class
