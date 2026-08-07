@@ -9,6 +9,7 @@ on:
     #   - "src/**/*.tsx"
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
+    - "grid-meter-app/**"
 
 jobs:
   claude-review:
