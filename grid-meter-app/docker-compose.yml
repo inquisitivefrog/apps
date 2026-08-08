@@ -1,0 +1,161 @@
+services:
+  traefik:
+    image: traefik:v3.7.10
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+    ports:
+      - "80:80"
+      - "8080:8080" # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - grid-meter
+
+  frontend:
+    build:
+      context: ./frontend
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.frontend.rule=PathPrefix(`/`)
+      - traefik.http.routers.frontend.priority=1
+      - traefik.http.services.frontend.loadbalancer.server.port=80
+    networks:
+      - grid-meter
+
+  api:
+    build:
+      context: ./api
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gridmeter
+      SPRING_DATASOURCE_USERNAME: gridmeter
+      SPRING_DATASOURCE_PASSWORD: gridmeter
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      JAVA_TOOL_OPTIONS: -Xmx384m
+    depends_on:
+      - postgres
+      - kafka
+      - redis
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=PathPrefix(`/api`)
+      - traefik.http.routers.api.priority=10
+      - traefik.http.services.api.loadbalancer.server.port=8080
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - grid-meter
+    # Run multiple replicas with: docker compose up --scale api=2
+    # Traefik's Docker provider auto-discovers and load balances across them.
+
+  postgres:
+    image: postgres:18.4
+    environment:
+      POSTGRES_DB: gridmeter
+      POSTGRES_USER: gridmeter
+      POSTGRES_PASSWORD: gridmeter
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - grid-meter
+
+  redis:
+    image: redis:8.10
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  kafka:
+    image: apache/kafka:4.3.1
+    environment:
+      # Single-node KRaft mode — no ZooKeeper.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+    networks:
+      - grid-meter
+
+  prometheus:
+    image: prom/prometheus:v3.11.2
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)
+      - traefik.http.services.prometheus.loadbalancer.server.port=9090
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - grid-meter
+
+  loki:
+    image: grafana/loki:3.7.4
+    command: -config.file=/etc/loki/local-config.yaml
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - grid-meter
+
+  tempo:
+    image: grafana/tempo:2.10.0
+    command: -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./observability/tempo.yml:/etc/tempo/tempo.yml:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - grid-meter
+
+  grafana:
+    image: grafana/grafana:13.0.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana-data:/var/lib/grafana
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - grid-meter
+
+networks:
+  grid-meter:
+
+volumes:
+  postgres-data:
+  grafana-data:
