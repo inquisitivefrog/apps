@@ -1,0 +1,15 @@
+# OS
+.DS_Store
+
+# Java / Maven
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Node (frontend apps)
+node_modules/
+dist/
