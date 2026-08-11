@@ -23,13 +23,13 @@ public class ReadingService {
 
     private final ReadingRepository readingRepository;
     private final MeterRepository meterRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final KafkaTemplate<Object, Object> kafkaTemplate;
     private final String readingsTopic;
 
     public ReadingService(
             ReadingRepository readingRepository,
             MeterRepository meterRepository,
-            KafkaTemplate<String, Object> kafkaTemplate,
+            KafkaTemplate<Object, Object> kafkaTemplate,
             @Value("${grid-meter.kafka.readings-topic}") String readingsTopic) {
         this.readingRepository = readingRepository;
         this.meterRepository = meterRepository;

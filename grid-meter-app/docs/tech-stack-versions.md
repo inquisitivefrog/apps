@@ -14,8 +14,9 @@ updated.
 | Apache Kafka | 4.3.x | KRaft-only line — no ZooKeeper. |
 | PostgreSQL | 18.4 | v19 is still in beta — do not use for this project. |
 | Redis | 8.10 | Open source again under AGPLv3 as of the 8.0 line, after the 2024 RSAL/SSPL relicensing. |
-| Grafana | 13.0.0 | |
-| Loki | 3.7.4 | |
+| Grafana | 13.0.2 | |
+| Loki | 3.7.6 | |
+| Alloy | v1.18.1 | Replaces Promtail (removed upstream as of Loki 3.7.3). Unified agent for logs/metrics/traces; config in River language, not YAML. |
 | Tomcat | Managed by Spring Boot | Don't pin manually — let the Spring Boot 4.1 parent POM manage the embedded Tomcat version. |
 
 ## Deliberately excluded

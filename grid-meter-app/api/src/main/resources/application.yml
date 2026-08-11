@@ -24,11 +24,11 @@ spring:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
     consumer:
       group-id: grid-meter-api
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
       properties:
         spring.json.trusted.packages: com.gridmeter.api.reading
 
@@ -39,8 +39,22 @@ spring:
 
 server:
   port: 8080
+  tomcat:
+    accesslog:
+      enabled: true
+      directory: /dev
+      prefix: stdout
+      buffered: false
+      suffix: ""
+      file-date-format: ""
 
 management:
+  # OTLP metrics export is disabled via MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
+  # in docker-compose.yml, not here — this property does not take effect when
+  # set in application.yml (confirmed 2026-08-10). Prometheus scraping via
+  # /actuator/prometheus is the real metrics pipeline; OTLP metrics export
+  # would be redundant with it even if working.  
+  # ie. management.otlp.metrics.export.enabled: false
   endpoints:
     web:
       exposure:
@@ -48,6 +62,14 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: http://tempo:4318/v1/traces
+  tracing:
+    sampling:
+      probability: 1.0   # 100% for now — dev only, dial down before any load test
 
 grid-meter:
   pagination:

@@ -36,6 +36,9 @@ services:
       SPRING_REDIS_HOST: redis
       SPRING_REDIS_PORT: 6379
       JAVA_TOOL_OPTIONS: -Xmx384m
+      # Disables Micrometer's OTLP metrics push (Prometheus scrape is the real
+      # pipeline). Must be set here, not in application.yml — see comment there.
+      MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"
     depends_on:
       - postgres
       - kafka
@@ -61,7 +64,7 @@ services:
       POSTGRES_USER: gridmeter
       POSTGRES_PASSWORD: gridmeter
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql
     deploy:
       resources:
         limits:
@@ -113,7 +116,7 @@ services:
       - grid-meter
 
   loki:
-    image: grafana/loki:3.7.4
+    image: grafana/loki:3.7.6
     command: -config.file=/etc/loki/local-config.yaml
     deploy:
       resources:
@@ -135,10 +138,14 @@ services:
       - grid-meter
 
   grafana:
-    image: grafana/grafana:13.0.0
+    image: grafana/grafana:13.0.2
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # Workaround for Grafana 13 bundled-plugin update bug
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
     volumes:
       - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - grafana-data:/var/lib/grafana
@@ -153,9 +160,38 @@ services:
     networks:
       - grid-meter
 
+  alloy:
+    image: grafana/alloy:v1.18.1
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/alloy.river:/etc/alloy/config.alloy:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  toolbox:
+    image: nicolaka/netshoot
+    command: sleep infinity
+    profiles:
+      - debug
+    networks:
+      - grid-meter
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
 networks:
   grid-meter:
 
 volumes:
   postgres-data:
   grafana-data:
+

@@ -1,0 +1,9 @@
+{
+  "name": "grid-meter-frontend",
+  "version": "1.0.0",
+  "description": "Grid Meter Frontend",
+  "scripts": {
+    "build": "echo 'Build script placeholder'"
+  },
+  "dependencies": {}
+}
