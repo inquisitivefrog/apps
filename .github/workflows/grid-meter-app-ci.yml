@@ -1,0 +1,45 @@
+name: grid-meter-app CI
+
+on:
+  push:
+    paths:
+      - "grid-meter-app/**"
+  pull_request:
+    paths:
+      - "grid-meter-app/**"
+
+defaults:
+  run:
+    working-directory: grid-meter-app/api
+
+jobs:
+  test:
+    name: Unit + component tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      # Component tests (JUnit 5 + Testcontainers) spin up real Postgres/Kafka/Redis
+      # against the Docker daemon already available on ubuntu-latest runners — no
+      # services: block needed, this runs the same suite as `mvn test` locally.
+      - name: Run unit + component tests
+        run: mvn -B test
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: grid-meter-app/api/target/surefire-reports/
