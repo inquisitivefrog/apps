@@ -22,6 +22,10 @@ services:
       - traefik.http.routers.frontend.rule=PathPrefix(`/`)
       - traefik.http.routers.frontend.priority=1
       - traefik.http.services.frontend.loadbalancer.server.port=80
+    deploy:
+      resources:
+        limits:
+          memory: 64m
     networks:
       - grid-meter
 
@@ -35,6 +39,7 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_REDIS_HOST: redis
       SPRING_REDIS_PORT: 6379
+      GRID_METER_JWT_SECRET: 4H+9b+HAJnUJhWU+mEKE09Onq9J4VzpLkSG3zL4pvAs=
       JAVA_TOOL_OPTIONS: -Xmx384m
       # Disables Micrometer's OTLP metrics push (Prometheus scrape is the real
       # pipeline). Must be set here, not in application.yml — see comment there.
@@ -45,7 +50,10 @@ services:
       - redis
     labels:
       - traefik.enable=true
-      - traefik.http.routers.api.rule=PathPrefix(`/api`)
+      # Actuator endpoints live outside /api/v1 deliberately (see api-and-data-model.md) —
+      # this rule must route them too, or they silently fall through to the frontend's
+      # catch-all PathPrefix(`/`) router instead of ever reaching this service.
+      - traefik.http.routers.api.rule=PathPrefix(`/api`) || PathPrefix(`/actuator`)
       - traefik.http.routers.api.priority=10
       - traefik.http.services.api.loadbalancer.server.port=8080
     deploy:

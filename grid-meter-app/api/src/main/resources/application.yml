@@ -77,3 +77,11 @@ grid-meter:
     max-size: 100
   kafka:
     readings-topic: readings
+  security:
+    jwt:
+      # HS256 requires a >=256-bit key or JJWT throws WeakKeyException at startup — this
+      # default is a real openssl-rand-base64-32-generated key, not a placeholder string.
+      # docker-compose.yml sets GRID_METER_JWT_SECRET explicitly, mirroring how
+      # SPRING_DATASOURCE_PASSWORD is set explicitly there rather than relying on this default.
+      secret: ${GRID_METER_JWT_SECRET:4H+9b+HAJnUJhWU+mEKE09Onq9J4VzpLkSG3zL4pvAs=}
+      expiration-minutes: 60
