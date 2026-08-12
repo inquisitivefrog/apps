@@ -18,6 +18,14 @@ updated.
 | Loki | 3.7.6 | |
 | Alloy | v1.18.1 | Replaces Promtail (removed upstream as of Loki 3.7.3). Unified agent for logs/metrics/traces; config in River language, not YAML. |
 | Tomcat | Managed by Spring Boot | Don't pin manually — let the Spring Boot 4.1 parent POM manage the embedded Tomcat version. |
+| JJWT (`io.jsonwebtoken`) | 0.13.0 | Verified current on Maven Central Aug 2026. Not part of any Spring BOM — pinned explicitly, same as Awaitility below. Use `jjwt-api`/`jjwt-impl`/`jjwt-jackson`, not the legacy single `jjwt` artifact. |
+| Spring Security | Managed by Spring Boot | `spring-boot-starter-security`, parent-POM-managed like every other starter — resolves to 7.1.0 under Boot 4.1.0. |
+| React Router | 8.3.0 | v8 dropped the separate `react-router-dom` package — install `react-router` directly, `BrowserRouter` included in the main export. |
+| MUI (`@mui/material`) | 9.3.1 | Verified current on npm Aug 2026. Jumped v7→v9 directly (no v8 line). `@mui/icons-material` tracks the same major. |
+| Emotion (`@emotion/react`/`@emotion/styled`) | 11.14.x | Required peer deps for MUI's default styling engine. |
+| TanStack Query | 5.101.4 | |
+| Vite | 8.2.1 | Paired with `@vitejs/plugin-react` 6.0.5 (uses Oxc, not Babel, for Fast Refresh). |
+| TypeScript | 7.0.2 | Current stable (Go-rewrite line). Very recent GA as of this pinning — if it causes editor/tooling friction, falling back to the last 6.x stable is a documented, defensible deviation. |
 
 ## Deliberately excluded
 

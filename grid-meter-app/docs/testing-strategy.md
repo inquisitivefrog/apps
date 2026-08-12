@@ -23,6 +23,24 @@ when there's no second reviewer.
   testing the contract.
 - **Readings are immutable** (see `api-and-data-model.md`) — tests should
   assert `PUT /readings/{id}` is rejected, not just that it's absent.
+- **Auth** gets three test classes under `api/src/test/java/com/gridmeter/api/auth/`:
+  `JwtServiceTest` (pure unit — token round-trip, expiry, tampered
+  signature, wrong key), `AuthComponentTest` (extends
+  `ComponentTestSupport`, real Postgres — valid/invalid login, the
+  unknown-username-vs-wrong-password anti-enumeration behavior asserted as
+  intentional), and `ApiSecurityComponentTest` (the one HTTP-level test in
+  the suite so far — per-class `@Testcontainers`, `RANDOM_PORT`, Spring's
+  `RestTestClient` since `TestRestTemplate` is deprecated in Spring Boot 4 —
+  unauthenticated/invalid-token requests get `401`, actuator stays open,
+  login-then-authenticated-request succeeds). All three run in the existing
+  CI job (`mvn -B test`) with no workflow changes needed.
+- **No frontend testing tier exists yet.** `frontend/` has TypeScript
+  compilation (`tsc -b`, catches type errors) and a real Vite production
+  build as its only current checks — no unit tests (Vitest), no
+  component tests (Testing Library), no E2E (Playwright). This is an
+  honest gap, not an oversight: worth adding before the frontend grows
+  past its current handful of pages, but out of scope for the auth/scaffold
+  work that introduced it.
 
 ## API tooling
 

@@ -57,6 +57,15 @@ upstream as of Loki 3.7.3.
   competing indexes.
 - App's own k8s manifests (planned, not yet created) should be plain YAML,
   not Helm — Helm is reserved for `kube-prometheus-stack` only.
+- **JWT auth gates all of `/api/v1/**`**, including `POST /readings` — no
+  endpoint is left open for machine-to-machine ingestion. `/actuator/health`
+  and `/actuator/prometheus` remain the sole unauthenticated routes. See
+  `docs/architecture.md`'s "Authentication" section for why JWT over
+  sessions, why self-issued tokens over an OAuth2 resource server, and the
+  access-token-only/no-refresh-token tradeoff. Tests needing an
+  authenticated request should log in via `POST /api/v1/auth/login`
+  (seed credentials: `demo` / `GridMeter!Demo2026`, Flyway-seeded in
+  `V3__create_users_table.sql`) rather than mocking the security layer.
 
 ## Dev workflow
 
@@ -69,6 +78,15 @@ dev-only hardcoded (`gridmeter`/`gridmeter`) in `docker-compose.yml`, not
 secrets.  A `toolbox` service (nicolaka/netshoot) is available for ad-hoc network
 debugging — opt-in via `docker compose --profile debug up -d toolbox`, not
 started by default.
+
+**Frontend dev loop**: `docker compose up traefik api postgres kafka redis`
+(frontend container intentionally excluded — the Vite dev server replaces
+it) + `npm run dev` from `frontend/`. `vite.config.ts`'s dev-server proxy
+forwards `/api` to Traefik on `localhost:80`, exercising the same
+`PathPrefix(/api)` routing used in production, so no CORS config is
+involved either way. Full `docker compose up --build` (frontend container
+included) is the path that matches production most closely — use it before
+calling a frontend change done.
 
 ## Testing strategy (see @docs/testing-strategy.md)
 
