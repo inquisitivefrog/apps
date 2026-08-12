@@ -1,9 +1,28 @@
 {
   "name": "grid-meter-frontend",
+  "private": true,
   "version": "1.0.0",
-  "description": "Grid Meter Frontend",
+  "type": "module",
   "scripts": {
-    "build": "echo 'Build script placeholder'"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
   },
-  "dependencies": {}
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.0",
+    "@mui/material": "^9.3.1",
+    "@mui/icons-material": "^9.3.1",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@tanstack/react-query": "^5.101.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
 }

@@ -13,3 +13,4 @@ target/
 # Node (frontend apps)
 node_modules/
 dist/
+*.tsbuildinfo
