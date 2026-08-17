@@ -9,16 +9,15 @@ on:
       - "grid-meter-app/**"
   workflow_dispatch: {}
 
-defaults:
-  run:
-    working-directory: grid-meter-app/api
-
 jobs:
   test:
     name: Unit + component tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: grid-meter-app/api
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -44,3 +43,35 @@ jobs:
         with:
           name: surefire-reports
           path: grid-meter-app/api/target/surefire-reports/
+
+  frontend-test:
+    name: Frontend typecheck, tests, build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: grid-meter-app/frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: grid-meter-app/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Vitest + Testing Library (unit/component tier). tsc -b inside `npm run build`
+      # below also re-typechecks the test files since they live under src/.
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Typecheck and build
+        run: npm run build
