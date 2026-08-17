@@ -9,6 +9,7 @@ updated.
 |---|---|---|
 | Java | 25 (LTS) | Current LTS since Sept 2025, supported into the 2030s. Don't use 26 — that's the interim non-LTS release. |
 | Spring Boot | 4.1.0 | Built on Spring Framework 7. Requires Java 17+. |
+| Node.js | 24 (LTS) | Active LTS, confirmed via nodejs.org release schedule Aug 2026 (supersedes v22 Maintenance LTS; v26 is the current non-LTS line, entered "Current" status May 2026). Pinned in CI (`actions/setup-node@v7`, `node-version: "24"`). The local dev machine may run a different Node (e.g. an odd-numbered "Current" release like 25.x) without issue day-to-day, but jsdom's `engines` field (used by the frontend test tier) is picky about exact ranges — if `npm install` prints an `EBADENGINE` warning for jsdom, that's this mismatch, not a real problem; treat Node 24 as the version of record and reach for it if anything actually breaks. |
 | React | 19.2.8 | |
 | Traefik | 3.7.x | |
 | Apache Kafka | 4.3.x | KRaft-only line — no ZooKeeper. |
@@ -26,6 +27,11 @@ updated.
 | TanStack Query | 5.101.4 | |
 | Vite | 8.2.1 | Paired with `@vitejs/plugin-react` 6.0.5 (uses Oxc, not Babel, for Fast Refresh). |
 | TypeScript | 7.0.2 | Current stable (Go-rewrite line). Very recent GA as of this pinning — if it causes editor/tooling friction, falling back to the last 6.x stable is a documented, defensible deviation. |
+| Vitest | 4.1.10 | Frontend unit/component test runner. Wired into `vite.config.ts`'s `test` block rather than a separate config file, reusing the same Vite plugins. |
+| React Testing Library (`@testing-library/react`) | 16.3.2 | |
+| `@testing-library/jest-dom` | 7.0.1 | Adds DOM matchers (`toBeInTheDocument`, etc.) to Vitest's `expect`, imported in `src/setupTests.ts`. |
+| `@testing-library/user-event` | 14.6.4 | |
+| jsdom | 30.0.1 | Vitest's `test.environment`. `engines` wants Node `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` — see the Node.js row above for why this can print a harmless `EBADENGINE` warning locally. |
 
 ## Deliberately excluded
 

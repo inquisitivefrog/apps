@@ -12,6 +12,7 @@ when there's no second reviewer.
 | Unit | JUnit 5 + Mockito | Service layer logic, mocked dependencies | Every local save; every push (CI) |
 | Component | JUnit 5 + Testcontainers | A service against real Postgres/Kafka/Redis (ephemeral, pinned to the versions in `tech-stack-versions.md`) | Every push (CI) |
 | API | REST Assured (JVM, JUnit-integrated) + Bruno (manual/exploratory) | Black-box HTTP calls against the contract in `api-and-data-model.md` | Every push, after deploy to a throwaway Compose/`kind` environment (CI) |
+| Frontend unit/component | Vitest + React Testing Library | `frontend/src/**` logic and components, colocated `*.test.ts(x)` files | Every local save; every push (CI) |
 | Load | JMeter `.jmx` plans | Throughput, latency, error rate under varying load profiles | Manual trigger or nightly schedule — never blocks a PR |
 
 ## Where effort concentrates
@@ -34,13 +35,37 @@ when there's no second reviewer.
   unauthenticated/invalid-token requests get `401`, actuator stays open,
   login-then-authenticated-request succeeds). All three run in the existing
   CI job (`mvn -B test`) with no workflow changes needed.
-- **No frontend testing tier exists yet.** `frontend/` has TypeScript
-  compilation (`tsc -b`, catches type errors) and a real Vite production
-  build as its only current checks — no unit tests (Vitest), no
-  component tests (Testing Library), no E2E (Playwright). This is an
-  honest gap, not an oversight: worth adding before the frontend grows
-  past its current handful of pages, but out of scope for the auth/scaffold
-  work that introduced it.
+- **Frontend unit/component tests** (Vitest + React Testing Library),
+  colocated as `*.test.ts`/`*.test.tsx` next to the source they cover.
+  Auth-path coverage (where this frontend's actual logic lives):
+  `tokenStore.test.ts` (the in-memory token store — get/set, listener
+  notify/unsubscribe), `client.test.ts` (the `apiClient` request wrapper —
+  Authorization header attach/omit, 401 clears the token and throws, error
+  body → message mapping, 204 handling), `AuthContext.test.tsx` (`useAuth`
+  via `renderHook` — login success/failure, logout), `ProtectedRoute
+  .test.tsx` (redirect vs. render-through, via a real `MemoryRouter`),
+  `LoginPage.test.tsx` (form submit → navigate, failed login → error
+  alert, already-authenticated → immediate redirect). Page-level coverage:
+  `MetersPage.test.tsx` (search re-fires on location/status filter change
+  with page reset to 0, row click navigates to detail, pagination advance,
+  the New Meter dialog's Create button stays disabled until required
+  fields are filled, create-then-close, cancel-without-creating),
+  `MeterDetailPage.test.tsx` (loading state, form pre-populates from the
+  loaded meter, Save sends the edited fields and navigates back to
+  `/meters`, Cancel navigates back without saving), `ReadingsPage.test.tsx`
+  (search re-fires on the meter ID filter, pagination advance, and —
+  mirroring the backend's "assert the PUT is rejected, not just absent"
+  principle for immutability — an explicit assertion that no create/edit/
+  save affordance renders anywhere on the page). `metersApi.test.ts` /
+  `readingsApi.test.ts` cover query-string building for search params
+  (each API module builds its own — not shared — so both get the same
+  coverage). Page-level tests mock at the `api/*` module boundary (not
+  the TanStack Query hooks) so the real hooks, query keys, and cache
+  invalidation run for real against a fresh no-retry `QueryClient` per
+  test (`src/testUtils.tsx`). `npm test` (`vitest run`) runs in the
+  existing frontend CI job alongside `tsc -b`/`vite build`. **No E2E tier
+  (Playwright) yet** — deferred until there's a concrete need beyond what
+  component tests + manual browser verification already cover.
 
 ## API tooling
 
