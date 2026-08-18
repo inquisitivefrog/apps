@@ -45,11 +45,18 @@ jobs:
         with:
           fetch-depth: 1
 
+      # JMeter's own JRE — deliberately NOT this project's pinned Java 25. JMeter 5.6.3 (and
+      # Homebrew's own formula for it, which hardcodes JAVA_HOME to openjdk@21 for the same
+      # reason) can't run its bundled Groovy/ASM under Java 25: JSR223 script compilation
+      # (used by common/login.jmx and common/provision-meters.jmx) fails with "Unsupported
+      # class file major version 69" — discovered by an actual failed CI run, not assumed.
+      # JMeter is an external tool here, not part of the app being tested, so it doesn't need
+      # to match the app's own Java version.
       - name: Set up Java (for JMeter's own JRE)
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: "21"
 
       # No official apt/setup-jmeter-action package for a pinned version — download the exact
       # tarball from Apache's permanent archive (not the closer.lua mirror redirect, which is not
