@@ -44,6 +44,45 @@ jobs:
           name: surefire-reports
           path: grid-meter-app/api/target/surefire-reports/
 
+  black-box-api-test:
+    name: Black-box API tests (deployed stack)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: grid-meter-app/api/pom.xml
+
+      # Brings up a real deployed stack (Traefik + api + Postgres + Kafka + Redis) via Docker
+      # Compose and runs the Failsafe-bound *ApiIT suite against it — the black-box tier described
+      # in docs/testing-strategy.md, as opposed to the embedded-server *ApiComponentTest tier the
+      # "test" job above already covers on every push.
+      - name: Run black-box API tests against a deployed stack
+        run: ./scripts/run-black-box-api-tests.sh
+        working-directory: grid-meter-app
+
+      - name: Upload failsafe reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failsafe-reports
+          path: grid-meter-app/api/target/failsafe-reports/
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down
+        working-directory: grid-meter-app
+
   frontend-test:
     name: Frontend typecheck, tests, build
     runs-on: ubuntu-latest

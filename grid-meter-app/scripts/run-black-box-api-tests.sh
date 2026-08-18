@@ -2,9 +2,9 @@
 # Brings up the data/edge tier via Docker Compose, waits for the API to report healthy through
 # Traefik, then runs the Failsafe-bound black-box API test suite (*ApiIT classes, see
 # api/src/test/java/com/gridmeter/api/{meter,reading}) against the real deployed stack rather than
-# an embedded server. Mirrors the "frontend-black-box-test" CI job in
-# .github/workflows/grid-meter-app-ci.yml — see docs/testing-strategy.md for why this tier exists
-# alongside the embedded *ApiComponentTest tier that runs on every push.
+# an embedded server. This is the script the "black-box-api-test" CI job in
+# .github/workflows/grid-meter-app-ci.yml runs directly — see docs/testing-strategy.md for why
+# this tier exists alongside the embedded *ApiComponentTest tier that runs on every push.
 #
 # Does NOT tear the stack down afterward — local dev convenience, so a failure can be poked at
 # with curl/docker logs. Run `docker compose down` manually when done. CI's job does its own
