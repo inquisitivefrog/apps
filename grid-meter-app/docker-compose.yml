@@ -40,6 +40,10 @@ services:
       SPRING_REDIS_HOST: redis
       SPRING_REDIS_PORT: 6379
       GRID_METER_JWT_SECRET: 4H+9b+HAJnUJhWU+mEKE09Onq9J4VzpLkSG3zL4pvAs=
+      # Passed through from the host shell (default 1.0, normal dev) so a load-test run can
+      # `export GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` before `docker compose up` without
+      # editing this file — see load-tests/README.md.
+      GRID_METER_TRACING_SAMPLING_PROBABILITY: ${GRID_METER_TRACING_SAMPLING_PROBABILITY:-1.0}
       JAVA_TOOL_OPTIONS: -Xmx384m
       # Disables Micrometer's OTLP metrics push (Prometheus scrape is the real
       # pipeline). Must be set here, not in application.yml — see comment there.

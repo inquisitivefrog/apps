@@ -1,0 +1,113 @@
+name: grid-meter-app Load Test
+
+# Manual or nightly only, never on push/PR — see docs/testing-strategy.md. This job's pass/fail
+# status is informational (the gates in load-tests/check-thresholds.sh are intentionally coarse, a
+# trip-wire for a human to investigate, not a substitute for watching Grafana during a real run),
+# and since it isn't triggered by push/pull_request it structurally can't block a merge regardless
+# of outcome.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Load test profile"
+        required: true
+        default: steady-state
+        type: choice
+        options:
+          - steady-state
+          - ramp-up
+          - spike
+          - soak
+      duration_seconds:
+        description: "Override duration in seconds (blank = profile default)"
+        required: false
+        type: string
+  schedule:
+    # Nightly steady-state smoke, kept short (120s) to bound CI minutes — spike/ramp-up/soak are
+    # for deliberate workflow_dispatch runs, not every night.
+    - cron: "0 6 * * *"
+
+env:
+  JMETER_VERSION: "5.6.3"
+
+jobs:
+  load-test:
+    name: JMeter load test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: grid-meter-app
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Set up Java (for JMeter's own JRE)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      # No official apt/setup-jmeter-action package for a pinned version — download the exact
+      # tarball from Apache's permanent archive (not the closer.lua mirror redirect, which is not
+      # reproducible) matching docs/tech-stack-versions.md's pin.
+      - name: Install JMeter ${{ env.JMETER_VERSION }}
+        run: |
+          curl -fsSL "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz" -o /tmp/jmeter.tgz
+          tar -xzf /tmp/jmeter.tgz -C /opt
+          echo "/opt/apache-jmeter-${JMETER_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Determine profile and duration override
+        id: params
+        run: |
+          PROFILE="${{ github.event.inputs.profile || 'steady-state' }}"
+          echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ github.event.inputs.duration_seconds }}" ]; then
+            echo "extra_args=-Jduration=${{ github.event.inputs.duration_seconds }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "extra_args=-Jduration=120" >> "$GITHUB_OUTPUT"
+          else
+            echo "extra_args=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Dial trace sampling down for a real load run — see application.yml / load-tests/README.md's
+      # Prerequisites. docker-compose.yml passes this through to the api container.
+      - name: Bring up the stack
+        run: |
+          export GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05
+          docker compose up -d --build traefik api postgres kafka redis
+          ./scripts/wait-for-health.sh "http://localhost/actuator/health" 90
+
+      - name: Run ${{ steps.params.outputs.profile }}
+        working-directory: grid-meter-app/load-tests
+        run: ./run.sh "${{ steps.params.outputs.profile }}" ${{ steps.params.outputs.extra_args }}
+
+      - name: Write summary
+        if: always()
+        working-directory: grid-meter-app/load-tests
+        run: |
+          STATS=$(find results -name statistics.json | head -1)
+          if [ -n "$STATS" ]; then
+            {
+              echo "### ${{ steps.params.outputs.profile }} — load test result"
+              echo "| Metric | Value |"
+              echo "|---|---|"
+              echo "| Samples | $(jq -r '.Total.sampleCount' "$STATS") |"
+              echo "| Error rate | $(jq -r '.Total.errorPct' "$STATS")% |"
+              echo "| p95 | $(jq -r '.Total.pct2ResTime' "$STATS")ms |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: load-test-${{ steps.params.outputs.profile }}-report
+          path: grid-meter-app/load-tests/results/
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down
