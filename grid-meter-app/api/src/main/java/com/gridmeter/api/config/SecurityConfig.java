@@ -55,6 +55,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
                         .requestMatchers("/api/v1/auth/login").permitAll()
+                        // Spring Boot renders 404s/405s (any request Spring MVC can't dispatch —
+                        // an unknown path, or PUT /api/v1/readings/{id}, which has no PUT mapping
+                        // by design) via an internal forward to /error, which re-enters this same
+                        // filter chain as a fresh ERROR-dispatch request. JwtAuthenticationFilter
+                        // doesn't re-run on that dispatch type, so without this line the re-check
+                        // finds no authentication and masks the real 404/405 as a 401 instead.
+                        .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(authenticationEntryPoint)
