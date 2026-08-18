@@ -20,6 +20,13 @@
         <java.version>25</java.version>
         <testcontainers.version>2.0.5</testcontainers.version>
         <jjwt.version>0.13.0</jjwt.version>
+        <rest-assured.version>5.5.2</rest-assured.version>
+        <!-- rest-assured 5.5.2 transitively pulls Groovy 5.0.6, but rest-assured doesn't support
+             Groovy 5 yet (open issue: https://github.com/rest-assured/rest-assured/issues/1846 —
+             also breaks spring-restdocs for the same reason). Symptom: every GET/PUT call throws
+             a NullPointerException deep in Groovy's ClosureMetaClass; POST happens to work. Pinned
+             back to the last Groovy 4.x release below until that issue is resolved. -->
+        <groovy.version>4.0.32</groovy.version>
     </properties>
 
     <dependencies>
@@ -152,6 +159,32 @@
             <version>4.3.0</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${rest-assured.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Direct declarations win over rest-assured's transitive Groovy 5 pull under Maven's
+             nearest-wins mediation — see the groovy.version comment above. -->
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy</artifactId>
+            <version>${groovy.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy-xml</artifactId>
+            <version>${groovy.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy-json</artifactId>
+            <version>${groovy.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <dependencyManagement>
@@ -192,6 +225,15 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <!-- Activates the integration-test/verify goals spring-boot-starter-parent already
+                 manages the version/binding for. Runs *IT.java classes (Failsafe's default include
+                 pattern) via `mvn verify` — deliberately separate from `mvn test`'s Surefire run of
+                 *Test.java, since *IT classes assume an already-running deployed stack rather than
+                 bringing up their own Testcontainers. See docs/testing-strategy.md. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
             </plugin>
         </plugins>
     </build>
