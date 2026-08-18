@@ -97,22 +97,143 @@ Done:
   - All green: `npm test` → 55 passed across 10 files; `npx tsc -b
     --force` and `npm run build` both still clean.
 
+**Third phase — REST Assured API test layer.** Frontend-test-tier work above
+(both commits: `fbcaee3`, `56ba256`) is already pushed to `origin/main`.
+This phase is **local only, not committed**.
+
+- User wanted "both ways" tested before deployment (QA instinct): a fast
+  tier blocking every push, AND a real black-box tier against an actual
+  deployed stack — not just one or the other. Landed on a shared-base-class
+  design so both tiers run the *identical* assertions: `MeterApiTestBase`/
+  `ReadingApiTestBase` (abstract, package-private, hold the `@Test`
+  methods) with two thin concrete subclasses each:
+  - `MeterApiComponentTest`/`ReadingApiComponentTest` — embedded server via
+    Testcontainers + `RANDOM_PORT` (same pattern as the existing
+    `ApiSecurityComponentTest`), runs via **Surefire** (`mvn test`),
+    blocks every push, **no CI changes needed** — it's picked up
+    automatically by the existing job.
+  - `MeterApiIT`/`ReadingApiIT` — plain JUnit, no Spring context, points
+    at `API_BASE_URL` env var (default `http://localhost/api/v1`,
+    matching local `docker compose up`), runs via **Failsafe**
+    (`mvn verify`) against a real deployed stack. Not yet wired into CI
+    (next open item).
+  - Added `rest-assured` 5.5.2 + `maven-failsafe-plugin` (already managed
+    by `spring-boot-starter-parent`, just needed activating) to `pom.xml`.
+- **Found and fixed a real production bug** via this new fast tier:
+  every 404/405 under `/api/v1/**` was being masked as a 401. Root cause:
+  Spring Boot renders 404s/405s via an internal forward to `/error`, which
+  re-enters Spring Security's filter chain as a fresh `ERROR`-dispatch
+  request; `JwtAuthenticationFilter` (a plain `OncePerRequestFilter`)
+  doesn't re-run on that dispatch type by default, so the re-check finds
+  no authentication and the entry point overwrites the real 404/405 with
+  401. Fixed with `.requestMatchers("/error").permitAll()` in
+  `SecurityConfig` — the standard fix for this well-known Spring Security
+  + Boot interaction. Verified via curl before/after (`PUT
+  /readings/{id}` now correctly 405s with `Allow: GET, DELETE`, unrelated
+  401s for genuinely missing/invalid tokens still work). This is exactly
+  the kind of bug the black-box tier was built to catch — the embedded
+  fast-tier component tests also exercise `SecurityConfig` and now catch
+  it too, so it's covered going forward by the tier that runs on every
+  push.
+- **Found and worked around a Groovy 5 incompatibility**: `rest-assured`
+  5.5.2 transitively pulls Groovy 5.0.6, but rest-assured doesn't support
+  Groovy 5 yet (open upstream issue,
+  [rest-assured/rest-assured#1846](https://github.com/rest-assured/rest-assured/issues/1846)
+  — same root cause breaks Spring REST Docs too,
+  [spring-restdocs#1000](https://github.com/spring-projects/spring-restdocs/issues/1000)).
+  Symptom: every GET/PUT call threw a `NullPointerException` deep in
+  Groovy's `ClosureMetaClass`; POST happened to work. Fixed by pinning
+  `groovy`/`groovy-xml`/`groovy-json` to 4.0.32 as direct test-scope
+  dependencies (wins over rest-assured's transitive pull under Maven's
+  nearest-wins mediation). Fast tier (`MeterApiComponentTest`,
+  `ReadingApiComponentTest`) is fully green after this fix: 16/16 passing,
+  full `mvn test` suite 43/43.
+- **New `scripts/` directory** (per explicit user request, to make
+  repeated multi-step commands easier for `.claude/settings.local.json`
+  to match and for status to be reviewable after the fact, rather than
+  ad hoc one-off shell invocations):
+  - `check-maven-central-version.sh` — prints current versions for a
+    Maven Central artifact
+  - `wait-for-health.sh` — polls a health-check URL with a timeout
+  - `run-black-box-api-tests.sh` — `docker compose up` the
+    traefik/api/postgres/kafka/redis tier, wait for health, run the
+    Failsafe-bound `*ApiIT` suite via `test-compile failsafe:integration-test
+    failsafe:verify` (NOT `verify -DskipTests` — that skips Failsafe too,
+    since Surefire and Failsafe share the `skipTests` property by design;
+    invoking Failsafe's goals directly sidesteps Surefire's `test` phase
+    entirely without needing a skip flag at all)
+  - `RawHttpProbe.java` / `probe-raw-http.sh` — sends a request over a
+    bare `java.net.Socket`, bypassing any HTTP client library
+  - `JdkHttpClientProbe.java` / `probe-jdk-http-client.sh` — same, via
+    the JDK's built-in `java.net.http.HttpClient`
+  - `build-test-classpath.sh` — writes the api module's test classpath to
+    a file, for compiling ad hoc diagnostic Java programs against the
+    same dependency versions the real suite uses
+  - All three probe mechanisms (`.java` files use JDK 25's single-file
+    source-launch mode, no separate compile step) were written while
+    diagnosing the still-open blocker below.
+  - Added `scripts/README.md` indexing all of the above, grouped by
+    purpose (version verification / black-box test tier / diagnostic HTTP
+    probes), so the directory is self-explanatory without re-reading each
+    script's header comment.
+- **Committed and pushed today's work**, in the shape flagged as the plan
+  in this file's own "Next" section — 3 focused commits: the
+  `SecurityConfig` `/error`-masking bug fix, the REST Assured test infra
+  (`pom.xml` + the 6 new `Meter/ReadingApi*` test classes), and the new
+  `scripts/` directory (including its README). `api/pom.xml` and
+  `SecurityConfig.java` were previously modified-but-uncommitted per this
+  file's earlier entries; `mvn -f api/pom.xml test-compile` re-verified
+  clean before committing. Docs (`testing-strategy.md`/
+  `tech-stack-versions.md`) for this phase are still **not** updated —
+  carried into tomorrow, see Open/Next below.
+
 Open:
-- **Still no E2E tier** (Playwright) — deliberately deferred; revisit
-  once there's a concrete need beyond what component tests + manual
-  browser verification already cover.
-- REST Assured API test layer (backend) still not started — PUT
-  `/readings/{id}` 405-rejection still has no HTTP-level assertion.
-  Carried over from 2026-08-11, untouched this session.
+- **Black-box tier (`*ApiIT`) doesn't work locally yet — root cause still
+  unknown.** Every request through Traefik (`http://localhost/api/v1`)
+  fails with `SocketException: Connection reset`, but only via REST
+  Assured's bundled Apache HttpClient 4.5.13. Ruled out as the cause so
+  far, all confirmed working against the exact same running stack:
+  plain `curl`, a raw `java.net.Socket` (`scripts/probe-raw-http.sh`),
+  and the JDK's own `java.net.http.HttpClient`
+  (`scripts/probe-jdk-http-client.sh`). Tried and did NOT fix it:
+  disabling `Expect: 100-continue` via `HttpClientConfig`. Wire-level
+  debug logging via `-Dorg.apache.commons.logging.*` system properties
+  passed through Failsafe's `argLine` did not actually produce any log
+  output — worth revisiting (may need Logback config instead, since the
+  test JVM has no Spring Boot context to honor `logging.level.*`
+  properties). Strong suspicion: something specific to Apache HttpClient
+  4.5.13's classic API interacting with Docker Desktop for Mac's
+  port-forwarding proxy for port 80 — plausible this is Mac-only and
+  won't reproduce on GitHub Actions' native Linux runners with a real
+  Docker Engine, but that's untested. **Next session: either keep
+  isolating (a raw Apache `HttpClient` reproduction bypassing REST
+  Assured/Groovy entirely is the next concrete step, using
+  `scripts/build-test-classpath.sh`), or just wire the CI job and see if
+  it reproduces there — cheaper signal either way.**
+  Docker Compose stack (traefik/api/postgres/kafka/redis) is currently
+  **left running** on this machine for whenever debugging resumes —
+  `docker compose down` when done with it.
+- Black-box CI job (task: "Wire black-box CI job") not started — blocked
+  on the above.
+- `testing-strategy.md`/`tech-stack-versions.md` docs not yet updated for
+  this phase's work (rest-assured/failsafe/groovy pin, the two-tier
+  design, the `/error` permitAll fix) — planned but not done.
 - `load-tests/` (JMeter) still doesn't exist.
 - `PaginationProperties` unit test (backend) still not written.
-- Today's changes are **local only — not yet committed or pushed**.
+- Session ended here for the day (user fatigue/distraction, not a
+  blocker) — everything above (bug fix, REST Assured test infra,
+  `scripts/`) is now committed and pushed to `origin/main`; nothing
+  pending in the working tree. The Docker Compose stack (traefik/api/
+  postgres/kafka/redis) noted as left running above is still up on this
+  machine — `docker compose down` whenever convenient, no rush.
 
 Next:
-- Commit and push today's frontend-test-tier work (config + auth-path
-  tests + Node pin + Meters/Readings page tests — likely worth splitting
-  into a couple of focused commits rather than one, given the session
-  had two distinct phases).
-- Build out the REST Assured API test layer and wire it into CI as
-  testing-strategy.md's stage 2 (still the most-carried-over open item
-  across sessions).
+- Resume the black-box connection-reset investigation (see above) or
+  pivot straight to CI wiring to get a faster signal on whether it's
+  Mac-specific.
+- Once resolved: wire the black-box CI job.
+- Update `testing-strategy.md`/`tech-stack-versions.md` for this phase's
+  work — still outstanding, independent of the connection-reset blocker.
+- `load-tests/` (JMeter) doesn't exist yet — needs a login step given the
+  auth-everything decision. Still not started.
+- `PaginationProperties` unit test — small, cheap, still not done.
