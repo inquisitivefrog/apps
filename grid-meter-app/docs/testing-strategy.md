@@ -74,7 +74,33 @@ when there's no second reviewer.
   change. Chosen over Postman specifically because it needs no cloud account
   and nothing leaves the machine.
 - **REST Assured** for the automated suite that runs in CI — JVM-native, so
-  it's just another JUnit test class, no separate runner to maintain.
+  it's just another JUnit test class, no separate runner to maintain. A
+  shared-base-class design (`MeterApiTestBase`/`ReadingApiTestBase`, holding
+  the `@Test` methods) lets two thin concrete subclasses each run the
+  *identical* assertions against two different targets: `MeterApiComponentTest`/
+  `ReadingApiComponentTest` (embedded server via Testcontainers +
+  `RANDOM_PORT`, runs via Surefire on every push, no deployed stack needed)
+  and `MeterApiIT`/`ReadingApiIT` (plain JUnit, no Spring context, points at
+  `API_BASE_URL` — default `http://localhost/api/v1`, matching local
+  `docker compose up` — runs via Failsafe against a real deployed stack).
+  `rest-assured` 5.5.2 transitively pulls a Groovy version it doesn't
+  support yet, requiring a direct Groovy 4.0.32 pin to win Maven's
+  nearest-wins mediation; see `tech-stack-versions.md` for the full version
+  list and upstream issue link.
+- **Black-box `*ApiIT` root-cause note**: this tier was blocked for a full
+  session by a `SocketException: Connection reset` that only reproduced
+  through REST Assured, never through curl/raw-socket/JDK-HttpClient/plain
+  Apache HttpClient probes against the identical running stack. Root cause:
+  REST Assured's static `RestAssured.port` defaults to 8080 and is silently
+  applied to any request URL without an explicit port, so every black-box
+  request was landing on Traefik's *dashboard* port (8080, which resets
+  unrecognized connections) instead of the real API on port 80 — nothing to
+  do with Docker Desktop's networking, which was the leading suspicion at
+  the time. Found via a `tcpdump` packet capture comparing a working probe
+  against the failing one. Fixed by deriving `RestAssured.port` explicitly
+  from the configured base URL in both `*ApiIT` classes; see their Javadoc
+  and `scripts/README.md`'s "Diagnostic HTTP probes" section for the full
+  investigation and the probe scripts it left behind.
 
 ## Load testing
 
@@ -94,8 +120,23 @@ pretending to replace that.
 
 ## CI wiring (GitHub Actions)
 
-1. Unit + component tests — every push, blocks merge on failure
-2. API tests — every push, after bringing up a throwaway environment,
-   blocks merge on failure
-3. Load tests — `workflow_dispatch` (manual) or nightly `schedule`, results
-   posted for review, does not block anything
+All three jobs below run on every push/PR touching `grid-meter-app/**`
+(`.github/workflows/grid-meter-app-ci.yml`). Only **"Unit + component
+tests"** is currently a required status check on `main`'s branch
+protection — `black-box-api-test` and `frontend-test` run and report on
+every push but don't yet block a merge on failure; promoting them to
+required checks is a deliberate follow-up, not an oversight, since this
+project is solo-owned and the two jobs are new enough to want a few clean
+runs first.
+
+1. **`test`** ("Unit + component tests") — `mvn -B test`, blocks merge on
+   failure (required check).
+2. **`black-box-api-test`** ("Black-box API tests (deployed stack)") —
+   brings up a throwaway Docker Compose stack via
+   `scripts/run-black-box-api-tests.sh`, runs the Failsafe-bound `*ApiIT`
+   suite against it, tears the stack down. Not yet a required check.
+3. **`frontend-test`** ("Frontend typecheck, tests, build") — `npm test`
+   (Vitest) + `tsc -b`/`vite build`. Not yet a required check.
+4. Load tests — `workflow_dispatch` (manual) or nightly `schedule`, results
+   posted for review, does not block anything. `load-tests/` (JMeter plans)
+   doesn't exist yet.

@@ -30,7 +30,10 @@ These support the `*ApiIT` suite (`api/src/test/java/com/gridmeter/api/
 {meter,reading}`) — the Failsafe-bound tier that runs black-box HTTP calls
 against a real deployed stack, as opposed to the embedded-server
 `*ApiComponentTest` tier that runs via Surefire on every push. See
-`docs/testing-strategy.md` for why both tiers exist.
+`docs/testing-strategy.md` for why both tiers exist. **Wired into CI** as
+the `black-box-api-test` job in `.github/workflows/grid-meter-app-ci.yml`,
+which runs `run-black-box-api-tests.sh` directly and adds its own teardown
+step (the script itself doesn't tear down, by design — see below).
 
 - **`run-black-box-api-tests.sh`** — brings up the traefik/api/postgres/
   kafka/redis tier via Docker Compose, waits for the API to report healthy
@@ -40,12 +43,12 @@ against a real deployed stack, as opposed to the embedded-server
   `-DskipTests`, which skips Failsafe too since it shares that property
   with Surefire by design). Does **not** tear the stack down afterward —
   left running for local debugging; run `docker compose down` manually
-  when done.
+  when done. CI's job does its own teardown in an `if: always()` step.
 - **`wait-for-health.sh [url] [timeout-seconds]`** — polls a health-check
   URL until it responds successfully or the timeout elapses. Defaults to
-  `http://localhost/actuator/health`, 90s. Used by
-  `run-black-box-api-tests.sh` and intended for reuse in CI once the
-  black-box job is wired up.
+  `http://localhost/actuator/health`, 90s. Used by both
+  `run-black-box-api-tests.sh` and the `black-box-api-test` CI job (via
+  that script).
 
 ## Diagnostic HTTP probes (investigation resolved)
 
