@@ -15,3 +15,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+
+# JMeter load-test output (results/reports are run artifacts, not versioned like the .jmx plans);
+# jmeter.log is JMeter's own default log file when run without an explicit -j path.
+grid-meter-app/load-tests/results/
+jmeter.log

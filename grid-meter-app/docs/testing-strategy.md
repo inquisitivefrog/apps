@@ -137,5 +137,7 @@ few clean runs first), not an oversight.
 3. **`frontend-test`** ("Frontend typecheck, tests, build") — `npm test`
    (Vitest) + `tsc -b`/`vite build`. Not yet a required check.
 4. Load tests — `workflow_dispatch` (manual) or nightly `schedule`, results
-   posted for review, does not block anything. `load-tests/` (JMeter plans)
-   doesn't exist yet.
+   posted for review, does not block anything. `load-tests/` (JMeter plans:
+   `steady-state`/`ramp-up`/`spike`/`soak`, see `load-tests/README.md`) now
+   exists and is runnable locally via `load-tests/run.sh`; CI wiring itself
+   is still a follow-up.
