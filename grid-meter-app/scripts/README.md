@@ -47,14 +47,22 @@ against a real deployed stack, as opposed to the embedded-server
   `run-black-box-api-tests.sh` and intended for reuse in CI once the
   black-box job is wired up.
 
-## Diagnostic HTTP probes
+## Diagnostic HTTP probes (investigation resolved)
 
 Written while chasing a `SocketException: Connection reset` that only
-reproduces through REST Assured's bundled Apache HttpClient 4.5.13 against
-the real stack (see the dated file under `status/` for the open
-investigation) — each probe sends a request via a different HTTP stack to
-narrow down which layer is responsible. Both `.java` files run via JDK
+reproduced through REST Assured's black-box `*ApiIT` tier against the real
+stack. **Resolved**: REST Assured's static `RestAssured.port` defaults to
+8080 and gets silently applied whenever a request's URL doesn't carry an
+explicit port — every black-box request was actually landing on Traefik's
+*dashboard* port (8080), which reset the connection, not the real API on
+port 80. Fixed in `MeterApiIT`/`ReadingApiIT` by deriving `RestAssured.port`
+explicitly from the configured base URL; see those classes' Javadoc for the
+full writeup. Each probe below sends the same request via a different HTTP
+stack, which is how the layers were ruled out one at a time before a packet
+capture pinned down the actual port mismatch. `.java` files run via JDK
 25's single-file source-launch mode, so there's no separate compile step.
+Kept around as reusable diagnostics for the next time an HTTP-layer mystery
+shows up.
 
 - **`probe-raw-http.sh <host> <port> <method> <path> [json-body]`** /
   **`RawHttpProbe.java`** — sends a request directly over a bare
@@ -64,13 +72,36 @@ narrow down which layer is responsible. Both `.java` files run via JDK
 - **`probe-jdk-http-client.sh <url> [POST-json-body]`** /
   **`JdkHttpClientProbe.java`** — same request via the JDK's built-in
   `java.net.http.HttpClient`, one layer up from the raw socket.
+- **`probe-apache-http-client.sh <url> <expect-continue:true|false> [POST-json-body] [classpath-file]`**
+  / **`ApacheHttpClientProbe.java`** — same request via Apache HttpClient
+  4.5.13's modern (4.3+) `HttpClients.custom()`/`RequestConfig` builder —
+  the same library/version REST Assured bundles internally, but its
+  current-generation execution path. Set `CHUNKED=1` to send the body as
+  chunked transfer-encoding instead of fixed-length.
+- **`probe-apache-http-client-legacy.sh <url> <expect-continue:true|false> [POST-json-body] [classpath-file]`**
+  / **`ApacheHttpClientLegacyProbe.java`** — same request via Apache
+  HttpClient's deprecated `DefaultHttpClient`/`DefaultRequestDirector`
+  execution path and old `HttpParams` config API — the exact internal
+  class REST Assured's Groovy `HTTPBuilder` layer actually constructs.
+- **`probe-restassured-minimal.sh <url> [POST-json-body] [classpath-file]`**
+  / **`RestAssuredMinimalProbe.java`** — sends the request via bare REST
+  Assured itself (no Spring, no test scaffolding), the probe that actually
+  reproduced the failure and proved it was REST Assured's own layer, not
+  Apache HttpClient in any configuration. Set `WIRE_DEBUG=1` for Apache
+  HttpClient wire-level logging (didn't end up showing the port mismatch,
+  since commons-logging routing didn't cooperate here, but left in for
+  future use).
+- **`capture-connection-reset.sh [pcap-output-file]`** — the script that
+  found the actual root cause: runs a known-working probe and the failing
+  REST Assured probe back to back while `tcpdump` captures loopback
+  traffic (all ports — the original port-80-only filter missed the
+  failing connection entirely, since it was going to 8080). Needs `sudo`;
+  run directly in a real terminal, not through an automated tool, since
+  `sudo` needs an interactive password prompt.
 - **`build-test-classpath.sh [output-file]`** — writes the `api` module's
   full test-scope Maven classpath to a file (default
   `/tmp/grid-meter-api-test-classpath.txt`). Not a probe itself, but
   supports writing further ad hoc diagnostic Java programs that need the
   exact same dependency versions (e.g. Apache HttpClient 4.5.13 itself)
-  as the real test suite.
-
-Both curl and both custom probes above work fine against the same running
-stack; only REST Assured's client fails — see the status log for the
-current state of that investigation.
+  as the real test suite. Run this first — all the probes above expect the
+  classpath file it produces.
