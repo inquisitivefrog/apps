@@ -13,6 +13,17 @@ carries its own header comment; this file is the index.
   this repo's version-verification convention (see
   `docs/tech-stack-versions.md`).
 
+## Ad hoc auth/security verification
+
+- **`verify-auth-security.sh [base-url]`** — curl-based smoke check against a running
+  `docker compose up` stack (default `http://localhost`, i.e. through Traefik) covering the auth/
+  security behaviors most likely to get typed inline as one-off curl calls: actuator staying open,
+  unauthenticated/invalid-token rejection, a real login, and `PUT /readings/{id}` returning 405
+  (readings are immutable — see `docs/api-and-data-model.md`). The real, CI-gated source of truth
+  for this behavior is the REST Assured suite (`ApiSecurityComponentTest`,
+  `ReadingApiTestBase.putReading_isRejectedWith405`) run via `mvn test` — this script is only for a
+  quick manual check without retyping a compound curl chain each time.
+
 ## Black-box API test tier
 
 These support the `*ApiIT` suite (`api/src/test/java/com/gridmeter/api/
