@@ -67,13 +67,19 @@ jobs:
           tar -xzf /tmp/jmeter.tgz -C /opt
           echo "/opt/apache-jmeter-${JMETER_VERSION}/bin" >> "$GITHUB_PATH"
 
+      # Deliberately does the profile/duration fallback in bash (${VAR:-default}) rather than
+      # GitHub Actions expression syntax (${{ a || b }}) — a `schedule` event has no `inputs`
+      # object at all (unlike workflow_dispatch, which always populates inputs with their
+      # declared defaults even without explicit -f flags), and that specific path hasn't been
+      # exercised by a real cron firing yet. Bash's :- is unambiguous either way.
       - name: Determine profile and duration override
         id: params
         run: |
-          PROFILE="${{ github.event.inputs.profile || 'steady-state' }}"
-          echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
-          if [ -n "${{ github.event.inputs.duration_seconds }}" ]; then
-            echo "extra_args=-Jduration=${{ github.event.inputs.duration_seconds }}" >> "$GITHUB_OUTPUT"
+          PROFILE="${{ github.event.inputs.profile }}"
+          echo "profile=${PROFILE:-steady-state}" >> "$GITHUB_OUTPUT"
+          DURATION="${{ github.event.inputs.duration_seconds }}"
+          if [ -n "$DURATION" ]; then
+            echo "extra_args=-Jduration=$DURATION" >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" = "schedule" ]; then
             echo "extra_args=-Jduration=120" >> "$GITHUB_OUTPUT"
           else

@@ -59,6 +59,17 @@ behavior — 600 is 150% of it, chosen to force visible saturation (queuing,
 climbing latency, and whether Traefik/Tomcat degrade gracefully or not)
 without being an arbitrary unbounded flood.
 
+**What's actually been validated so far, precisely**: a short (15s),
+single-`api`-replica smoke run at the full 600-thread default — not the
+documented 60s duration, and not against the 2-replica setup the
+400-thread ceiling math above describes. That run did show a real
+saturation signal: 0% errors, but max response time climbed from ~85ms
+baseline to 1474ms (17x) — Tomcat/the OS queuing excess connections rather
+than rejecting them, which is graceful degradation, not "no saturation
+happened." It is **not** yet reconciled against the actual 2-replica,
+full-duration scenario the 400-thread ceiling describes — see "Not yet
+run at real scale" below.
+
 **What to watch in Grafana during spike/soak**: `tomcat.threads.busy`,
 `tomcat.threads.current`, and `tomcat.connections.current` (Micrometer/
 Actuator, already scraped via `/actuator/prometheus` — no extra wiring
@@ -105,11 +116,26 @@ pass/fail logic) — and checks `Total.errorPct` and `Total.pct2ResTime`
 this genuinely is the p95, not a guess) against the thresholds. `run.sh`
 calls it automatically after every run.
 
-## Not yet wired
+## CI
 
-- **CI**: `workflow_dispatch`/nightly per `docs/testing-strategy.md`'s plan
-  — not wired into `.github/workflows/grid-meter-app-ci.yml` yet.
-- These profiles hit a single `api` replica in the default local
-  `docker compose up` (only `--scale api=2` gives the full 400-thread
-  ceiling assumed above); run with `docker compose up --scale api=2` for a
-  spike run that's actually testing what the ceiling math describes.
+Wired as `.github/workflows/grid-meter-app-load-test.yml` —
+`workflow_dispatch` (profile picker + duration override) and a nightly
+steady-state smoke. Verified with a real triggered run on GitHub's own
+runners (2,470 samples, 0% errors, 8ms p95), which is what surfaced the
+Java 21 requirement below. **Not yet verified**: the true `schedule`
+trigger itself only fires at its scheduled time — what's actually been
+confirmed is the `workflow_dispatch` path, where `github.event.inputs`
+always exists with defaults populated even without explicit `-f` flags.
+The `github.event.inputs.profile` fallback the workflow uses for a
+schedule event (which has no `inputs` object at all) is written
+defensively in bash (`${PROFILE:-steady-state}`, not relying on GitHub's
+own expression-level `||`) specifically because that exact path hasn't
+been exercised by a real cron firing yet.
+
+## Not yet run at real scale
+
+These profiles hit a single `api` replica in the default local
+`docker compose up` (only `--scale api=2` gives the full 400-thread
+ceiling described above); run with `docker compose up --scale api=2` for
+a spike run that's actually testing what the ceiling math describes,
+rather than the quick single-replica smoke check noted above.

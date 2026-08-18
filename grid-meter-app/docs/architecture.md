@@ -177,7 +177,7 @@ Redis-backed caching upstream, a handful of mutations).
 |---|---|---|
 | Metrics | Prometheus + Grafana | Scrapes Spring Boot Actuator/Micrometer `/actuator/prometheus` |
 | Logs | Alloy → Loki | Alloy discovers containers via the Docker socket and ships logs to Loki. Promtail (the older agent) was removed upstream as of Loki 3.7.3, so Alloy is the only supported agent going forward. Same tool reused as a DaemonSet in the `kind` deployment. Loki chosen over OpenSearch for RAM footprint. |
-| Traces | OpenTelemetry (Java agent) → Tempo | End-to-end trace: Traefik → Tomcat → Kafka → Postgres |
+| Traces | OpenTelemetry (Java agent) → Tempo | End-to-end trace: Traefik → Tomcat → Kafka → Postgres. Sampling defaults to 100% (`management.tracing.sampling.probability` in `application.yml`) — fine for normal dev, not for load-test throughput. Overridable via the `GRID_METER_TRACING_SAMPLING_PROBABILITY` env var, passed through in `docker-compose.yml`'s `api` service like the other `GRID_METER_*` settings — not a load-test-only mechanism, just a general Spring property override that load testing happens to be the first real consumer of. See `load-tests/README.md`. |
 | Cluster/node metrics | `kube-prometheus-stack` (Helm) | Only piece of the stack installed via Helm — bundles node-exporter, kube-state-metrics, and pre-built dashboards |
 
 ## Deployment model
