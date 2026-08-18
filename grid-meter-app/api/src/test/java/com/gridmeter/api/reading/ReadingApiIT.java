@@ -1,13 +1,12 @@
 package com.gridmeter.api.reading;
 
 import io.restassured.RestAssured;
-import io.restassured.config.HttpClientConfig;
-import io.restassured.config.RestAssuredConfig;
+import java.net.URI;
 
 /**
  * Black-box tier — see {@link com.gridmeter.api.meter.MeterApiIT}'s Javadoc for the pattern this
- * follows, including why Expect-Continue is disabled below. Runs via Failsafe ({@code mvn
- * verify}) against an already-deployed stack.
+ * follows, including the port-8080-default root cause of the "Connection reset" this tier hit.
+ * Runs via Failsafe ({@code mvn verify}) against an already-deployed stack.
  */
 class ReadingApiIT extends ReadingApiTestBase {
 
@@ -16,7 +15,7 @@ class ReadingApiIT extends ReadingApiTestBase {
         String baseUrl = System.getenv().getOrDefault("API_BASE_URL", "http://localhost/api/v1");
         RestAssured.baseURI = baseUrl;
         RestAssured.basePath = "";
-        RestAssured.config = RestAssuredConfig.config().httpClient(
-                HttpClientConfig.httpClientConfig().setParam("http.protocol.expect-continue", false));
+        URI uri = URI.create(baseUrl);
+        RestAssured.port = uri.getPort() != -1 ? uri.getPort() : ("https".equals(uri.getScheme()) ? 443 : 80);
     }
 }
