@@ -121,20 +121,19 @@ pretending to replace that.
 ## CI wiring (GitHub Actions)
 
 All three jobs below run on every push/PR touching `grid-meter-app/**`
-(`.github/workflows/grid-meter-app-ci.yml`). Only **"Unit + component
-tests"** is currently a required status check on `main`'s branch
-protection — `black-box-api-test` and `frontend-test` run and report on
-every push but don't yet block a merge on failure; promoting them to
-required checks is a deliberate follow-up, not an oversight, since this
-project is solo-owned and the two jobs are new enough to want a few clean
-runs first.
+(`.github/workflows/grid-meter-app-ci.yml`). `test` and
+`black-box-api-test` are required status checks on `main`'s branch
+protection; `frontend-test` isn't yet — promoting it is a deliberate
+follow-up (this project is solo-owned and the job is new enough to want a
+few clean runs first), not an oversight.
 
 1. **`test`** ("Unit + component tests") — `mvn -B test`, blocks merge on
    failure (required check).
 2. **`black-box-api-test`** ("Black-box API tests (deployed stack)") —
    brings up a throwaway Docker Compose stack via
    `scripts/run-black-box-api-tests.sh`, runs the Failsafe-bound `*ApiIT`
-   suite against it, tears the stack down. Not yet a required check.
+   suite against it, tears the stack down. Blocks merge on failure
+   (required check).
 3. **`frontend-test`** ("Frontend typecheck, tests, build") — `npm test`
    (Vitest) + `tsc -b`/`vite build`. Not yet a required check.
 4. Load tests — `workflow_dispatch` (manual) or nightly `schedule`, results
