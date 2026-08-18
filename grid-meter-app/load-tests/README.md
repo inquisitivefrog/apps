@@ -36,6 +36,10 @@ Any property (see `config/load-test.properties` and each profile's own
 Thread Group defaults below) can be overridden per run, e.g. a fast local
 sanity check: `./run.sh spike -Jduration=15 -JmeterPoolSize=5`.
 
+**`./smoke-test.sh`** runs all four profiles with small/fast overrides back
+to back — not a real load test, just a quick "did I break something" check
+after editing a fragment or profile.
+
 ## Profiles
 
 | Profile | Purpose | Default shape |
