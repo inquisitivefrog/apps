@@ -1,0 +1,30 @@
+meta {
+  name: Search Meters
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/meters?page=0&size=20
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~location: 123 Main
+  ~status: ACTIVE
+  page: 0
+  size: 20
+}
+
+assert {
+  res.status: eq 200
+  res.body.size: eq 20
+}
+
+docs {
+  location/status filters are disabled by default (~) so a first run
+  returns everything — enable either to try the filtered search. `size`
+  is capped server-side at 100 regardless of what's requested here; try
+  size=500 to see it get clamped rather than honored.
+}

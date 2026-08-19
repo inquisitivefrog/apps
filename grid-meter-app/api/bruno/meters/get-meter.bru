@@ -1,0 +1,16 @@
+meta {
+  name: Get Meter
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/meters/{{meterId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{meterId}}
+}

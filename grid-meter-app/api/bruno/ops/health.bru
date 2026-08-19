@@ -1,0 +1,23 @@
+meta {
+  name: Health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{rootUrl}}/actuator/health
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq UP
+}
+
+docs {
+  Actuator routes sit outside /api/v1 and are the sole unauthenticated
+  routes alongside /auth/login — no token needed, and none sent here
+  (auth: none) to prove it. See CLAUDE.md's "API is versioned under
+  /api/v1" bullet.
+}

@@ -1,0 +1,24 @@
+meta {
+  name: Delete Reading
+  type: http
+  seq: 1
+}
+
+delete {
+  url: {{baseUrl}}/readings/{{readingId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Per api-and-data-model.md: "For test-data cleanup; not a normal
+  operational path" — this exists so a manual session doesn't leave junk
+  behind, not because readings support arbitrary deletion in the product.
+  Lives in cleanup/ (seq 5, runs after readings/) rather than in
+  readings/ itself, and before cleanup/Delete Meter, so the meter it
+  references still exists when this runs — see cleanup/folder.bru.
+}

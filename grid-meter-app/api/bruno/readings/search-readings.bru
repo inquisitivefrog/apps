@@ -1,0 +1,33 @@
+meta {
+  name: Search Readings
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/readings?meterId={{meterId}}&page=0&size=20
+  body: none
+  auth: inherit
+}
+
+params:query {
+  meterId: {{meterId}}
+  ~from: 2026-01-01T00:00:00Z
+  ~to: 2026-12-31T23:59:59Z
+  ~minValue: 0
+  ~maxValue: 100
+  page: 0
+  size: 20
+}
+
+assert {
+  res.status: eq 200
+  res.body.size: eq 20
+}
+
+docs {
+  from/to/minValue/maxValue are disabled by default (~) — enable any of
+  them to try the filtered search. Query shape matches the composite
+  (meter_id, reading_timestamp) index called out in
+  docs/api-and-data-model.md as the dominant query pattern.
+}

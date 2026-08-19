@@ -1,0 +1,37 @@
+meta {
+  name: Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "username": "{{username}}",
+    "password": "{{password}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    bru.setVar("accessToken", res.body.accessToken);
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.tokenType: eq Bearer
+}
+
+docs {
+  Run this first — every other request (except the ones in this folder
+  demonstrating unauthenticated/invalid access) inherits the collection's
+  bearer auth from the `accessToken` variable this sets. Token expires 60
+  minutes after issuance (see docs/architecture.md's "Authentication"
+  section) — re-run this if later requests start failing with 401.
+}

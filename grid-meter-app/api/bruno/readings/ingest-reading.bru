@@ -1,0 +1,38 @@
+meta {
+  name: Ingest Reading
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/readings
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "meterId": "{{meterId}}",
+    "readingTimestamp": "2026-01-01T12:00:00Z",
+    "value": 42.5
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    bru.setVar("readingId", res.body.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.meterId: eq {{meterId}}
+}
+
+docs {
+  Requires meterId from meters/Create Meter — run that first. This is
+  the endpoint JMeter hammers for load generation (load-tests/), and per
+  CLAUDE.md it's JWT-gated like every other /api/v1/** route, even
+  though it's machine-to-machine ingestion. Sets `readingId`, reused
+  below.
+}

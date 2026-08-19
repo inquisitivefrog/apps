@@ -23,6 +23,14 @@ carries its own header comment; this file is the index.
   for this behavior is the REST Assured suite (`ApiSecurityComponentTest`,
   `ReadingApiTestBase.putReading_isRejectedWith405`) run via `mvn test` — this script is only for a
   quick manual check without retyping a compound curl chain each time.
+- **`verify-bruno-collection.sh [base-url]`** — curl-based replay of the same request sequence as
+  `api/bruno/` (auth → meters → readings → ops → cleanup), for validating the collection headlessly
+  without the Bruno CLI/GUI installed. Written while first building `api/bruno/`; running the real
+  collection via `bru run --env local` afterward surfaced a genuine bug this script's flat
+  execution order happened not to hit — Bruno runs folders as whole units in `seq` order, so a
+  `Delete Meter` request originally living inside `meters/` ran before `readings/` ever fired,
+  deleting the meter mid-collection and breaking every request downstream. Fixed by giving
+  cleanup deletes their own `cleanup/` folder that runs last — see `api/bruno/README.md`.
 
 ## Black-box API test tier
 

@@ -1,0 +1,16 @@
+meta {
+  name: Get Reading
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/readings/{{readingId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 200
+  res.body.id: eq {{readingId}}
+}

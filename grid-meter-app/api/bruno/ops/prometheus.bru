@@ -1,0 +1,21 @@
+meta {
+  name: Prometheus Metrics
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{rootUrl}}/actuator/prometheus
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+}
+
+docs {
+  The scrape target Prometheus polls directly over the Docker network
+  (see docs/architecture.md's Observability section) — also reachable
+  through Traefik here, unauthenticated like /actuator/health.
+}

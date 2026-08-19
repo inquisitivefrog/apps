@@ -1,0 +1,24 @@
+meta {
+  name: Delete Meter
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/meters/{{meterId}}
+  body: none
+  auth: inherit
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Lives in cleanup/, not meters/, and runs after Delete Reading: a meter
+  still referenced by a reading (via meterId) hits the FK constraint if
+  deleted first. cleanup/ is its own folder (seq 5, after auth/meters/
+  readings/ops) so a full `bru run` deletes in dependency order instead
+  of deleting the meter mid-collection, out from under meterId, before
+  readings/ even runs — see cleanup/folder.bru and README.md.
+}

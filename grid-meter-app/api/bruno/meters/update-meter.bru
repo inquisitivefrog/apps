@@ -1,0 +1,32 @@
+meta {
+  name: Update Meter
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/meters/{{meterId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "serialNumber": "{{serialNumber}}",
+    "location": "456 Updated Ave",
+    "status": "MAINTENANCE",
+    "installedAt": "2026-01-01T00:00:00Z"
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.location: eq 456 Updated Ave
+  res.body.status: eq MAINTENANCE
+}
+
+docs {
+  Full replace, per api-and-data-model.md — unlike readings, meters
+  aren't immutable, so this is a real PUT (contrast with
+  readings/reject-put-reading.bru, which expects a 405).
+}

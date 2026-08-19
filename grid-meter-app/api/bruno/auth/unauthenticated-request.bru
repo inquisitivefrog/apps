@@ -1,0 +1,23 @@
+meta {
+  name: Unauthenticated Request Rejected
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/meters
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 401
+  res.body.message: eq A valid Bearer token is required
+}
+
+docs {
+  No Authorization header sent at all (auth explicitly set to none,
+  overriding the collection-level bearer auth). Confirms every /api/v1/**
+  route is gated — including reads, not just writes — per CLAUDE.md's
+  "JWT auth gates all of /api/v1/**" decision.
+}

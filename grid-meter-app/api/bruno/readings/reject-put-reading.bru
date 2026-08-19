@@ -1,0 +1,32 @@
+meta {
+  name: Reject PUT Reading (405)
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/readings/{{readingId}}
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "meterId": "{{meterId}}",
+    "readingTimestamp": "2026-01-01T12:00:00Z",
+    "value": 999.9
+  }
+}
+
+assert {
+  res.status: eq 405
+}
+
+docs {
+  There is deliberately no PUT /readings/{id} — readings are immutable
+  events; a correction is a new reading (Ingest Reading again), not an
+  edit to history. This asserts the PUT is actively rejected (405, with
+  an Allow header listing GET/DELETE), not just absent from the API —
+  matching testing-strategy.md's "assert the PUT is rejected, not just
+  that it's absent" instruction for this exact case.
+}
