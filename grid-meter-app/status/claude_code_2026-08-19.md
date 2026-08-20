@@ -214,6 +214,14 @@ failure mode (see the blocker at the top of Open).
 - Cleaned up: both test meters created during validation (one via `curl`,
   one via the browser UI) were deleted afterward, leaving the `kind`
   cluster's data tier empty.
+- Committed as two commits (docs separate from implementation, matching
+  today's earlier Bruno-work pattern) and **pushed to `origin/main`**
+  (`5c07d1f` docs, `27a080e` the k8s slice itself — direct push, bypassing
+  the two required status checks as this repo's solo-owner, same
+  documented-intentional behavior as prior sessions). First push attempt
+  failed with an SSH `Permission denied (publickey)` — user had rebooted
+  earlier in the session and forgotten to re-add their SSH key to the
+  agent afterward; re-added it once flagged, retry succeeded immediately.
 
 Open:
 
