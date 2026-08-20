@@ -31,6 +31,27 @@ carries its own header comment; this file is the index.
   `Delete Meter` request originally living inside `meters/` ran before `readings/` ever fired,
   deleting the meter mid-collection and breaking every request downstream. Fixed by giving
   cleanup deletes their own `cleanup/` folder that runs last — see `api/bruno/README.md`.
+- **`delete-meter.sh <meter-id> [base-url]`** — logs in with the seed demo
+  credentials, deletes any readings for the given meter first (deleting a
+  meter with existing readings hits an FK constraint — see
+  `api/bruno/README.md`), then deletes the meter itself. For quick manual
+  cleanup after ad hoc UI/API testing without retyping the compound curl
+  chain each time.
+
+## k8s (`kind`) deployment helpers
+
+Support `k8s/deploy.sh` — see `k8s/README.md` for the full manual
+step-by-step these automate.
+
+- **`check-port-80.sh`** — reports what's listening on host port 80 and
+  Docker Compose's stack status, so a leftover Compose Traefik doesn't
+  silently conflict with `kind`'s own port-80 mapping (`k8s/kind-config.yaml`)
+  before `kubectl apply`.
+- **`fetch-traefik-k8s-manifests.sh`** — downloads Traefik's official v3.7
+  CRD + RBAC manifests into `k8s/traefik-crds.yaml`/`k8s/traefik-rbac.yaml`,
+  vendoring them rather than hand-writing a ~4600-line CRD schema from
+  memory or leaving `kubectl apply -f k8s/` dependent on a live URL at
+  demo time.
 
 ## Black-box API test tier
 

@@ -1,0 +1,23 @@
+# kind cluster config for the grid-meter-app k8s demo. Not a kubectl manifest — passed to
+# `kind create cluster --config k8s/kind-config.yaml`, never to `kubectl apply`.
+#
+# extraPortMappings + the ingress-ready node label are the standard kind + ingress-controller
+# pattern (the same one kind's own docs use for ingress-nginx): they map host port 80 onto this
+# node, and traefik.yaml's Deployment binds hostPort 80 + a matching nodeSelector so its pod
+# lands here. Result: http://localhost/... works exactly like Docker Compose, no port-forward
+# or extra terminal needed once the cluster is up.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: grid-meter
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP

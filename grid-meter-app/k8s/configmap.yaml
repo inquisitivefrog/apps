@@ -1,0 +1,17 @@
+# Non-secret env vars, mirroring docker-compose.yml's api/postgres service env blocks.
+# See secret.yaml for the credential/JWT-key counterparts.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grid-meter-config
+data:
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gridmeter
+  SPRING_DATASOURCE_USERNAME: gridmeter
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  SPRING_REDIS_HOST: redis
+  SPRING_REDIS_PORT: "6379"
+  GRID_METER_TRACING_SAMPLING_PROBABILITY: "1.0"
+  JAVA_TOOL_OPTIONS: "-Xmx384m"
+  MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"
+  POSTGRES_DB: gridmeter
+  POSTGRES_USER: gridmeter
