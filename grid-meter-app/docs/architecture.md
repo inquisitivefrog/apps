@@ -186,12 +186,27 @@ Redis-backed caching upstream, a handful of mutations).
   itself; fast iteration, no cluster overhead.
 - **`kind`** (Kubernetes-in-Docker) — the k8s demo for the interview. Spins
   up and tears down in under a minute on this hardware; a full multi-node
-  cluster is not realistic on a laptop, and `kind` is an honest, standard way
-  to demonstrate real k8s manifests without pretending otherwise.
+  cluster is not realistic on a laptop, and `kind` is an honest, standard
+  way to demonstrate real k8s manifests without pretending otherwise.
+  First slice is fully in-cluster — api, frontend, postgres, kafka, redis —
+  rather than depending on the host's Compose stack for the data tier, so
+  the demo is self-contained (`kind create cluster` + `kubectl apply -f
+  k8s/`). Observability stack (`kube-prometheus-stack` and in-cluster
+  Alloy/Loki/Tempo) is a deferred follow-up slice, not part of this pass.
 - The app's own k8s manifests (Deployment, Service, ConfigMap) are plain
   YAML, not Helm — more legible for an interview walkthrough. Helm is
   reserved for `kube-prometheus-stack`, where its templating earns its
   keep.
+
+### Terraform — explicitly out of scope
+
+Considered as a future SRE-demo addition, but not adopted: this project's
+entire deployment surface is local (Docker Compose for dev, `kind` for the
+k8s demo), so there is no real cloud target for Terraform to provision.
+Introducing it would mean inventing infrastructure to justify the tool
+rather than the other way around — inconsistent with the project's
+minimal-scope ethos elsewhere. Revisit only if a real cloud deployment
+target is ever added to this project's actual scope.
 
 ## Resource budget notes (24GB MacBook Air)
 

@@ -67,8 +67,12 @@ concern.
   dev credentials are hardcoded and non-secret, model this properly in k8s
   since "how would you actually do secrets" is a reasonable interview
   question and it costs little to do right here
-- Traefik IngressRoute for `/` → frontend, `/api` → api (same path-based
-  split as the Compose Traefik config)
+- **The Traefik controller itself**, not just the IngressRoute CRD — a
+  fresh `kind` cluster has no edge proxy by default, unlike Compose where
+  Traefik is already a running service. Install the controller (Deployment
+  + CRDs + RBAC; Traefik's official manifests, not hand-written, since the
+  CRD schema is large) plus an IngressRoute for `/` → frontend, `/api` →
+  api (same path-based split as the Compose Traefik config)
 - No persistent volumes for postgres/kafka in this slice — ephemeral
   `emptyDir` or no explicit volume (defaults to container filesystem) is
   fine, since `kind` clusters are themselves ephemeral and this isn't
