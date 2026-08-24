@@ -99,7 +99,9 @@ export function MetersPage() {
                   <TableCell>{meter.serialNumber}</TableCell>
                   <TableCell>{meter.location}</TableCell>
                   <TableCell>{meter.status}</TableCell>
-                  <TableCell>{new Date(meter.installedAt).toLocaleDateString()}</TableCell>
+                  <TableCell>
+                    {new Date(meter.installedAt).toLocaleDateString(undefined, { timeZone: 'UTC' })}
+                  </TableCell>
                 </TableRow>
               ))}
           </TableBody>

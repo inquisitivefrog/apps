@@ -75,6 +75,24 @@ describe('MetersPage', () => {
     expect(screen.getByText('Main St')).toBeInTheDocument();
   });
 
+  it('renders the Installed date as the calendar date entered, not shifted by local timezone', async () => {
+    // installedAt is a date-only value stored as UTC midnight (see the "date" input in
+    // CreateMeterDialog below). Pinning TZ to a zone west of UTC reproduces the regression this
+    // guards against: naively parsing "2026-01-15T00:00:00Z" and rendering with the JS engine's
+    // local timezone rolls the displayed date back to 1/14/2026 — see GitHub issue #2.
+    vi.stubEnv('TZ', 'America/Los_Angeles');
+    try {
+      vi.mocked(metersApi.search).mockResolvedValue(page([METER_A]));
+
+      renderMetersPage();
+
+      await screen.findByText('SN-A');
+      expect(screen.getByText('1/15/2026')).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('re-searches with the location filter and resets to page 0', async () => {
     const user = userEvent.setup();
     vi.mocked(metersApi.search).mockResolvedValue(page([METER_A]));
