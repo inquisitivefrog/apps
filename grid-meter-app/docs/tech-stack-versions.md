@@ -39,6 +39,8 @@ updated.
 | `@testing-library/jest-dom` | 7.0.1 | Adds DOM matchers (`toBeInTheDocument`, etc.) to Vitest's `expect`, imported in `src/setupTests.ts`. |
 | `@testing-library/user-event` | 14.6.4 | |
 | jsdom | 30.0.1 | Vitest's `test.environment`. `engines` wants Node `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` — see the Node.js row above for why this can print a harmless `EBADENGINE` warning locally. |
+| `netty-resolver-dns-native-macos` | 4.2.15.Final (managed transitively) | Test-scope only, classifier `osx-aarch_64` (matches this project's pinned arm64 MacBook Air). Silences a Netty warning ("Can not find ... MacOSDnsServerAddressStreamProvider ... fallback to system defaults") that only fires when the JVM runs directly on macOS — i.e. only during `mvn test` on this dev machine. The real app always runs inside a Linux container (Compose/`kind`), so this dependency has no effect there and doesn't belong outside test scope. |
+| `maven-dependency-plugin` | Managed by `spring-boot-starter-parent` | Its `properties` goal resolves `mockito-core`'s jar path into a build property, used by `maven-surefire-plugin`'s `argLine` to load Mockito as a real `-javaagent` instead of letting its inline-mock-maker self-attach at runtime (a JDK-deprecated pattern Mockito itself warns about on every test run otherwise). |
 
 ## Deliberately excluded
 

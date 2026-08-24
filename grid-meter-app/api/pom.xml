@@ -185,6 +185,18 @@
             <version>${groovy.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- Silences "Can not find ... MacOSDnsServerAddressStreamProvider ... fallback to system
+             defaults" from Netty during test runs (Testcontainers/Kafka client pull in Netty).
+             Only fires when the JVM runs directly on macOS, which only happens for `mvn test` on
+             this dev machine — the real app always runs inside a Linux container (Docker Compose/
+             k8s), so this never applies there and doesn't belong outside test scope. Classifier is
+             arm64-specific (osx-aarch_64) to match this project's pinned MacBook Air dev machine. -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-native-macos</artifactId>
+            <classifier>osx-aarch_64</classifier>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <dependencyManagement>
@@ -224,6 +236,28 @@
                             <version>${lombok.version}</version>
                         </path>
                     </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <!-- Resolves mockito-core's jar path into ${org.mockito:mockito-core:jar}, so Surefire
+                 below can load it as a real -javaagent instead of Mockito's inline-mock-maker
+                 self-attaching at runtime (a JDK-deprecated pattern that prints a warning on every
+                 test run — see Mockito's own linked docs in that warning). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar}</argLine>
                 </configuration>
             </plugin>
             <!-- Activates the integration-test/verify goals spring-boot-starter-parent already
