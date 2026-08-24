@@ -121,11 +121,11 @@ pretending to replace that.
 ## CI wiring (GitHub Actions)
 
 All three jobs below run on every push/PR touching `grid-meter-app/**`
-(`.github/workflows/grid-meter-app-ci.yml`). `test` and
-`black-box-api-test` are required status checks on `main`'s branch
-protection; `frontend-test` isn't yet — promoting it is a deliberate
-follow-up (this project is solo-owned and the job is new enough to want a
-few clean runs first), not an oversight.
+(`.github/workflows/grid-meter-app-ci.yml`). `test`, `black-box-api-test`,
+and `frontend-test` are all required status checks on `main`'s branch
+protection — `frontend-test` was promoted on 2026-08-24 after confirming a
+clean run across the prior 10 CI runs (including two where the overall
+workflow failed due to the other jobs, not this one).
 
 1. **`test`** ("Unit + component tests") — `mvn -B test`, blocks merge on
    failure (required check).
@@ -135,7 +135,7 @@ few clean runs first), not an oversight.
    suite against it, tears the stack down. Blocks merge on failure
    (required check).
 3. **`frontend-test`** ("Frontend typecheck, tests, build") — `npm test`
-   (Vitest) + `tsc -b`/`vite build`. Not yet a required check.
+   (Vitest) + `tsc -b`/`vite build`. Required check as of 2026-08-24.
 4. Load tests — `workflow_dispatch` (manual) or nightly `schedule`, results
    posted for review, does not block anything. `load-tests/` (JMeter plans:
    `steady-state`/`ramp-up`/`spike`/`soak`, see `load-tests/README.md`) now
