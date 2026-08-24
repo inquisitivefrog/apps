@@ -59,16 +59,25 @@ behavior — 600 is 150% of it, chosen to force visible saturation (queuing,
 climbing latency, and whether Traefik/Tomcat degrade gracefully or not)
 without being an arbitrary unbounded flood.
 
-**What's actually been validated so far, precisely**: a short (15s),
-single-`api`-replica smoke run at the full 600-thread default — not the
-documented 60s duration, and not against the 2-replica setup the
-400-thread ceiling math above describes. That run did show a real
-saturation signal: 0% errors, but max response time climbed from ~85ms
-baseline to 1474ms (17x) — Tomcat/the OS queuing excess connections rather
-than rejecting them, which is graceful degradation, not "no saturation
-happened." It is **not** yet reconciled against the actual 2-replica,
-full-duration scenario the 400-thread ceiling describes — see "Not yet
-run at real scale" below.
+**What's actually been validated, precisely**: the real documented
+scenario — `docker compose up -d --scale api=2` (2 `api` replicas, the
+setup the 400-thread ceiling math above describes) plus
+`GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` on both replicas
+(confirmed identical via `docker inspect`, not assumed — a first attempt
+using `--no-recreate` left one replica at the default 100% sampling while
+only the other picked up the override), then `./run.sh spike` with no
+overrides, so the full defaults ran: 600 threads, 10s ramp, 60s duration.
+Result: 348,697 samples, 0% errors, mean 94.5ms, p95 164ms, p99 220ms,
+**max 3560ms** — a real saturation signal (response time climbing well
+above the ~85-99ms baseline average under sustained peak load), both
+`check-thresholds.sh` gates passed. This run was unattended (no Prometheus/
+Grafana stack up alongside it), so `tomcat.threads.busy`/
+`tomcat.connections.current` weren't directly observed during the run —
+the saturation evidence here is the response-time climb from the JMeter
+side, not a live Tomcat-metrics confirmation. An earlier short (15s),
+single-replica smoke run at the same 600-thread default also showed the
+same pattern (85ms baseline → 1474ms max) — consistent behavior across
+both runs, not a fluke of either one.
 
 **What to watch in Grafana during spike/soak**: `tomcat.threads.busy`,
 `tomcat.threads.current`, and `tomcat.connections.current` (Micrometer/
@@ -134,8 +143,8 @@ been exercised by a real cron firing yet.
 
 ## Not yet run at real scale
 
-These profiles hit a single `api` replica in the default local
-`docker compose up` (only `--scale api=2` gives the full 400-thread
-ceiling described above); run with `docker compose up --scale api=2` for
-a spike run that's actually testing what the ceiling math describes,
-rather than the quick single-replica smoke check noted above.
+`spike` has now been validated at real scale (2 replicas, full 60s
+duration — see above). `steady-state`, `ramp-up`, and `soak` have only
+been run as quick single-replica smoke checks (via `smoke-test.sh` and
+ad hoc local runs while building this tier), not at their documented
+real scale/duration against 2 `api` replicas.
