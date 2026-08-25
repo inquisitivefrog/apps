@@ -42,8 +42,20 @@ class JwtServiceTest {
     void extractUsername_tamperedSignature_throwsJwtException() {
         JwtService jwtService = jwtService(60);
         String token = jwtService.generateToken("demo");
-        String tampered = token.substring(0, token.length() - 1)
-                + (token.charAt(token.length() - 1) == 'A' ? 'B' : 'A');
+        // Flip the second-to-last character, not the last one. An HS256 signature is 32 bytes
+        // (256 bits); base64url-without-padding needs 43 characters (43*6=258 bits), so the final
+        // character's low 2 bits are unused zero-padding, not real signature bits. Flipping only
+        // the very last character can therefore land on a different character that decodes to the
+        // exact same signature bytes (e.g. 'A' and 'B' share the same top 4 bits, differing only in
+        // that padding), making the "tampered" token accidentally still valid ~1 run in 16 -- this
+        // caused a real intermittent CI failure (see status/claude_code_2026-08-24.md). The
+        // second-to-last character sits in the final base64 group's first two characters, which are
+        // always fully real signature bits with no padding ambiguity, so flipping it is guaranteed
+        // to change the decoded signature every time.
+        int tamperIndex = token.length() - 2;
+        String tampered = token.substring(0, tamperIndex)
+                + (token.charAt(tamperIndex) == 'A' ? 'B' : 'A')
+                + token.substring(tamperIndex + 1);
 
         assertThatThrownBy(() -> jwtService.extractUsername(tampered)).isInstanceOf(JwtException.class);
     }
