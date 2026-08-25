@@ -59,25 +59,22 @@ behavior — 600 is 150% of it, chosen to force visible saturation (queuing,
 climbing latency, and whether Traefik/Tomcat degrade gracefully or not)
 without being an arbitrary unbounded flood.
 
-**What's actually been validated, precisely**: the real documented
-scenario — `docker compose up -d --scale api=2` (2 `api` replicas, the
-setup the 400-thread ceiling math above describes) plus
-`GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` on both replicas
-(confirmed identical via `docker inspect`, not assumed — a first attempt
-using `--no-recreate` left one replica at the default 100% sampling while
-only the other picked up the override), then `./run.sh spike` with no
-overrides, so the full defaults ran: 600 threads, 10s ramp, 60s duration.
-Result: 348,697 samples, 0% errors, mean 94.5ms, p95 164ms, p99 220ms,
-**max 3560ms** — a real saturation signal (response time climbing well
-above the ~85-99ms baseline average under sustained peak load), both
-`check-thresholds.sh` gates passed. This run was unattended (no Prometheus/
-Grafana stack up alongside it), so `tomcat.threads.busy`/
-`tomcat.connections.current` weren't directly observed during the run —
-the saturation evidence here is the response-time climb from the JMeter
-side, not a live Tomcat-metrics confirmation. An earlier short (15s),
-single-replica smoke run at the same 600-thread default also showed the
-same pattern (85ms baseline → 1474ms max) — consistent behavior across
-both runs, not a fluke of either one.
+**Real-scale validation** (all four profiles, 2 `api` replicas, full
+defaults — see the "Real-scale validation results" section below for
+numbers): set up via `docker compose up -d --scale api=2` plus
+`GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` on both replicas (confirmed
+identical via `docker inspect`, not assumed — a first attempt using
+`--no-recreate` left one replica at the default 100% sampling while only
+the other picked up the override). spike's max response time (3560ms,
+climbing from an ~85-99ms baseline average) is the real saturation signal
+this profile exists to produce. These runs were unattended (no Prometheus/
+Grafana stack up alongside them), so `tomcat.threads.busy`/
+`tomcat.connections.current` weren't directly observed — the saturation
+evidence is the response-time climb from the JMeter side, not a live
+Tomcat-metrics confirmation. An earlier short (15s), single-replica smoke
+run of spike at the same 600-thread default showed the same pattern (85ms
+baseline → 1474ms max) — consistent across both runs, not a fluke of
+either one.
 
 **What to watch in Grafana during spike/soak**: `tomcat.threads.busy`,
 `tomcat.threads.current`, and `tomcat.connections.current` (Micrometer/
@@ -141,10 +138,31 @@ defensively in bash (`${PROFILE:-steady-state}`, not relying on GitHub's
 own expression-level `||`) specifically because that exact path hasn't
 been exercised by a real cron firing yet.
 
-## Not yet run at real scale
+## Real-scale validation results
 
-`spike` has now been validated at real scale (2 replicas, full 60s
-duration — see above). `steady-state`, `ramp-up`, and `soak` have only
-been run as quick single-replica smoke checks (via `smoke-test.sh` and
-ad hoc local runs while building this tier), not at their documented
-real scale/duration against 2 `api` replicas.
+All four profiles have now been run at their full documented scale (2
+`api` replicas, full default thread count/duration, no `-J` overrides),
+in the same session:
+
+| Profile | Samples | Error rate | p95 | Notes |
+|---|---|---|---|---|
+| `steady-state` | 28,441 | 0% | 11ms | Clean baseline |
+| `ramp-up` | 165,241 | 0.0006% (1 error) | 10ms | Isolated single error, not investigated further |
+| `spike` | 348,697 | 0% | 164ms (max 3560ms) | Real saturation signal — see above |
+| `soak` | 340,304 | 0.031% | 8ms (max 268ms) | See token-TTL note below — no leak/exhaustion signal otherwise |
+
+**`soak`'s error burst, explained, not just noted**: 105 of soak's errors
+(all of them) were `401 Unauthorized`, all firing within a ~23ms window
+across all 35 threads simultaneously, at the exact moment the run's
+1-hour duration elapsed. This is not an app bug — `soak.jmx` logs in once
+at the start via `common/login.jmx` and never re-authenticates, and the
+JWT's TTL is a documented, deliberate 60 minutes with **no refresh token**
+(see `docs/architecture.md`'s "Authentication" section — a token expiring
+mid-session is an accepted tradeoff for this project's scope). A soak run
+at or beyond 60 minutes will always show this same tail-end 401 burst by
+design; it's the documented auth tradeoff actually manifesting in a real
+test for the first time, not a defect in the app or the test. Decided
+(2026-08-24) to document this rather than add mid-run re-authentication to
+`soak.jmx` — keeps the test's purpose (leak/exhaustion detection) separate
+from re-exercising a tradeoff that's already covered by the auth test
+suite.
