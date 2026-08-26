@@ -164,8 +164,22 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       # Workaround for Grafana 13 bundled-plugin update bug
       GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      # Disables Grafana's "Live" websocket streaming feature. Tested as a hypothesis for the OOM
+      # investigation below (see the memory limit comment further down) and ruled out -- it did NOT
+      # stop the memory growth on its own. Left disabled anyway since chaos-demo.sh's screenshots
+      # only need the `refresh=15s` HTTP poll already in its URL, not push-based live updates --
+      # one less feature running for no benefit here, not a load-bearing fix.
+      GF_LIVE_MAX_CONNECTIONS: "0"
+    ports:
+      # Direct host access, bypassing Traefik. Needed so dashboard screenshots stay reachable even
+      # when Traefik itself is the link being taken offline in load-tests/chaos-demo.sh -- Grafana
+      # displays historical Prometheus/Loki/Tempo data and has no reason to depend on Traefik being
+      # up. Not used for normal access (that's still http://localhost/grafana/ through Traefik).
+      - "3001:3000"
     volumes:
       - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     labels:
       - traefik.enable=true
@@ -174,7 +188,21 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          # Idle/cold-start memory is a comfortable ~155-170MB; one dashboard load (with all its
+          # panel queries/JS bundle) settles around ~410-420MB. The real driver behind repeated
+          # OOM kills at 256m/384m/768m/1024m during load-tests/chaos-demo.sh development wasn't
+          # the memory number at all -- it was screenshot-daemon.js calling page.reload() before
+          # every shot, which re-bootstraps Grafana's entire frontend and re-initializes a fresh
+          # server-side dashboard view each time even within the same browser session. Navigating
+          # once and reusing the already-loaded, auto-refreshing page for every subsequent
+          # screenshot plateaus memory instead of climbing unboundedly -- confirmed under a real,
+          # full chaos-demo.sh run (background load + all 5 outages + 11 screenshots): it completed
+          # successfully end to end with no crash, unlike every earlier reload-based attempt. At
+          # 512m it still climbed to the full ceiling by the end (real combined load pushes higher
+          # than the ~417-420MB seen testing screenshots in isolation), so 768m for actual headroom
+          # rather than leaving ~0MB margin. See status/claude_code_2026-08-24.md for the full
+          # investigation.
+          memory: 768m
     networks:
       - grid-meter
 

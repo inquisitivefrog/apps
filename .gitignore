@@ -20,3 +20,7 @@ coverage/
 # jmeter.log is JMeter's own default log file when run without an explicit -j path.
 grid-meter-app/load-tests/results/
 jmeter.log
+
+# chaos-demo.sh's dashboard screenshots -- run artifacts, not versioned. Copy specific ones out
+# manually if you want to keep/share a particular run's images.
+grid-meter-app/load-tests/screenshots/
