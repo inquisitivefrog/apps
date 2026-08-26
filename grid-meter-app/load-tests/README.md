@@ -17,12 +17,12 @@ Grafana while a run happens).
   probability` to 100%, fine for normal dev but not for hundreds of
   requests/sec. Set `GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` (or
   similar) as an env var on the `api` container before a real steady-state/
-  ramp-up/spike/soak run.
+  ramp-up/spike-profile/soak run.
 
 ## Running a profile
 
 ```
-./run.sh <steady-state|ramp-up|spike|soak> [-Jname=value ...]
+./run.sh <steady-state|ramp-up|rapid-spike|gentle-spike|soak> [-Jname=value ...]
 ```
 
 Writes a timestamped results directory (`results/<profile>-<timestamp>/`,
@@ -34,9 +34,9 @@ non-zero if a gate is breached.
 
 Any property (see `config/load-test.properties` and each profile's own
 Thread Group defaults below) can be overridden per run, e.g. a fast local
-sanity check: `./run.sh spike -Jduration=15 -JmeterPoolSize=5`.
+sanity check: `./run.sh rapid-spike -Jduration=15 -JmeterPoolSize=5`.
 
-**`./smoke-test.sh`** runs all four profiles with small/fast overrides back
+**`./smoke-test.sh`** runs all five profiles with small/fast overrides back
 to back — not a real load test, just a quick "did I break something" check
 after editing a fragment or profile.
 
@@ -46,18 +46,41 @@ after editing a fragment or profile.
 |---|---|---|
 | `steady-state.jmx` | Realistic sustained traffic, the baseline | 20 threads, 10s ramp, 300s duration, 200ms think time |
 | `ramp-up.jmx` | Gradually increasing load, to find the knee of the curve | 0→150 threads over 150s (1 thread/s), holds at peak for the rest of a 300s duration |
-| `spike.jmx` | Sudden burst, to check Traefik/Tomcat behavior under shock | Fast ramp (10s) to 600 threads, holds for a 60s duration, no think time |
+| `rapid-spike.jmx` | Sudden burst, to check Traefik/Tomcat behavior under a near-instant shock | Fast ramp (10s) to 600 threads, holds for a 60s duration, no think time |
+| `gentle-spike.jmx` | The same target overload as `rapid-spike.jmx`, reached gradually instead — isolates onset speed from sustained overload as separate variables | Gentle ramp (60s) to 600 threads, holds for a 120s duration, no think time |
 | `soak.jmx` | Extended duration at moderate load, to catch slow leaks (connection pool exhaustion, unbounded caches) | 35 threads, 30s ramp, 3600s (1hr) duration, 300ms think time |
 
-**Why 600 for spike**: Spring Boot's embedded Tomcat defaults to
-`server.tomcat.threads.max=200` per instance (now explicit in
+**Why 600 for the spike profiles**: Spring Boot's embedded Tomcat defaults
+to `server.tomcat.threads.max=200` per instance (now explicit in
 `application.yml`, not an accident of the parent POM). With 2 replicas
 behind Traefik, that's a 400-thread ceiling on total request-handling
 capacity before requests queue at `accept-count` (100/instance). A spike
 test that stays under that ceiling doesn't actually exercise shock
 behavior — 600 is 150% of it, chosen to force visible saturation (queuing,
 climbing latency, and whether Traefik/Tomcat degrade gracefully or not)
-without being an arbitrary unbounded flood.
+without being an arbitrary unbounded flood. Both spike profiles target the
+same 600 threads; only the ramp speed differs (10s vs. 60s), specifically
+to separate "onset shock" from "sustained overload" as two different things
+to observe — see the real-run comparison below.
+
+**`rapid-spike` vs. `gentle-spike`, a real comparison**: a clean
+`autoscale-demo.sh` run against a single `api` replica (93,162 samples,
+1.79% error rate) had its failures bucketed into 5-second windows, showing
+**all** errors clustered in
+the first 10 seconds — 49.95% then 7.34% error rate, exactly matching
+JMeter's own 10s ramp-up window — and **zero errors for the remaining ~80
+seconds** of sustained 600-thread load, even before autoscaling's ~15-24s
+reaction window had finished scaling out. That's a client-side
+thread-creation thundering-herd hitting Tomcat's `accept-count` queue on
+arrival, not a sustained-capacity problem — the single replica handled the
+*sustained* 600-thread load fine once past that initial burst.
+`gentle-spike.jmx` exists to test that read directly: spread the same 600
+threads' arrival over 60s instead of 10s, and see whether the burst-driven
+errors disappear entirely (supporting the "it's onset speed, not sustained
+capacity" reading) or whether some baseline error rate persists regardless
+of ramp speed (which would point at real sustained-capacity saturation
+instead). Not yet run at full scale — this is the hypothesis it's designed
+to test, not a result yet.
 
 **Real-scale validation** (all four profiles, 2 `api` replicas, full
 defaults — see the "Real-scale validation results" section below for
@@ -65,23 +88,26 @@ numbers): set up via `docker compose up -d --scale api=2` plus
 `GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` on both replicas (confirmed
 identical via `docker inspect`, not assumed — a first attempt using
 `--no-recreate` left one replica at the default 100% sampling while only
-the other picked up the override). spike's max response time (3560ms,
+the other picked up the override). rapid-spike's max response time (3560ms,
 climbing from an ~85-99ms baseline average) is the real saturation signal
 this profile exists to produce. These runs were unattended (no Prometheus/
 Grafana stack up alongside them), so `tomcat.threads.busy`/
 `tomcat.connections.current` weren't directly observed — the saturation
 evidence is the response-time climb from the JMeter side, not a live
 Tomcat-metrics confirmation. An earlier short (15s), single-replica smoke
-run of spike at the same 600-thread default showed the same pattern (85ms
-baseline → 1474ms max) — consistent across both runs, not a fluke of
-either one.
+run of rapid-spike at the same 600-thread default showed the same pattern
+(85ms baseline → 1474ms max) — consistent across both runs, not a fluke of
+either one. (At the time of this run, the profile was still named
+`spike.jmx`, later relabeled `rapid-spike.jmx` when `gentle-spike.jmx` was
+added — same test, same numbers, new name.)
 
-**What to watch in Grafana during spike/soak**: `tomcat.threads.busy`,
-`tomcat.threads.current`, and `tomcat.connections.current` (Micrometer/
-Actuator, already scraped via `/actuator/prometheus` — no extra wiring
-needed) alongside JVM heap and the Kafka/Postgres/Redis panels. Tomcat's
-own saturation is a first-class signal here, not just an infra afterthought
-— the whole point of the spike profile is watching it happen.
+**What to watch in Grafana during the spike profiles/soak**:
+`tomcat.threads.busy`, `tomcat.threads.current`, and
+`tomcat.connections.current` (Micrometer/Actuator, already scraped via
+`/actuator/prometheus` — no extra wiring needed) alongside JVM heap and the
+Kafka/Postgres/Redis panels. Tomcat's own saturation is a first-class
+signal here, not just an infra afterthought — the whole point of the spike
+profiles is watching it happen.
 
 ## How each profile is built
 
@@ -140,15 +166,16 @@ been exercised by a real cron firing yet.
 
 ## Real-scale validation results
 
-All four profiles have now been run at their full documented scale (2
-`api` replicas, full default thread count/duration, no `-J` overrides),
+Four of the five profiles have now been run at their full documented scale
+(2 `api` replicas, full default thread count/duration, no `-J` overrides),
 in the same session:
 
 | Profile | Samples | Error rate | p95 | Notes |
 |---|---|---|---|---|
 | `steady-state` | 28,441 | 0% | 11ms | Clean baseline |
 | `ramp-up` | 165,241 | 0.0006% (1 error) | 10ms | Isolated single error, not investigated further |
-| `spike` | 348,697 | 0% | 164ms (max 3560ms) | Real saturation signal — see above |
+| `rapid-spike` | 348,697 | 0% | 164ms (max 3560ms) | Real saturation signal — see above (run before this profile was relabeled from `spike`) |
+| `gentle-spike` | — | — | — | Not yet run at full scale — added to isolate onset speed from sustained overload, see above |
 | `soak` | 340,304 | 0.031% | 8ms (max 268ms) | See token-TTL note below — no leak/exhaustion signal otherwise |
 
 **`soak`'s error burst, explained, not just noted**: 105 of soak's errors

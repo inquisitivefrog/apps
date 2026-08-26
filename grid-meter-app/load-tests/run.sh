@@ -4,8 +4,8 @@
 # 5.6.3 — see docs/tech-stack-versions.md). Requires traefik/api/postgres/kafka/redis already up
 # (docker compose up), same as scripts/run-black-box-api-tests.sh in the api/ test tier.
 #
-# Usage: load-tests/run.sh <steady-state|ramp-up|spike|soak> [-Jname=value ...]
-# Example: load-tests/run.sh spike -Jduration=15   (shorten a real run for a quick local check)
+# Usage: load-tests/run.sh <steady-state|ramp-up|rapid-spike|gentle-spike|soak> [-Jname=value ...]
+# Example: load-tests/run.sh rapid-spike -Jduration=15   (shorten a real run for a quick local check)
 #
 # After the run, checks the result against check-thresholds.sh's coarse gates (error rate < 1%,
 # p95 latency ceiling) and exits non-zero if either is breached — see docs/testing-strategy.md for
@@ -16,9 +16,9 @@ cd "$(dirname "$0")"
 
 PROFILE="${1:-}"
 case "$PROFILE" in
-  steady-state|ramp-up|spike|soak) ;;
+  steady-state|ramp-up|rapid-spike|gentle-spike|soak) ;;
   *)
-    echo "Usage: $0 <steady-state|ramp-up|spike|soak> [-Jname=value ...]" >&2
+    echo "Usage: $0 <steady-state|ramp-up|rapid-spike|gentle-spike|soak> [-Jname=value ...]" >&2
     exit 1
     ;;
 esac

@@ -109,7 +109,12 @@ to maintain:
 
 - **Steady state** — realistic sustained traffic, the baseline
 - **Ramp-up** — gradually increasing load, to find the knee of the curve
-- **Spike** — sudden burst, to check Traefik/Tomcat behavior under shock
+- **Rapid spike** — sudden burst (10s ramp), to check Traefik/Tomcat
+  behavior under a near-instant shock
+- **Gentle spike** — the same target overload as rapid spike, reached via a
+  much longer, gentler ramp (60s) instead — isolates onset speed from
+  sustained overload as separate variables; see `load-tests/README.md`
+  for what a real-run comparison between the two showed
 - **Soak** — extended duration at moderate load, to catch slow leaks
   (connection pool exhaustion, unbounded caches)
 
@@ -138,6 +143,6 @@ workflow failed due to the other jobs, not this one).
    (Vitest) + `tsc -b`/`vite build`. Required check as of 2026-08-24.
 4. Load tests — `workflow_dispatch` (manual) or nightly `schedule`, results
    posted for review, does not block anything. `load-tests/` (JMeter plans:
-   `steady-state`/`ramp-up`/`spike`/`soak`, see `load-tests/README.md`) now
-   exists and is runnable locally via `load-tests/run.sh`; CI wiring itself
-   is still a follow-up.
+   `steady-state`/`ramp-up`/`rapid-spike`/`gentle-spike`/`soak`, see
+   `load-tests/README.md`) now exists and is runnable locally via
+   `load-tests/run.sh`; CI wiring itself is still a follow-up.

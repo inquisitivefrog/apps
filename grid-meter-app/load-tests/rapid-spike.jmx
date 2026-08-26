@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
-    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="spike" enabled="true">
-      <stringProp name="TestPlan.comments">Sudden burst, to check Traefik/Tomcat behavior under shock — see ../docs/testing-strategy.md. Default: fast ramp (10s) to 600 threads — 150% of the 400-thread connector ceiling (2 replicas x server.tomcat.threads.max=200, see application.yml) — held for the remainder of the 60s duration, deliberately exceeding capacity to force visible saturation (Tomcat's accept-count queue, Traefik behavior) rather than staying safely under it. Watch tomcat.threads.busy/tomcat.connections.current in Grafana. Run via ./run.sh spike.</stringProp>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="rapid-spike" enabled="true">
+      <stringProp name="TestPlan.comments">Sudden burst, to check Traefik/Tomcat behavior under a near-instant shock — see ../docs/testing-strategy.md. Default: fast ramp (10s) to 600 threads — 150% of the 400-thread connector ceiling (2 replicas x server.tomcat.threads.max=200, see application.yml) — held for the remainder of the 60s duration, deliberately exceeding capacity to force visible saturation (Tomcat's accept-count queue, Traefik behavior) rather than staying safely under it. Watch tomcat.threads.busy/tomcat.connections.current in Grafana. See ../gentle-spike.jmx for the same target load reached via a much longer, gentler ramp instead — useful for isolating "onset speed" from "sustained overload" as separate variables. Run via ./run.sh rapid-spike.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
@@ -32,7 +32,7 @@
         </IncludeController>
         <hashTree/>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="spike load" enabled="true">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="rapid-spike load" enabled="true">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
           <boolProp name="LoopController.continue_forever">true</boolProp>

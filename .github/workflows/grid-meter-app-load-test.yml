@@ -16,14 +16,15 @@ on:
         options:
           - steady-state
           - ramp-up
-          - spike
+          - rapid-spike
+          - gentle-spike
           - soak
       duration_seconds:
         description: "Override duration in seconds (blank = profile default)"
         required: false
         type: string
   schedule:
-    # Nightly steady-state smoke, kept short (120s) to bound CI minutes — spike/ramp-up/soak are
+    # Nightly steady-state smoke, kept short (120s) to bound CI minutes — the spike profiles/ramp-up/soak are
     # for deliberate workflow_dispatch runs, not every night.
     - cron: "0 6 * * *"
 

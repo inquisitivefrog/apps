@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Real Docker Compose autoscaling demo: starts api at a single replica, launches a JMeter spike
-# against it, and lets load-tests/autoscale-watcher.sh detect real CPU/memory pressure and scale
+# Real Docker Compose autoscaling demo: starts api at a single replica, launches a JMeter
+# rapid-spike run against it, and lets load-tests/autoscale-watcher.sh detect real CPU/memory
+# pressure and scale
 # api out to 2 replicas on its own -- then scale back in once load subsides. Captures a dashboard
 # screenshot at each transition and logs resource usage throughout, same evidence pattern as
 # chaos-demo.sh. See docs/autoscaling-scope.md for why autoscaling is scoped to api only, and
@@ -105,10 +106,10 @@ banner "Baseline: 15s settle, then a baseline screenshot (1 replica)."
 sleep 15
 shoot "00-baseline.png" "baseline, 1 replica"
 
-banner "Launching a ${SPIKE_DURATION}s spike against the single api replica (600 threads vs its 200-thread ceiling)."
+banner "Launching a ${SPIKE_DURATION}s rapid-spike run against the single api replica (600 threads vs its 200-thread ceiling)."
 (
   cd load-tests
-  ./run.sh spike -Jduration="$SPIKE_DURATION" > /tmp/autoscale-demo-load.log 2>&1
+  ./run.sh rapid-spike -Jduration="$SPIKE_DURATION" > /tmp/autoscale-demo-load.log 2>&1
 ) &
 LOAD_PID=$!
 shoot "01-spike-started.png" "spike started, still 1 replica"
