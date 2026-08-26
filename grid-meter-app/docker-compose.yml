@@ -70,6 +70,12 @@ services:
       resources:
         limits:
           memory: 512m
+          # Bounds docker stats' CPU% to a stable, meaningful number for
+          # load-tests/autoscale-watcher.sh's trigger threshold -- without a limit, CPU% is
+          # relative to however many cores happen to be free on the host, making "80%" ambiguous
+          # and non-reproducible across machines. Matches realistic production practice too (a
+          # real container/pod almost always has a CPU limit, not just memory).
+          cpus: "1.0"
     networks:
       - grid-meter
     # Run multiple replicas with: docker compose up --scale api=2

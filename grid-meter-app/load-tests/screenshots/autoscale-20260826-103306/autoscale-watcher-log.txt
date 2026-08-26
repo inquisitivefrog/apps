@@ -1,0 +1,45 @@
+2026-08-26T17:33:07Z watcher started: CPU_THRESHOLD=75% MEM_THRESHOLD=80% poll=5s scale_up_streak=3 scale_down_streak=12 bounds=[1,2]
+2026-08-26T17:33:08Z replicas=1 high_streak=1 low_streak=1 grid-meter-app-api-1(cpu=0.37%,mem=98.43%)
+2026-08-26T17:33:15Z replicas=1 high_streak=2 low_streak=2 grid-meter-app-api-1(cpu=0.42%,mem=98.57%)
+2026-08-26T17:33:23Z replicas=1 high_streak=3 low_streak=3 grid-meter-app-api-1(cpu=0.47%,mem=98.43%)
+2026-08-26T17:33:23Z SCALING OUT: 1 -> 2 (sustained pressure for 3 polls)
+ Container grid-meter-app-postgres-1 Running 
+ Container grid-meter-app-api-1 Running 
+ Container grid-meter-app-kafka-1 Running 
+ Container grid-meter-app-redis-1 Running 
+ Container grid-meter-app-api-2 Creating 
+ Container grid-meter-app-api-2 Created 
+ Container grid-meter-app-api-2 Starting 
+ Container grid-meter-app-api-2 Started 
+2026-08-26T17:33:31Z replicas=2 high_streak=1 low_streak=0 grid-meter-app-api-1(cpu=96.69%,mem=99.97%) grid-meter-app-api-2(cpu=99.02%,mem=50.75%)
+2026-08-26T17:33:40Z replicas=2 high_streak=2 low_streak=0 grid-meter-app-api-1(cpu=20.11%,mem=99.97%) grid-meter-app-api-2(cpu=100.23%,mem=80.29%)
+2026-08-26T17:33:49Z replicas=2 high_streak=3 low_streak=0 grid-meter-app-api-1(cpu=43.65%,mem=99.95%) grid-meter-app-api-2(cpu=99.03%,mem=84.53%)
+2026-08-26T17:33:57Z replicas=2 high_streak=4 low_streak=0 grid-meter-app-api-1(cpu=60.76%,mem=99.97%) grid-meter-app-api-2(cpu=105.17%,mem=90.23%)
+2026-08-26T17:34:06Z replicas=2 high_streak=5 low_streak=0 grid-meter-app-api-1(cpu=85.40%,mem=99.97%) grid-meter-app-api-2(cpu=102.66%,mem=97.82%)
+2026-08-26T17:34:14Z replicas=2 high_streak=6 low_streak=0 grid-meter-app-api-1(cpu=89.56%,mem=99.94%) grid-meter-app-api-2(cpu=99.37%,mem=99.75%)
+2026-08-26T17:34:22Z replicas=2 high_streak=7 low_streak=0 grid-meter-app-api-1(cpu=56.74%,mem=99.81%) grid-meter-app-api-2(cpu=100.02%,mem=99.67%)
+2026-08-26T17:34:31Z replicas=2 high_streak=8 low_streak=0 grid-meter-app-api-1(cpu=101.17%,mem=99.92%) grid-meter-app-api-2(cpu=69.32%,mem=99.94%)
+2026-08-26T17:34:40Z replicas=2 high_streak=9 low_streak=0 grid-meter-app-api-1(cpu=101.07%,mem=21.38%) grid-meter-app-api-2(cpu=98.32%,mem=99.88%)
+2026-08-26T17:34:49Z replicas=2 high_streak=10 low_streak=0 grid-meter-app-api-1(cpu=102.12%,mem=46.02%) grid-meter-app-api-2(cpu=100.27%,mem=99.88%)
+2026-08-26T17:34:57Z replicas=2 high_streak=11 low_streak=0 grid-meter-app-api-1(cpu=99.70%,mem=78.08%) grid-meter-app-api-2(cpu=28.30%,mem=99.81%)
+2026-08-26T17:35:06Z replicas=2 high_streak=12 low_streak=1 grid-meter-app-api-1(cpu=1.66%,mem=79.71%) grid-meter-app-api-2(cpu=0.68%,mem=99.45%)
+2026-08-26T17:35:14Z replicas=2 high_streak=13 low_streak=2 grid-meter-app-api-1(cpu=0.79%,mem=79.76%) grid-meter-app-api-2(cpu=4.92%,mem=99.26%)
+2026-08-26T17:35:22Z replicas=2 high_streak=14 low_streak=3 grid-meter-app-api-1(cpu=2.93%,mem=80.09%) grid-meter-app-api-2(cpu=0.91%,mem=100.00%)
+2026-08-26T17:35:30Z replicas=2 high_streak=15 low_streak=4 grid-meter-app-api-1(cpu=1.84%,mem=80.19%) grid-meter-app-api-2(cpu=6.17%,mem=99.72%)
+2026-08-26T17:35:39Z replicas=2 high_streak=16 low_streak=5 grid-meter-app-api-1(cpu=0.79%,mem=80.20%) grid-meter-app-api-2(cpu=1.79%,mem=99.96%)
+2026-08-26T17:35:48Z replicas=2 high_streak=17 low_streak=6 grid-meter-app-api-1(cpu=1.62%,mem=80.29%) grid-meter-app-api-2(cpu=0.45%,mem=99.49%)
+2026-08-26T17:35:56Z replicas=2 high_streak=18 low_streak=7 grid-meter-app-api-1(cpu=1.55%,mem=80.28%) grid-meter-app-api-2(cpu=0.76%,mem=99.16%)
+2026-08-26T17:36:05Z replicas=2 high_streak=19 low_streak=8 grid-meter-app-api-1(cpu=0.61%,mem=75.33%) grid-meter-app-api-2(cpu=1.53%,mem=98.47%)
+2026-08-26T17:36:13Z replicas=2 high_streak=20 low_streak=9 grid-meter-app-api-1(cpu=1.14%,mem=75.39%) grid-meter-app-api-2(cpu=0.91%,mem=99.09%)
+2026-08-26T17:36:21Z replicas=2 high_streak=21 low_streak=10 grid-meter-app-api-1(cpu=2.04%,mem=75.41%) grid-meter-app-api-2(cpu=0.98%,mem=99.64%)
+2026-08-26T17:36:30Z replicas=2 high_streak=22 low_streak=11 grid-meter-app-api-1(cpu=0.97%,mem=75.55%) grid-meter-app-api-2(cpu=0.61%,mem=99.97%)
+2026-08-26T17:36:39Z replicas=2 high_streak=23 low_streak=12 grid-meter-app-api-1(cpu=1.05%,mem=75.39%) grid-meter-app-api-2(cpu=0.58%,mem=99.98%)
+2026-08-26T17:36:39Z SCALING IN: 2 -> 1 (sustained calm for 12 polls)
+ Container grid-meter-app-kafka-1 Running 
+ Container grid-meter-app-api-1 Running 
+ Container grid-meter-app-redis-1 Running 
+ Container grid-meter-app-postgres-1 Running 
+ Container grid-meter-app-api-2 Stopping 
+ Container grid-meter-app-api-2 Stopped 
+ Container grid-meter-app-api-2 Removing 
+ Container grid-meter-app-api-2 Removed 
