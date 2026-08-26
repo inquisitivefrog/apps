@@ -79,8 +79,17 @@ threads' arrival over 60s instead of 10s, and see whether the burst-driven
 errors disappear entirely (supporting the "it's onset speed, not sustained
 capacity" reading) or whether some baseline error rate persists regardless
 of ramp speed (which would point at real sustained-capacity saturation
-instead). Not yet run at full scale — this is the hypothesis it's designed
-to test, not a result yet.
+instead).
+
+**Answered, at full scale, same single-`api`-replica setup**: `gentle-spike`
+produced **92,034 samples, 0.00% errors** (p95 795ms — the coarse latency
+gate still fails, as expected under deliberate 600-thread overload on one
+replica, but the error rate itself dropped to zero). The slower ramp
+eliminated every one of `rapid-spike`'s burst-driven errors entirely —
+confirming the "onset speed, not sustained capacity" reading directly,
+not just as a hypothesis. Same target load, same replica count, only the
+ramp speed changed: `rapid-spike` (10s ramp) → 1.79% errors, all in the
+first 10 seconds; `gentle-spike` (60s ramp) → 0.00% errors throughout.
 
 ## A third scenario: misconfigured for bursts (`misconfigured-spike-demo.sh`)
 
@@ -212,16 +221,17 @@ been exercised by a real cron firing yet.
 
 ## Real-scale validation results
 
-Four of the five profiles have now been run at their full documented scale
-(2 `api` replicas, full default thread count/duration, no `-J` overrides),
-in the same session:
+All five profiles have now been run at their full documented scale (full
+default thread count/duration, no `-J` overrides); four at 2 `api`
+replicas in the same session, `gentle-spike` at a single replica to match
+the `rapid-spike` comparison above:
 
 | Profile | Samples | Error rate | p95 | Notes |
 |---|---|---|---|---|
 | `steady-state` | 28,441 | 0% | 11ms | Clean baseline |
 | `ramp-up` | 165,241 | 0.0006% (1 error) | 10ms | Isolated single error, not investigated further |
 | `rapid-spike` | 348,697 | 0% | 164ms (max 3560ms) | Real saturation signal — see above (run before this profile was relabeled from `spike`) |
-| `gentle-spike` | — | — | — | Not yet run at full scale — added to isolate onset speed from sustained overload, see above |
+| `gentle-spike` | 92,034 | 0% | 795ms | Run at full default scale against a **single** `api` replica (not 2, to match the `rapid-spike` comparison above) — see above |
 | `soak` | 340,304 | 0.031% | 8ms (max 268ms) | See token-TTL note below — no leak/exhaustion signal otherwise |
 
 **`soak`'s error burst, explained, not just noted**: 105 of soak's errors
