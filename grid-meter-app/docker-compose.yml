@@ -52,6 +52,12 @@ services:
       - postgres
       - kafka
       - redis
+    # Discovered 2026-08-25 via load-tests/chaos-demo.sh: restarting the api container can
+    # occasionally race Docker's embedded DNS registering "kafka" again fast enough -- Spring
+    # Kafka builds its consumer eagerly within the first second of context startup, and a resolve
+    # failure there is fatal (crashes the whole app, not just the listener) with no default restart
+    # policy, so it stays dead. A transient DNS race on restart should be retried, not fatal.
+    restart: on-failure:5
     labels:
       - traefik.enable=true
       # Actuator endpoints live outside /api/v1 deliberately (see api-and-data-model.md) —
