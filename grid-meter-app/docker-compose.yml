@@ -6,6 +6,12 @@ services:
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
       - --api.dashboard=true
+      # Exposed on the same internal :8080 entrypoint as the dashboard/API above, at /metrics --
+      # scraped by Prometheus below. Needed because a request Tomcat's accept-count queue refuses
+      # never reaches api's own Spring MVC layer at all, so Micrometer's http.server.requests
+      # metric never sees it (not as a success, not as a failure) -- Traefik itself is what
+      # generates the resulting 502, so it's the only place this failure class is visible.
+      - --metrics.prometheus=true
     ports:
       - "80:80"
       - "8080:8080" # Traefik dashboard

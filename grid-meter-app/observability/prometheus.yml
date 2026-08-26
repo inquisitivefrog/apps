@@ -6,3 +6,11 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     static_configs:
       - targets: ["api:8080"]
+
+  # Edge-level request/status metrics -- see docker-compose.yml's traefik command for why this
+  # exists alongside the app-level scrape above: a request refused by Tomcat's accept-count queue
+  # never reaches api's own metrics at all, only Traefik's.
+  - job_name: traefik
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["traefik:8080"]

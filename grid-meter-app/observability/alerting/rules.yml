@@ -65,6 +65,40 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [5] }
 
+      # Fires on a sustained edge-level 5xx rate at Traefik itself -- covers what
+      # high-error-rate (above) structurally cannot: a request Tomcat's accept-count queue
+      # refuses never reaches api's own Spring MVC layer at all, so Micrometer's
+      # http.server.requests metric never records it, success or failure. Traefik is what
+      # generates the resulting 502, so its own request/status metric is the only place this
+      # failure class is visible. See load-tests/README.md's misconfigured-spike-demo.sh section
+      # for the real diagnostic (a live burst with genuine 9% app-level errors produced a
+      # 0% high-error-rate reading throughout) that found this gap.
+      - uid: edge-5xx-rate
+        title: High Traefik edge error rate
+        condition: C
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Traefik's 5xx rate for the api service has exceeded 5% for 30s."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: '100 * (sum(rate(traefik_service_requests_total{service="api@docker", code=~"5.."}[5m])) or vector(0)) / sum(rate(traefik_service_requests_total{service="api@docker"}[5m]))'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+
       # Fires when Tomcat's thread pool is under real saturation pressure (see
       # load-tests/README.md's spike profile, which deliberately drives this).
       - uid: tomcat-threads-saturated
