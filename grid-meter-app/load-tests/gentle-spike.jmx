@@ -31,6 +31,10 @@
           <stringProp name="IncludeController.includepath">common/provision-meters.jmx</stringProp>
         </IncludeController>
         <hashTree/>
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include warmup" enabled="true">
+          <stringProp name="IncludeController.includepath">common/warmup.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
       </hashTree>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="gentle-spike load" enabled="true">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>

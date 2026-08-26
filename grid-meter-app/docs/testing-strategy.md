@@ -125,6 +125,20 @@ to maintain:
 - **Soak** — extended duration at moderate load, to catch slow leaks
   (connection pool exhaustion, unbounded caches)
 
+The four `.jmx` profiles above (not the misconfigured-for-bursts scenario)
+each include a **JVM warm-up phase** (`common/warmup.jmx`, 50 throwaway
+requests by default) before their real measurement window starts —
+standard practice for any Java performance test whose goal is a
+representative steady-state average, not skewed by cold-start behavior. A
+real investigation while building the misconfigured-for-bursts scenario
+found this the hard way: looping the same burst repeatedly without a cold
+JVM showed the error rate decaying from ~6% to under 1% purely from
+JIT/warm-up effects, not from anything about the test itself. The
+misconfigured-for-bursts scenario deliberately skips warm-up — its whole
+point is testing a *cold* JVM's behavior, since that's the realistic
+danger window (a freshly-started replica meeting a burst during
+autoscaling scale-out or a rolling deploy).
+
 Automated gates on load test runs are intentionally coarse — error rate
 < 1%, a p95 latency ceiling — because interpreting *why* a run looks the way
 it does needs a human watching Grafana while it runs, not a pass/fail gate

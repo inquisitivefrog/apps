@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
-    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="ramp-up" enabled="true">
-      <stringProp name="TestPlan.comments">Gradually increasing load, to find the knee of the curve — see ../docs/testing-strategy.md. Default: 0 to 150 threads over 150s (1 thread/s), then holds at peak for the remainder of the 300s duration, watch Grafana as it climbs to see where throughput/latency stop scaling linearly. Run via ./run.sh ramp-up.</stringProp>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="misconfigured-burst" enabled="true">
+      <stringProp name="TestPlan.comments">Internal to load-tests/misconfigured-spike-demo.sh -- not a general-purpose profile, not registered in run.sh's case statement. Identical to rapid-spike.jmx's POST /readings load except HTTPSampler.use_keepalive is false: every single request opens a fresh TCP connection instead of reusing one, so accept-count stays under continuous pressure for the whole run instead of only at onset. Needed because a real run showed rapid-spike's own load (keep-alive on) can't sustain an elevated error rate long enough to trip an alert's 30s-sustained + 5-minute-rate-window requirements -- looping separate rapid-spike bursts back to back against the same persistent JVM was tried first and also failed, for a different, non-obvious reason: JVM/JIT warm-up across repeated bursts measurably raised throughput and cut the error rate on each successive loop (real data: 4.36%/6.82% on the first two iterations, decaying under 1% by the eighth), so a warm JVM drains even a 5-slot queue fast enough regardless. This file trades realism (keep-alive is normally on) for sustaining the demonstration long enough to actually exercise the alerting layer, which per-connection accept-count pressure -- independent of the JVM's request-processing speed -- reproduces reliably.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
@@ -31,21 +31,17 @@
           <stringProp name="IncludeController.includepath">common/provision-meters.jmx</stringProp>
         </IncludeController>
         <hashTree/>
-        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include warmup" enabled="true">
-          <stringProp name="IncludeController.includepath">common/warmup.jmx</stringProp>
-        </IncludeController>
-        <hashTree/>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="ramp-up load" enabled="true">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="misconfigured-burst load" enabled="true">
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
           <boolProp name="LoopController.continue_forever">true</boolProp>
           <stringProp name="LoopController.loops">-1</stringProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">${__P(threads,150)}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">${__P(rampUp,150)}</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${__P(threads,400)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(rampUp,1)}</stringProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
-        <stringProp name="ThreadGroup.duration">${__P(duration,300)}</stringProp>
+        <stringProp name="ThreadGroup.duration">${__P(duration,60)}</stringProp>
         <stringProp name="ThreadGroup.delay">0</stringProp>
       </ThreadGroup>
       <hashTree>
@@ -75,7 +71,7 @@
         </CSVDataSet>
         <hashTree/>
         <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer" testname="Think time" enabled="true">
-          <stringProp name="ConstantTimer.delay">${__P(thinkTimeMs,200)}</stringProp>
+          <stringProp name="ConstantTimer.delay">${__P(thinkTimeMs,0)}</stringProp>
         </ConstantTimer>
         <hashTree/>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /readings" enabled="true">
@@ -96,7 +92,7 @@
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
-          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">false</boolProp>
           <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
           <stringProp name="HTTPSampler.embedded_url_re"></stringProp>
           <stringProp name="HTTPSampler.connect_timeout"></stringProp>

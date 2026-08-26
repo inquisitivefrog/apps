@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demonstrates the "we didn't configure for bursts" failure mode: runs the identical rapid-spike
+# Demonstrates the "we didn't configure for bursts" failure mode: runs an identical sustained
 # burst against a single api replica twice -- once with Tomcat's properly-configured default
 # accept-count (100, see application.yml), once with a deliberately under-provisioned accept-count
 # (5, via SERVER_TOMCAT_ACCEPT_COUNT) -- and reports the contrast. Captures dashboard/alerting
@@ -7,48 +7,62 @@
 # autoscale-demo.sh. Third of the traffic-spike-family test suites, alongside rapid-spike.jmx
 # (sudden burst) and gentle-spike.jmx (same burst, gentler onset) -- see load-tests/README.md.
 #
-# Deliberately overrides rapid-spike.jmx's own 10s-ramp default down to a much sharper ~1s ramp
-# (SPIKE_RAMP below) -- accept-count only bounds the queue of pending *new* connections. HTTP
-# keep-alive (already on for every profile) means once a connection is established, all of that
-# thread's remaining requests reuse it and never touch the accept-count queue again. A first
-# attempt at this demo reused rapid-spike's default 10s ramp at full scale and found the contrast
-# had nearly vanished (0.00% vs 0.019% errors, pure noise) -- 10s is gentle enough that even a
-# tiny queue drains as fast as it fills. Confirmed via a real run, not assumed, before landing on
-# these parameters: a genuinely sharp ~1s onset is what actually exercises accept-count.
+# Uses load-tests/misconfigured-burst.jmx, not rapid-spike.jmx directly -- see that file's own
+# comment for why. Short version: a single sharp rapid-spike-style burst (with HTTP keep-alive on,
+# like every other profile) only exercises accept-count during its brief connection-establishment
+# window, too short for any alert's 30s-sustained + 5-minute-rate-window requirements to ever
+# trip. Looping separate rapid-spike bursts back to back was tried next and also failed, for a
+# different, non-obvious reason confirmed via a real run: JVM/JIT warm-up across repeated bursts
+# against the same persistent process measurably raised throughput and cut the error rate each
+# time (4.36%/6.82% on the first two loop iterations, decaying under 1% by the eighth) -- a warm
+# JVM drains even a 5-slot queue fast enough regardless of the misconfiguration. misconfigured-
+# burst.jmx disables keep-alive instead, so every request opens a fresh connection and accept-count
+# stays under continuous pressure for the whole run, independent of how warm the JVM's own
+# request-processing path gets.
 #
-# Real validation run (2026-08-26, single api replica, identical 400-thread/1s-ramp/10s-duration
-# burst both times): accept-count=100 (default) produced 0.00% errors at p95 4584ms -- the queue
-# absorbed the burst, just slowly. accept-count=5 produced 8.61% errors (all 502 Bad Gateway, i.e.
-# real connection refusals once the undersized queue overflowed) at a similar p95 -- same load,
-# same everything else, only the queue size changed.
+# Real single-burst validation (2026-08-26, keep-alive ON, 400-thread/1s-ramp/10s-duration):
+# accept-count=100 -> 0.00% errors at p95 4584ms (queue absorbs the burst, just slowly);
+# accept-count=5 -> 8.61% errors, 100% genuine 502 Bad Gateway. See load-tests/README.md for the
+# full comparison including gentle-spike. This script's own sustained (keep-alive-off) numbers are
+# separate and recorded in its own run output, not restated here.
 #
 # Prerequisites: same as autoscale-demo.sh -- full stack up (observability tier included),
 # Playwright's Chromium downloaded once (npx --yes playwright install chromium), and the api image
 # rebuilt at least once since SERVER_TOMCAT_ACCEPT_COUNT was added to application.yml
 # (docker compose build api) -- the placeholder has to already be baked into the packaged jar.
+# jq required (already a load-tests/README.md prerequisite for check-thresholds.sh).
 #
 # Usage: load-tests/misconfigured-spike-demo.sh
-#   Tune via BAD_ACCEPT_COUNT / SPIKE_THREADS / SPIKE_RAMP / SPIKE_DURATION env vars if the
+#   Tune via BAD_ACCEPT_COUNT / SPIKE_THREADS / SPIKE_RAMP / BURST_DURATION env vars if the
 #   defaults don't fit. Screenshots + logs land in
 #   load-tests/screenshots/misconfigured-spike-<run-timestamp>/.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
-export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
+# Grafana's HTTP API always lives at root-relative /api/*, regardless of GF_SERVER_SERVE_FROM_
+# SUB_PATH -- that setting only affects the UI's own page/asset URLs (used for GRAFANA_URL/
+# ALERTING_URL below), not the backend API alert_firing() below calls directly.
+GRAFANA_HOST="http://localhost:3001"
+export GRAFANA_URL="${GRAFANA_HOST}/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
+export ALERTING_URL="${GRAFANA_HOST}/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/misconfigured-spike-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"
 
 BAD_ACCEPT_COUNT="${BAD_ACCEPT_COUNT:-5}"
 SPIKE_THREADS="${SPIKE_THREADS:-400}"
 SPIKE_RAMP="${SPIKE_RAMP:-1}"
-SPIKE_DURATION="${SPIKE_DURATION:-10}"
+BURST_DURATION="${BURST_DURATION:-90}"
 
 banner() {
   echo
   echo "================================================================"
   echo "$1"
   echo "================================================================"
+}
+
+alert_firing() {
+  curl -s "$GRAFANA_HOST/api/prometheus/grafana/api/v1/rules" 2>/dev/null | \
+    jq -e --arg name "$1" '.data.groups[].rules[] | select(.name==$name) | .state=="firing"' >/dev/null 2>&1
 }
 
 # api's own /actuator/health passing does NOT prove Traefik has finished registering a
@@ -111,15 +125,25 @@ cleanup() {
 trap cleanup EXIT
 
 shoot() {
+  # $1 = output filename (no path), $2 = human-readable label for the log line
   local out="$RUN_DIR/$1"
-  echo "Screenshot: $2 -> $out"
+  echo "Screenshot: $2 (dashboard) -> $out"
   echo "dashboard|$out" >&3
   for _ in $(seq 1 30); do
-    grep -qF "DONE:$out" "$SCREENSHOT_LOG" 2>/dev/null && return 0
-    grep -qF "FAILED:$out" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; return 0; }
+    grep -qF "DONE:$out" "$SCREENSHOT_LOG" 2>/dev/null && break
+    grep -qF "FAILED:$out" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; break; }
     sleep 1
   done
-  echo "  (screenshot timed out waiting for daemon ack -- continuing)"
+
+  local alertsOut="${out%.png}-alerts.png"
+  echo "Screenshot: $2 (alerting) -> $alertsOut"
+  echo "alerts|$alertsOut" >&3
+  for _ in $(seq 1 30); do
+    grep -qF "DONE:$alertsOut" "$SCREENSHOT_LOG" 2>/dev/null && return 0
+    grep -qF "FAILED:$alertsOut" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; return 0; }
+    sleep 1
+  done
+  echo "  (alerting screenshot timed out waiting for daemon ack -- continuing)"
 }
 
 run_phase() {
@@ -128,33 +152,114 @@ run_phase() {
   sleep 15
   shoot "${prefix}-00-baseline.png" "$label baseline"
 
-  banner "Running rapid-spike ($SPIKE_THREADS threads, ${SPIKE_RAMP}s ramp, ${SPIKE_DURATION}s duration) -- $label"
+  banner "Running misconfigured-burst ($SPIKE_THREADS threads, keep-alive off, ${BURST_DURATION}s duration) -- $label"
+  local burst_results="load-tests/results/misconfigured-burst-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$burst_results"
   (
     cd load-tests
-    ./run.sh rapid-spike -Jthreads="$SPIKE_THREADS" -JrampUp="$SPIKE_RAMP" -Jduration="$SPIKE_DURATION" \
+    jmeter -n -t misconfigured-burst.jmx -q config/load-test.properties \
+      -Jthreads="$SPIKE_THREADS" -JrampUp="$SPIKE_RAMP" -Jduration="$BURST_DURATION" \
+      -l "../$burst_results/results.jtl" -e -o "../$burst_results/report" \
+      -j "../$burst_results/jmeter.log" \
       > "/tmp/misconfigured-spike-demo-${prefix}.log" 2>&1
-  )
-  shoot "${prefix}-01-after.png" "$label after the spike"
+  ) &
+  local jmeter_pid=$!
 
-  ls -td load-tests/results/rapid-spike-* | head -1 > "$RUN_DIR/${prefix}-results-dir.txt"
+  # Poll while the burst is still running so a firing alert gets captured live, not just inferred
+  # after the fact.
+  local fired=0
+  while kill -0 "$jmeter_pid" 2>/dev/null; do
+    if alert_firing "High HTTP error rate"; then
+      fired=1
+      break
+    fi
+    sleep 3
+  done
+  if [ "$fired" -eq 1 ]; then
+    echo "High HTTP error rate is now firing -- capturing it live."
+    shoot "${prefix}-01-firing.png" "$label with the alert firing"
+  fi
+  wait "$jmeter_pid" 2>/dev/null || true
+  if [ "$fired" -ne 1 ]; then
+    echo "High HTTP error rate never fired during this phase's run." >&2
+  fi
+  shoot "${prefix}-02-after.png" "$label after the burst"
+
+  echo "$burst_results" > "$RUN_DIR/${prefix}-results-dir.txt"
+}
+
+# Second attempt at sustaining the error rate long enough to trip an alert: sustaining via
+# keep-alive-off (misconfigured-burst.jmx, above) empirically did NOT reproduce the effect either
+# (0.27% errors) -- a real run showed the vulnerability is specific to a genuinely sharp,
+# near-simultaneous burst of *new* connections, not to sustained connection churn spread over
+# time, even at high volume. So: loop the original, keep-alive-ON, sharp rapid-spike burst (the
+# mechanism validated to reliably produce ~7-8% errors under accept-count=5) but recreate api (a
+# cold JVM) before every single iteration -- the first loop attempt (above) showed JVM/JIT warm-up
+# across repeated bursts against the SAME persistent process measurably cuts the error rate each
+# time (4.36%/6.82% decaying under 1% by the eighth loop), so a cold reset each time is what should
+# keep every iteration's error rate consistent instead of decaying away.
+run_cold_reset_loop_phase() {
+  local label="$1" accept_count="$2" prefix="$3" max_iterations="${4:-10}"
+  : > "$RUN_DIR/${prefix}-results-dirs.txt"
+  local fired=0
+  for i in $(seq 1 "$max_iterations"); do
+    reset_api "$accept_count"
+    if [ "$i" -eq 1 ]; then
+      sleep 10
+      shoot "${prefix}-00-baseline.png" "$label baseline"
+    fi
+    (
+      cd load-tests
+      ./run.sh rapid-spike -Jthreads="$SPIKE_THREADS" -JrampUp="$SPIKE_RAMP" -Jduration=10 \
+        > "/tmp/misconfigured-spike-demo-${prefix}-${i}.log" 2>&1
+    )
+    ls -td load-tests/results/rapid-spike-* | head -1 >> "$RUN_DIR/${prefix}-results-dirs.txt"
+    if alert_firing "High HTTP error rate"; then
+      echo "High HTTP error rate is now firing (after $i cold-reset burst(s))."
+      fired=1
+      shoot "${prefix}-01-firing.png" "$label with the alert firing"
+      break
+    fi
+    echo "  cold-reset burst $i done, not firing yet -- looping again..."
+  done
+  if [ "$fired" -ne 1 ]; then
+    echo "High HTTP error rate never fired after $max_iterations cold-reset bursts." >&2
+  fi
+  shoot "${prefix}-02-after.png" "$label after $([ "$fired" -eq 1 ] && echo "the alert fired" || echo "$max_iterations cold-reset bursts")"
 }
 
 run_phase "properly-configured (accept-count=100, the application.yml default)" 100 good
-run_phase "misconfigured (accept-count=$BAD_ACCEPT_COUNT)" "$BAD_ACCEPT_COUNT" bad
+run_cold_reset_loop_phase "misconfigured (accept-count=$BAD_ACCEPT_COUNT)" "$BAD_ACCEPT_COUNT" bad
 
 banner "Comparison"
-for prefix in good bad; do
-  dir=$(cat "$RUN_DIR/${prefix}-results-dir.txt")
-  stats="$dir/report/statistics.json"
-  if [ -f "$stats" ]; then
-    samples=$(jq -r '.Total.sampleCount' "$stats")
-    errpct=$(jq -r '.Total.errorPct' "$stats")
-    p95=$(jq -r '.Total.pct2ResTime' "$stats")
-    echo "$prefix ($dir): samples=$samples  error-rate=${errpct}%  p95=${p95}ms"
-  else
-    echo "$prefix ($dir): no statistics.json found"
-  fi
-done
+dir=$(cat "$RUN_DIR/good-results-dir.txt")
+stats="$dir/report/statistics.json"
+if [ -f "$stats" ]; then
+  samples=$(jq -r '.Total.sampleCount' "$stats")
+  errpct=$(jq -r '.Total.errorPct' "$stats")
+  p95=$(jq -r '.Total.pct2ResTime' "$stats")
+  echo "good ($dir): samples=$samples  error-rate=${errpct}%  p95=${p95}ms"
+else
+  echo "good ($dir): no statistics.json found"
+fi
+
+total_samples=0
+total_errors=0
+burst_count=0
+while read -r bdir; do
+  [ -n "$bdir" ] || continue
+  bstats="$bdir/report/statistics.json"
+  [ -f "$bstats" ] || continue
+  burst_count=$((burst_count + 1))
+  total_samples=$((total_samples + $(jq -r '.Total.sampleCount' "$bstats")))
+  total_errors=$((total_errors + $(jq -r '.Total.errorCount' "$bstats")))
+done < "$RUN_DIR/bad-results-dirs.txt"
+if [ "$total_samples" -gt 0 ]; then
+  agg_err_pct=$(python3 -c "print(round(100*$total_errors/$total_samples, 4))")
+  echo "bad (${burst_count} cold-reset burst(s), $RUN_DIR/bad-results-dirs.txt): samples=$total_samples  errors=$total_errors  error-rate=${agg_err_pct}%"
+else
+  echo "bad: no statistics.json found across any burst"
+fi
 
 echo
 echo "Screenshots + resource log: $RUN_DIR/"

@@ -91,15 +91,25 @@ cleanup() {
 trap cleanup EXIT
 
 shoot() {
+  # $1 = output filename (no path), $2 = human-readable label for the log line
   local out="$RUN_DIR/$1"
-  echo "Screenshot: $2 -> $out"
+  echo "Screenshot: $2 (dashboard) -> $out"
   echo "dashboard|$out" >&3
   for _ in $(seq 1 30); do
-    grep -qF "DONE:$out" "$SCREENSHOT_LOG" 2>/dev/null && return 0
-    grep -qF "FAILED:$out" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; return 0; }
+    grep -qF "DONE:$out" "$SCREENSHOT_LOG" 2>/dev/null && break
+    grep -qF "FAILED:$out" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; break; }
     sleep 1
   done
-  echo "  (screenshot timed out waiting for daemon ack -- continuing)"
+
+  local alertsOut="${out%.png}-alerts.png"
+  echo "Screenshot: $2 (alerting) -> $alertsOut"
+  echo "alerts|$alertsOut" >&3
+  for _ in $(seq 1 30); do
+    grep -qF "DONE:$alertsOut" "$SCREENSHOT_LOG" 2>/dev/null && return 0
+    grep -qF "FAILED:$alertsOut" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; return 0; }
+    sleep 1
+  done
+  echo "  (alerting screenshot timed out waiting for daemon ack -- continuing)"
 }
 
 banner "Baseline: 15s settle, then a baseline screenshot (1 replica)."

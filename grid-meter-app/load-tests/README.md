@@ -137,6 +137,53 @@ restores `api` to the proper default in its cleanup trap regardless of how
 the run ends, so the stack is never left running the deliberately-broken
 config.
 
+**Why `misconfigured-spike-demo.sh` never got its alert to fire — three
+real attempts, told honestly**: the goal was screenshots showing not just
+the numeric contrast above but Grafana's `High HTTP error rate` alert
+actually firing. A single sharp burst is too brief (~10-14s) for that
+alert's `for: 30s` sustained-duration requirement, so three different ways
+of sustaining the bad behavior longer were tried, in order:
+
+1. **Loop the same sharp burst back to back.** Real run: the error rate
+   decayed steadily across iterations (4.36% → 6.82% → 5.70% → 2.24% → ...
+   → under 1% by the 8th loop) while sample counts climbed 1,791 → 28,000+.
+   Root cause: JVM/JIT warm-up. Every profile's own measurement window has
+   the identical problem, which is exactly why `common/warmup.jmx` (above)
+   exists now — a warmed JVM processes requests fast enough to drain even
+   a 5-slot queue regardless of the misconfiguration, so looping bursts
+   against the same persistent process measures a moving target.
+2. **Sustain via a long run with HTTP keep-alive disabled**
+   (`misconfigured-burst.jmx`), so every request opens a fresh connection
+   for the whole duration instead of only at onset. Real run: 0.27% errors
+   over 90s — barely different from the properly-configured baseline. This
+   revealed something not obvious going in: the vulnerability is about
+   *onset sharpness* (many connections arriving near-simultaneously), not
+   *connection churn volume* over time. Spreading the same total number of
+   new connections across 90 seconds, even continuously, never builds up
+   enough instantaneous backlog to overwhelm a 5-slot queue, because
+   Tomcat's acceptor drains it about as fast as it arrives.
+3. **Loop the sharp burst again, but recreate `api` (a cold JVM) before
+   every iteration**, combining what worked in #1 (sharp onset) while
+   countering what broke it (JVM warm-up). Real run, 10 cold-reset
+   iterations: aggregate 2.02% errors — still below the 5% threshold, and
+   still lower than a single burst's 7.6-8.6%, for reasons not fully
+   pinned down (each reset briefly re-registers with Traefik and the
+   Prometheus counters reset to zero on every restart, both plausible
+   contributors).
+
+None of the three tripped the alert. Concluded, rather than chased
+further: this is the correct outcome, not a gap. Tomcat's connector,
+backed by the OS TCP stack, is mature and well-tuned for anything except a
+genuinely simultaneous burst meeting a cold process — a narrow, real, but
+brief failure mode (autoscaler cold-start, a rolling deploy, a synchronized
+retry storm), not a sustained degradation. The alert's `for: 30s` + 5-
+minute rate window is deliberately built to ignore exactly this kind of
+transient blip, and forcing it to fire via repeated artificial cold
+restarts would have manufactured an incident rather than demonstrated one.
+The real, validated numeric contrast above stands as this scenario's
+evidence; a firing-alert screenshot was a reasonable thing to want but
+turned out not to be a reasonable thing to force.
+
 **Real-scale validation** (all four profiles, 2 `api` replicas, full
 defaults — see the "Real-scale validation results" section below for
 numbers): set up via `docker compose up -d --scale api=2` plus
@@ -155,6 +202,18 @@ run of rapid-spike at the same 600-thread default showed the same pattern
 either one. (At the time of this run, the profile was still named
 `spike.jmx`, later relabeled `rapid-spike.jmx` when `gentle-spike.jmx` was
 added — same test, same numbers, new name.)
+
+**`api`'s memory limit, bumped and reverified**: an earlier autoscale-demo.sh
+run under sustained 2-replica load showed `api-2` pinned at a literal
+100.00% of its then-512m limit via `docker stats` — didn't OOM that run,
+but the margin was uncomfortably thin (`-Xmx384m` left only 128MB for
+everything else: metaspace, 200 Tomcat threads' stacks, JIT code cache,
+direct buffers). Bumped `docker-compose.yml`'s limit to 768m (heap max
+unchanged) and reverified with the identical scenario: a real full-scale
+rapid-spike run against 2 replicas, memory polled via `docker stats` every
+5s throughout. Result: memory stayed between 40-67% the whole run (peak
+67.24% on `api-2`), under the same real 100%+ CPU pressure as before —
+comfortable headroom where there was previously none.
 
 **What to watch in Grafana during the spike profiles/soak**:
 `tomcat.threads.busy`, `tomcat.threads.current`, and
@@ -179,11 +238,28 @@ profiles is watching it happen.
   Config reads `meterId` from per-iteration. Keeps every profile
   self-contained — no manual DB seeding before a run, and no hardcoded
   UUIDs that would drift from whatever's actually in the database.
-- Both fragments are pulled into each profile's **setUp Thread Group** via
-  an **Include Controller** (not a Module Controller, which only works
-  within a single tree — Include Controller is what lets four separate
-  `.jmx` files share one login/provisioning step without copy-pasting it
-  four times and letting them drift).
+- **`common/warmup.jmx`** — shared Test Fragment, pulled in after
+  provision-meters: fires `warmupIterations` (default 50) sequential
+  throwaway `POST /readings` requests, labeled `WARMUP: POST /readings` so
+  they're easy to spot/exclude if ever needed, before the profile's real
+  measurement window starts. A cold JVM (before JIT compilation, connection
+  pool/cache population) behaves measurably differently under load than a
+  warmed one — standard practice for any Java performance test whose goal
+  is a representative steady-state average is to warm up first and treat
+  cold-start behavior as separate from the real measurement, not let it
+  skew the reported numbers. **Deliberately not included in
+  `misconfigured-burst.jmx`** (used by `misconfigured-spike-demo.sh`) —
+  that scenario's whole point is testing a cold JVM's behavior on purpose
+  (the realistic case is a freshly-started replica meeting a burst during
+  autoscaling scale-out or a rolling deploy), so warming it up first would
+  defeat the test. This exact distinction came out of a real investigation
+  — see "Why `misconfigured-spike-demo.sh` never got its alert to fire"
+  below.
+- All three fragments are pulled into each profile's **setUp Thread
+  Group** via an **Include Controller** (not a Module Controller, which
+  only works within a single tree — Include Controller is what lets five
+  separate `.jmx` files share one login/provisioning/warm-up sequence
+  without copy-pasting it five times and letting them drift).
 - The main Thread Group then runs `POST /readings` — the endpoint JMeter
   hammers per `docs/api-and-data-model.md` — using the Authorization header
   set from the login fragment's Property and a `meterId` drawn from the

@@ -15,7 +15,7 @@ FAILURES=0
 for profile in "${PROFILES[@]}"; do
   echo
   echo "=== $profile ==="
-  if ./run.sh "$profile" -Jthreads=5 -JrampUp=1 -Jduration=4 -JthinkTimeMs=50 -JmeterPoolSize=3; then
+  if ./run.sh "$profile" -Jthreads=5 -JrampUp=1 -Jduration=4 -JthinkTimeMs=50 -JmeterPoolSize=3 -JwarmupIterations=3; then
     echo "PASS: $profile"
   else
     echo "FAIL: $profile" >&2

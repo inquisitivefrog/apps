@@ -73,7 +73,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # Bumped from 512m 2026-08-26 -- a real autoscale-demo.sh run under sustained 2-replica
+          # load showed api-2 pinned at a literal 100.00% of its 512m limit via `docker stats`. It
+          # didn't OOM that run, but the margin was uncomfortably thin: -Xmx384m leaves only 128MB
+          # for everything else (metaspace, thread stacks -- 200 Tomcat threads' stacks alone add
+          # up, JIT code cache, direct buffers, GC overhead). 768m keeps -Xmx unchanged and just
+          # gives that non-heap overhead real room, verified via a real 2-replica rapid-spike run
+          # afterward (see load-tests/README.md).
+          memory: 768m
           # Bounds docker stats' CPU% to a stable, meaningful number for
           # load-tests/autoscale-watcher.sh's trigger threshold -- without a limit, CPU% is
           # relative to however many cores happen to be free on the host, making "80%" ambiguous
