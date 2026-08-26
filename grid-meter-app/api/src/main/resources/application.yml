@@ -47,7 +47,11 @@ server:
     threads:
       max: 200
       min-spare: 10
-    accept-count: 100
+    # Overridable via SERVER_TOMCAT_ACCEPT_COUNT (same pattern as
+    # GRID_METER_TRACING_SAMPLING_PROBABILITY below) so load-tests/misconfigured-spike-demo.sh can
+    # deliberately run api with an under-provisioned queue and show the contrast against this
+    # properly-configured default -- see load-tests/README.md.
+    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:100}
     # Without this, Micrometer's Tomcat binder has no JMX MBean data to read thread-pool/connection
     # metrics from, so tomcat_threads_busy_threads / tomcat_connections_current never appear on
     # /actuator/prometheus at all — only tomcat_sessions_* does. Discovered 2026-08-25: this project

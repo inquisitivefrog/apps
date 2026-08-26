@@ -82,6 +82,52 @@ of ramp speed (which would point at real sustained-capacity saturation
 instead). Not yet run at full scale — this is the hypothesis it's designed
 to test, not a result yet.
 
+## A third scenario: misconfigured for bursts (`misconfigured-spike-demo.sh`)
+
+Both spike profiles above assume Tomcat's `accept-count` (the queue of
+pending *new* connections, separate from `threads.max`) is reasonably
+sized — 100, `application.yml`'s explicit default. The third scenario in
+this family asks the opposite question: what if it isn't? `server.tomcat.
+accept-count` is overridable via `SERVER_TOMCAT_ACCEPT_COUNT` (same pattern
+as `GRID_METER_TRACING_SAMPLING_PROBABILITY`) specifically so this can be
+demonstrated without editing the app.
+
+`./misconfigured-spike-demo.sh` runs the identical burst against a single
+`api` replica twice — once at the proper default (`accept-count=100`), once
+deliberately under-provisioned (`accept-count=5`) — and reports the
+contrast, with dashboard/alerting screenshots and a resource log for both
+phases (same evidence pattern as `chaos-demo.sh`/`autoscale-demo.sh`).
+
+**A real surprise while building this, worth recording rather than
+smoothing over**: the first attempt reused `rapid-spike.jmx`'s own 10s-ramp
+default at full scale (600 threads) and found the contrast had nearly
+vanished — 0.00% vs. 0.019% errors, pure noise. The reason: `accept-count`
+only bounds the queue of pending *new* connections; every profile already
+runs with HTTP keep-alive on, so once a thread's connection is established
+it never touches that queue again for the rest of the run. A 10-second
+ramp turned out to be gentle enough that even a 5-slot queue drains as fast
+as it fills. The queue only gets meaningfully stressed by how *sharp* the
+connection-establishment burst is, not by the eventual thread count — so
+the script overrides the ramp down to ~1 second (`SPIKE_RAMP`), a genuinely
+sharp onset, while keeping the profile's own `POST /readings` request
+otherwise untouched.
+
+**Two real validation runs, both confirmed**, single `api` replica,
+identical 400-thread/~1s-ramp/10s-duration burst each time, only
+`accept-count` changed:
+
+| Phase | Samples | Error rate | p95 | Failure type |
+|---|---|---|---|---|
+| `accept-count=100` (default) | 2,318–19,422 | 0.00% both runs | 3.6–4.6s | — the queue absorbs the burst, just slowly |
+| `accept-count=5` (misconfigured) | 1,799–37,296 | 7.62%–8.61% | 1.0–4.5s | 100% `502 Bad Gateway` — genuine connection refusals once the undersized queue overflowed |
+
+Same load, same everything else, only the queue size changed — a clean,
+reproducible demonstration of why `accept-count` is a real capacity-
+planning knob and not a cosmetic default. `misconfigured-spike-demo.sh`
+restores `api` to the proper default in its cleanup trap regardless of how
+the run ends, so the stack is never left running the deliberately-broken
+config.
+
 **Real-scale validation** (all four profiles, 2 `api` replicas, full
 defaults — see the "Real-scale validation results" section below for
 numbers): set up via `docker compose up -d --scale api=2` plus

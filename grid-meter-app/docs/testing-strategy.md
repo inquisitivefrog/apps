@@ -115,6 +115,13 @@ to maintain:
   much longer, gentler ramp (60s) instead — isolates onset speed from
   sustained overload as separate variables; see `load-tests/README.md`
   for what a real-run comparison between the two showed
+- **Misconfigured for bursts** (`load-tests/misconfigured-spike-demo.sh`,
+  not a distinct `.jmx` profile) — runs the identical sharp burst against
+  `api` twice, once with Tomcat's properly-configured `accept-count`
+  (100) and once deliberately under-provisioned (5), demonstrating why
+  that queue size is a real capacity-planning knob: same load, same
+  everything else, 0.00% errors vs. 7.6-8.6% (all genuine `502`s), see
+  `load-tests/README.md`
 - **Soak** — extended duration at moderate load, to catch slow leaks
   (connection pool exhaustion, unbounded caches)
 
