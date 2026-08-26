@@ -21,6 +21,6 @@ coverage/
 grid-meter-app/load-tests/results/
 jmeter.log
 
-# chaos-demo.sh's dashboard screenshots -- run artifacts, not versioned. Copy specific ones out
-# manually if you want to keep/share a particular run's images.
-grid-meter-app/load-tests/screenshots/
+# chaos-demo.sh's dashboard screenshots are deliberately versioned, not ignored -- they're kept as
+# evidence of prior test execution (fault-injection detection/alerting proof), not disposable
+# output like results/ above.

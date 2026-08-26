@@ -1,0 +1,94 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: grid-meter-alerts
+    folder: grid-meter-app
+    interval: 30s
+    rules:
+      # Fires when Prometheus can't scrape the api job at all -- covers the 'api' link outage in
+      # load-tests/chaos-demo.sh. Note: Prometheus scrapes api:8080 directly over the Docker
+      # network, bypassing Traefik entirely, so this does NOT fire during a 'traefik' outage --
+      # that's an honest scope boundary, not an oversight (see docs/architecture.md's routing
+      # section for why Prometheus scrapes the app directly).
+      - uid: api-down
+        title: API is down
+        condition: C
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus cannot scrape grid-meter-api -- the API is unreachable."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: 'up{job="grid-meter-api"}'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # Fires on a sustained HTTP error rate -- covers the 'postgres' link outage (reads start
+      # failing) and any real application-level failure spike.
+      - uid: high-error-rate
+        title: High HTTP error rate
+        condition: C
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP error rate has exceeded 5% for 30s."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: '100 * (sum(rate(http_server_requests_seconds_count{outcome=~"CLIENT_ERROR|SERVER_ERROR"}[5m])) or vector(0)) / sum(rate(http_server_requests_seconds_count[5m]))'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+
+      # Fires when Tomcat's thread pool is under real saturation pressure (see
+      # load-tests/README.md's spike profile, which deliberately drives this).
+      - uid: tomcat-threads-saturated
+        title: Tomcat thread pool saturated
+        condition: C
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tomcat busy threads have exceeded 80% of the configured max for 30s."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: '100 * tomcat_threads_busy_threads / tomcat_threads_config_max_threads'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [80] }

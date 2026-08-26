@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Observability demo: runs a sustained background load, then takes each link in the request chain
 # offline in turn (docker compose stop/start) -- Traefik, api, Kafka, Postgres, Redis, matching
-# ../docs/architecture.md's system diagram -- taking a real Grafana dashboard screenshot before and
-# during each outage and after recovery, via a headless Playwright browser. Fully automated,
-# including the screenshots -- no manual browser step required.
+# ../docs/architecture.md's system diagram -- taking a real Grafana dashboard AND alerting-state
+# screenshot before and during each outage and after recovery, via a headless Playwright browser.
+# Also logs host/container resource usage throughout, so a run leaves a reviewable record that it
+# didn't overrun the machine, not just an assumption. Fully automated -- no manual browser step.
 #
 # Prerequisites:
 #   - Full stack up, including the observability tier:
@@ -12,23 +13,28 @@
 #   - Playwright's Chromium downloaded once: npx --yes playwright install chromium
 #     (the `playwright` npm module itself is bootstrapped automatically into
 #     load-tests/node_modules on first run -- see below)
-#   - The grid-meter-overview dashboard provisioned (observability/dashboards/, wired into
-#     docker-compose.yml's grafana service volumes -- already the case if grafana started clean).
+#   - The grid-meter-overview dashboard AND the grid-meter-alerts alert rules provisioned
+#     (observability/dashboards/, observability/alerting/, wired into docker-compose.yml's grafana
+#     service volumes -- already the case if grafana started clean).
 #
 # Screenshots are taken against Grafana's direct host port (localhost:3001), not through Traefik,
 # specifically so they keep working when Traefik itself is the link being taken offline -- see the
 # comment on grafana's `ports:` entry in docker-compose.yml.
 #
-# Screenshots reuse ONE persistent browser session (screenshot-daemon.js), not a fresh
-# `npx playwright screenshot` per shot. A fresh anonymous-auth Grafana session per shot was
+# Screenshots reuse ONE persistent browser session with two pages (screenshot-daemon.js), not a
+# fresh `npx playwright screenshot` per shot. A fresh anonymous-auth Grafana session per shot was
 # measured costing ~80-170MB server-side and never releasing it -- 2-3 fresh-session screenshots
 # reliably OOM-killed Grafana regardless of its container memory limit. See
 # status/claude_code_2026-08-24.md for the full investigation.
+#
+# Screenshots are deliberately committed, not gitignored -- they're evidence of prior test
+# execution (fault-injection detection/alerting proof), not disposable output.
 #
 # Usage: load-tests/chaos-demo.sh
 #   Runs steady-state.jmx in the background for the whole sequence, then walks through each link.
 #   Tune timing via the OUTAGE_SECONDS / RECOVERY_SECONDS env vars if the defaults don't fit.
 #   Screenshots land in load-tests/screenshots/<run-timestamp>/, numbered in sequence order.
+#   Resource log lands alongside them as resource-log.txt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -37,6 +43,7 @@ OUTAGE_SECONDS="${OUTAGE_SECONDS:-45}"
 RECOVERY_SECONDS="${RECOVERY_SECONDS:-20}"
 LINKS=(traefik api kafka postgres redis)
 export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
+export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"
 
@@ -70,9 +77,15 @@ node load-tests/screenshot-daemon.js < "$SCREENSHOT_FIFO" > "$SCREENSHOT_LOG" 2>
 DAEMON_PID=$!
 exec 3>"$SCREENSHOT_FIFO"  # keep a writer open so the fifo doesn't see EOF between shots
 
+# --- Resource monitor setup: logs host + per-container usage every 10s for the whole run ---
+RESOURCE_LOG="$RUN_DIR/resource-log.txt"
+./load-tests/monitor-resources.sh "$RESOURCE_LOG" 10 &
+MONITOR_PID=$!
+
 cleanup() {
   exec 3>&- 2>/dev/null || true
   kill "$DAEMON_PID" 2>/dev/null || true
+  kill "$MONITOR_PID" 2>/dev/null || true
   rm -f "$SCREENSHOT_FIFO" "$SCREENSHOT_LOG"
 }
 trap cleanup EXIT
@@ -80,14 +93,20 @@ trap cleanup EXIT
 shoot() {
   # $1 = output filename (no path), $2 = human-readable label for the log line
   local out="$RUN_DIR/$1"
-  echo "Screenshot: $2 -> $out"
-  echo "$out" >&3
+  echo "Screenshot: $2 (dashboard) -> $out"
+  echo "dashboard|$out" >&3
   for _ in $(seq 1 30); do
-    grep -qF "DONE:$out" "$SCREENSHOT_LOG" 2>/dev/null && return 0
-    grep -qF "FAILED:$out" "$SCREENSHOT_LOG" 2>/dev/null && {
-      echo "  (screenshot failed -- continuing; check $SCREENSHOT_LOG)"
-      return 0
-    }
+    grep -qF "DONE:$out" "$SCREENSHOT_LOG" 2>/dev/null && break
+    grep -qF "FAILED:$out" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; break; }
+    sleep 1
+  done
+
+  local alertsOut="${out%.png}-alerts.png"
+  echo "Screenshot: $2 (alerting) -> $alertsOut"
+  echo "alerts|$alertsOut" >&3
+  for _ in $(seq 1 30); do
+    grep -qF "DONE:$alertsOut" "$SCREENSHOT_LOG" 2>/dev/null && return 0
+    grep -qF "FAILED:$alertsOut" "$SCREENSHOT_LOG" 2>/dev/null && { echo "  (failed -- continuing)"; return 0; }
     sleep 1
   done
   echo "  (screenshot timed out waiting for daemon ack -- continuing)"
@@ -112,15 +131,19 @@ for service in "${LINKS[@]}"; do
   banner "TAKING '$service' OFFLINE (~${OUTAGE_SECONDS}s window)"
   case "$service" in
     api) echo "Watch: tomcat.threads.busy/connections.current will vanish; Traefik should surface" \
-              "connection errors for /api/* since both replicas are stopped." ;;
+              "connection errors for /api/* since both replicas are stopped. The 'API is down'" \
+              "alert rule should enter Firing after its 30s for-duration." ;;
     traefik) echo "Watch: the whole app becomes unreachable via Traefik -- this is the degenerate" \
                   "case, total outage, not graceful degradation. JMeter's error rate should spike." \
-                  "Grafana itself stays reachable (direct port, bypasses Traefik)." ;;
+                  "Grafana itself stays reachable (direct port, bypasses Traefik). No alert rule" \
+                  "covers Traefik directly -- Prometheus scrapes api:8080 over the Docker network," \
+                  "bypassing Traefik entirely, so this is an honest scope boundary, not a bug." ;;
     kafka) echo "Watch: does POST /readings still 201 or start failing? Genuinely worth observing," \
                 "not assumed -- check consumer lag/error panels too." ;;
     postgres) echo "Watch: reads (GET /meters, /readings) should start failing; the async Kafka" \
                    "consumer's writes should start erroring too -- check Loki for the actual" \
-                   "exception logged." ;;
+                   "exception logged. The 'High HTTP error rate' alert rule should fire if the" \
+                   "resulting error rate clears its 5% threshold for 30s." ;;
     redis) echo "Watch: does the app degrade gracefully (cache-miss fallback to Postgres, per" \
                 "architecture.md) or hard-fail? This is the one link where graceful degradation is" \
                 "the documented expectation -- worth confirming for real." ;;
@@ -141,6 +164,6 @@ banner "Sequence complete. Waiting on the background load run to finish (PID $LO
 wait "$LOAD_PID"
 echo
 echo "Load run log: /tmp/chaos-demo-load.log (a failed threshold gate at the end is expected)"
-echo "Screenshots: $RUN_DIR/"
+echo "Screenshots + resource log: $RUN_DIR/"
 ls -la "$RUN_DIR"
 echo "Check Loki/Grafana Explore for the actual error logs during each outage window."

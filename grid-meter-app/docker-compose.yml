@@ -180,6 +180,7 @@ services:
       - ./observability/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./observability/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
       - ./observability/dashboards:/var/lib/grafana/dashboards:ro
+      - ./observability/alerting:/etc/grafana/provisioning/alerting:ro
       - grafana-data:/var/lib/grafana
     labels:
       - traefik.enable=true
