@@ -44,7 +44,7 @@ RECOVERY_SECONDS="${RECOVERY_SECONDS:-20}"
 LINKS=(traefik api kafka postgres redis)
 export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
 export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
-RUN_DIR="$(pwd)/load-tests/screenshots/$(date +%Y%m%d-%H%M%S)"
+RUN_DIR="$(pwd)/load-tests/screenshots/chaos-demo-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"
 
 # Rough budget: baseline + 5 * (outage + recovery) + buffer.
