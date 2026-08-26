@@ -1,0 +1,969 @@
+=== 2026-08-26T22:07:55Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:07  up 3 days, 56 mins, 3 users, load averages: 1.15 1.25 1.44
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 337.6MiB / 768MiB | 0.44%
+grid-meter-app-prometheus-1: 77.91MiB / 256MiB | 1.87%
+grid-meter-app-traefik-1: 224MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 432.4MiB / 768MiB | 8.85%
+grid-meter-app-loki-1: 220MiB / 256MiB | 0.51%
+grid-meter-app-alloy-1: 64.69MiB / 128MiB | 0.59%
+grid-meter-app-kafka-1: 687.4MiB / 768MiB | 1.50%
+grid-meter-app-postgres-1: 177.1MiB / 512MiB | 0.00%
+grid-meter-app-redis-1: 9.309MiB / 128MiB | 0.23%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:02Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:08  up 3 days, 56 mins, 3 users, load averages: 1.38 1.29 1.46
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 339.3MiB / 768MiB | 0.36%
+grid-meter-app-prometheus-1: 76.68MiB / 256MiB | 0.02%
+grid-meter-app-traefik-1: 224MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 439.3MiB / 768MiB | 0.76%
+grid-meter-app-loki-1: 220MiB / 256MiB | 0.96%
+grid-meter-app-alloy-1: 50.94MiB / 128MiB | 5.65%
+grid-meter-app-kafka-1: 686.9MiB / 768MiB | 1.28%
+grid-meter-app-postgres-1: 176.2MiB / 512MiB | 0.01%
+grid-meter-app-redis-1: 8.566MiB / 128MiB | 0.28%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:09Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.43 1.30 1.46
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 339.9MiB / 768MiB | 0.35%
+grid-meter-app-prometheus-1: 77.05MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 223.6MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 439.4MiB / 768MiB | 0.81%
+grid-meter-app-loki-1: 220MiB / 256MiB | 0.91%
+grid-meter-app-alloy-1: 127.3MiB / 128MiB | 0.99%
+grid-meter-app-kafka-1: 687.7MiB / 768MiB | 1.46%
+grid-meter-app-postgres-1: 176.2MiB / 512MiB | 0.00%
+grid-meter-app-redis-1: 8.566MiB / 128MiB | 0.30%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:16Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.29 1.28 1.45
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 339.7MiB / 768MiB | 0.40%
+grid-meter-app-prometheus-1: 78.77MiB / 256MiB | 0.11%
+grid-meter-app-traefik-1: 224.1MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 442.2MiB / 768MiB | 1.26%
+grid-meter-app-loki-1: 208.1MiB / 256MiB | 0.96%
+grid-meter-app-alloy-1: 45.17MiB / 128MiB | 0.76%
+grid-meter-app-kafka-1: 687.6MiB / 768MiB | 1.65%
+grid-meter-app-postgres-1: 175.8MiB / 512MiB | 0.00%
+grid-meter-app-redis-1: 8.566MiB / 128MiB | 0.24%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:23Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.34 1.29 1.45
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 417.9MiB / 768MiB | 98.47%
+grid-meter-app-prometheus-1: 76.81MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 229.9MiB / 7.748GiB | 9.83%
+grid-meter-app-grafana-1: 440.9MiB / 768MiB | 0.32%
+grid-meter-app-loki-1: 208.7MiB / 256MiB | 0.47%
+grid-meter-app-alloy-1: 12.42MiB / 128MiB | 4.00%
+grid-meter-app-kafka-1: 687.2MiB / 768MiB | 1.06%
+grid-meter-app-postgres-1: 179.2MiB / 512MiB | 3.53%
+grid-meter-app-redis-1: 8.32MiB / 128MiB | 0.13%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:30Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.40 1.30 1.45
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 434.4MiB / 768MiB | 98.65%
+grid-meter-app-prometheus-1: 74.18MiB / 256MiB | 0.14%
+grid-meter-app-traefik-1: 229.9MiB / 7.748GiB | 7.19%
+grid-meter-app-grafana-1: 449.5MiB / 768MiB | 0.85%
+grid-meter-app-loki-1: 209.9MiB / 256MiB | 0.48%
+grid-meter-app-alloy-1: 104.9MiB / 128MiB | 1.99%
+grid-meter-app-kafka-1: 687.7MiB / 768MiB | 1.37%
+grid-meter-app-postgres-1: 181MiB / 512MiB | 3.85%
+grid-meter-app-redis-1: 10.05MiB / 128MiB | 0.19%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:37Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.41 1.31 1.45
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 451.9MiB / 768MiB | 98.22%
+grid-meter-app-prometheus-1: 74.18MiB / 256MiB | 0.51%
+grid-meter-app-traefik-1: 230.4MiB / 7.748GiB | 9.74%
+grid-meter-app-grafana-1: 453.4MiB / 768MiB | 0.54%
+grid-meter-app-loki-1: 210MiB / 256MiB | 0.51%
+grid-meter-app-alloy-1: 97.48MiB / 128MiB | 4.07%
+grid-meter-app-kafka-1: 688.2MiB / 768MiB | 1.42%
+grid-meter-app-postgres-1: 181.7MiB / 512MiB | 4.65%
+grid-meter-app-redis-1: 9.312MiB / 128MiB | 0.15%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:44Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.54 1.33 1.46
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 461.2MiB / 768MiB | 98.73%
+grid-meter-app-prometheus-1: 74.3MiB / 256MiB | 0.08%
+grid-meter-app-traefik-1: 229.8MiB / 7.748GiB | 11.51%
+grid-meter-app-grafana-1: 453.2MiB / 768MiB | 0.70%
+grid-meter-app-loki-1: 212.4MiB / 256MiB | 0.40%
+grid-meter-app-alloy-1: 91.98MiB / 128MiB | 2.82%
+grid-meter-app-kafka-1: 688.5MiB / 768MiB | 1.57%
+grid-meter-app-postgres-1: 182MiB / 512MiB | 5.78%
+grid-meter-app-redis-1: 9.059MiB / 128MiB | 0.15%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:50Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.57 1.35 1.47
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 480.3MiB / 768MiB | 97.76%
+grid-meter-app-prometheus-1: 74.69MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 229.7MiB / 7.748GiB | 15.03%
+grid-meter-app-grafana-1: 452.8MiB / 768MiB | 0.56%
+grid-meter-app-loki-1: 216.3MiB / 256MiB | 0.51%
+grid-meter-app-alloy-1: 29.65MiB / 128MiB | 2.36%
+grid-meter-app-kafka-1: 688.2MiB / 768MiB | 2.60%
+grid-meter-app-postgres-1: 182.3MiB / 512MiB | 7.16%
+grid-meter-app-redis-1: 9.293MiB / 128MiB | 0.17%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:08:57Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:08  up 3 days, 57 mins, 3 users, load averages: 1.56 1.35 1.47
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 488.6MiB / 768MiB | 99.15%
+grid-meter-app-prometheus-1: 76.4MiB / 256MiB | 0.04%
+grid-meter-app-traefik-1: 230.3MiB / 7.748GiB | 16.39%
+grid-meter-app-grafana-1: 452.8MiB / 768MiB | 0.28%
+grid-meter-app-loki-1: 217.4MiB / 256MiB | 0.49%
+grid-meter-app-alloy-1: 95.3MiB / 128MiB | 3.07%
+grid-meter-app-kafka-1: 688.7MiB / 768MiB | 2.55%
+grid-meter-app-postgres-1: 182.7MiB / 512MiB | 7.50%
+grid-meter-app-redis-1: 9.316MiB / 128MiB | 0.18%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:04Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 57 mins, 3 users, load averages: 1.75 1.39 1.48
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 498.8MiB / 768MiB | 98.18%
+grid-meter-app-prometheus-1: 75.92MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 230.4MiB / 7.748GiB | 18.27%
+grid-meter-app-grafana-1: 452.8MiB / 768MiB | 0.31%
+grid-meter-app-loki-1: 219.2MiB / 256MiB | 0.56%
+grid-meter-app-alloy-1: 127.5MiB / 128MiB | 2.93%
+grid-meter-app-kafka-1: 688.6MiB / 768MiB | 1.78%
+grid-meter-app-postgres-1: 183.2MiB / 512MiB | 7.91%
+grid-meter-app-redis-1: 9.559MiB / 128MiB | 0.14%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:10Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.69 1.39 1.48
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 513MiB / 768MiB | 101.18%
+grid-meter-app-prometheus-1: 72.61MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 229.9MiB / 7.748GiB | 22.73%
+grid-meter-app-grafana-1: 462MiB / 768MiB | 0.27%
+grid-meter-app-loki-1: 223.5MiB / 256MiB | 0.92%
+grid-meter-app-alloy-1: 104.3MiB / 128MiB | 2.73%
+grid-meter-app-kafka-1: 688.7MiB / 768MiB | 2.31%
+grid-meter-app-postgres-1: 182.7MiB / 512MiB | 8.63%
+grid-meter-app-redis-1: 10.05MiB / 128MiB | 0.18%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:17Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.66 1.39 1.48
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 527.6MiB / 768MiB | 97.98%
+grid-meter-app-prometheus-1: 75.4MiB / 256MiB | 0.02%
+grid-meter-app-traefik-1: 230MiB / 7.748GiB | 22.94%
+grid-meter-app-grafana-1: 479.4MiB / 768MiB | 0.80%
+grid-meter-app-loki-1: 227.6MiB / 256MiB | 0.33%
+grid-meter-app-alloy-1: 36.06MiB / 128MiB | 20.54%
+grid-meter-app-kafka-1: 687.8MiB / 768MiB | 2.16%
+grid-meter-app-postgres-1: 182.7MiB / 512MiB | 9.57%
+grid-meter-app-redis-1: 8.57MiB / 128MiB | 0.30%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:24Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.85 1.43 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 535.9MiB / 768MiB | 98.55%
+grid-meter-app-prometheus-1: 75.67MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 230.3MiB / 7.748GiB | 19.91%
+grid-meter-app-grafana-1: 480.1MiB / 768MiB | 0.92%
+grid-meter-app-loki-1: 230.3MiB / 256MiB | 0.60%
+grid-meter-app-alloy-1: 70.27MiB / 128MiB | 6.73%
+grid-meter-app-kafka-1: 688.5MiB / 768MiB | 2.22%
+grid-meter-app-postgres-1: 182.9MiB / 512MiB | 9.20%
+grid-meter-app-redis-1: 9.312MiB / 128MiB | 0.19%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:30Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.78 1.43 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 549MiB / 768MiB | 99.05%
+grid-meter-app-prometheus-1: 80.2MiB / 256MiB | 0.07%
+grid-meter-app-traefik-1: 230MiB / 7.748GiB | 22.99%
+grid-meter-app-grafana-1: 483.6MiB / 768MiB | 0.33%
+grid-meter-app-loki-1: 235.7MiB / 256MiB | 0.80%
+grid-meter-app-alloy-1: 48.88MiB / 128MiB | 2.99%
+grid-meter-app-kafka-1: 689.1MiB / 768MiB | 1.96%
+grid-meter-app-postgres-1: 183MiB / 512MiB | 10.01%
+grid-meter-app-redis-1: 9.316MiB / 128MiB | 0.22%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:37Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 68%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.73 1.43 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 567MiB / 768MiB | 98.60%
+grid-meter-app-prometheus-1: 84.19MiB / 256MiB | 0.13%
+grid-meter-app-traefik-1: 230MiB / 7.748GiB | 24.71%
+grid-meter-app-grafana-1: 483.7MiB / 768MiB | 0.30%
+grid-meter-app-loki-1: 238.2MiB / 256MiB | 0.65%
+grid-meter-app-alloy-1: 33.05MiB / 128MiB | 5.00%
+grid-meter-app-kafka-1: 689.1MiB / 768MiB | 3.17%
+grid-meter-app-postgres-1: 183.1MiB / 512MiB | 9.89%
+grid-meter-app-redis-1: 9.555MiB / 128MiB | 0.19%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:44Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.67 1.42 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 593.5MiB / 768MiB | 96.14%
+grid-meter-app-prometheus-1: 83.73MiB / 256MiB | 0.05%
+grid-meter-app-traefik-1: 230.6MiB / 7.748GiB | 32.50%
+grid-meter-app-grafana-1: 484.2MiB / 768MiB | 0.42%
+grid-meter-app-loki-1: 238.7MiB / 256MiB | 0.61%
+grid-meter-app-alloy-1: 50.59MiB / 128MiB | 5.49%
+grid-meter-app-kafka-1: 688.8MiB / 768MiB | 1.82%
+grid-meter-app-postgres-1: 183.4MiB / 512MiB | 11.35%
+grid-meter-app-redis-1: 9.82MiB / 128MiB | 0.24%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:50Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.54 1.40 1.48
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 610.9MiB / 768MiB | 98.43%
+grid-meter-app-prometheus-1: 85.49MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 232.1MiB / 7.748GiB | 29.42%
+grid-meter-app-grafana-1: 484MiB / 768MiB | 0.56%
+grid-meter-app-loki-1: 239.4MiB / 256MiB | 0.74%
+grid-meter-app-alloy-1: 14.2MiB / 128MiB | 4.27%
+grid-meter-app-kafka-1: 688.2MiB / 768MiB | 2.16%
+grid-meter-app-postgres-1: 183.7MiB / 512MiB | 11.72%
+grid-meter-app-redis-1: 9.34MiB / 128MiB | 0.19%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:09:57Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:09  up 3 days, 58 mins, 3 users, load averages: 1.85 1.47 1.50
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 687.2MiB / 768MiB | 86.09%
+grid-meter-app-prometheus-1: 87.51MiB / 256MiB | 0.02%
+grid-meter-app-traefik-1: 228.5MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 517.1MiB / 768MiB | 0.24%
+grid-meter-app-loki-1: 239MiB / 256MiB | 0.34%
+grid-meter-app-alloy-1: 96.63MiB / 128MiB | 1.22%
+grid-meter-app-kafka-1: 688.7MiB / 768MiB | 0.53%
+grid-meter-app-postgres-1: 182.2MiB / 512MiB | 25.56%
+grid-meter-app-redis-1: 9.336MiB / 128MiB | 4.98%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:04Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 69%
+-- host load average --
+15:10  up 3 days, 58 mins, 3 users, load averages: 1.86 1.47 1.50
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 685.1MiB / 768MiB | 45.67%
+grid-meter-app-prometheus-1: 86.27MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 228.5MiB / 7.748GiB | 0.02%
+grid-meter-app-grafana-1: 520.6MiB / 768MiB | 0.22%
+grid-meter-app-loki-1: 239.2MiB / 256MiB | 0.25%
+grid-meter-app-alloy-1: 120.6MiB / 128MiB | 0.64%
+grid-meter-app-kafka-1: 688.7MiB / 768MiB | 0.57%
+grid-meter-app-postgres-1: 182.2MiB / 512MiB | 28.89%
+grid-meter-app-redis-1: 10.01MiB / 128MiB | 5.76%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:10Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 1.87 1.48 1.51
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-prometheus-1: 76.62MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 229.5MiB / 7.748GiB | 4.32%
+grid-meter-app-grafana-1: 528.7MiB / 768MiB | 0.41%
+grid-meter-app-loki-1: 239.2MiB / 256MiB | 0.46%
+grid-meter-app-alloy-1: 102.7MiB / 128MiB | 0.22%
+grid-meter-app-kafka-1: 687.6MiB / 768MiB | 0.39%
+grid-meter-app-postgres-1: 160.1MiB / 512MiB | 0.07%
+grid-meter-app-redis-1: 8.562MiB / 128MiB | 0.09%
+grid-meter-app-frontend-1: 8.852MiB / 64MiB | 0.00%
+grid-meter-app-api-1: 92.24MiB / 768MiB | 99.12%
+
+=== 2026-08-26T22:10:17Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 1.66 1.45 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 288.8MiB / 768MiB | 99.23%
+grid-meter-app-prometheus-1: 77.59MiB / 256MiB | 0.03%
+grid-meter-app-traefik-1: 228.7MiB / 7.748GiB | 0.05%
+grid-meter-app-grafana-1: 528.8MiB / 768MiB | 0.25%
+grid-meter-app-loki-1: 239MiB / 256MiB | 0.35%
+grid-meter-app-alloy-1: 95.26MiB / 128MiB | 2.22%
+grid-meter-app-kafka-1: 688.6MiB / 768MiB | 0.74%
+grid-meter-app-postgres-1: 177.4MiB / 512MiB | 0.06%
+grid-meter-app-redis-1: 8.273MiB / 128MiB | 0.08%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:24Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 1.61 1.44 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 346.5MiB / 768MiB | 97.91%
+grid-meter-app-prometheus-1: 75.47MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 227.8MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 528.2MiB / 768MiB | 0.31%
+grid-meter-app-loki-1: 239.3MiB / 256MiB | 0.35%
+grid-meter-app-alloy-1: 83.6MiB / 128MiB | 0.32%
+grid-meter-app-kafka-1: 688.1MiB / 768MiB | 0.50%
+grid-meter-app-postgres-1: 178.1MiB / 512MiB | 9.19%
+grid-meter-app-redis-1: 8.812MiB / 128MiB | 1.84%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:30Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 1.72 1.47 1.50
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 351.9MiB / 768MiB | 4.88%
+grid-meter-app-prometheus-1: 76.24MiB / 256MiB | 0.16%
+grid-meter-app-traefik-1: 228.2MiB / 7.748GiB | 0.21%
+grid-meter-app-grafana-1: 528.5MiB / 768MiB | 0.72%
+grid-meter-app-loki-1: 239.3MiB / 256MiB | 0.79%
+grid-meter-app-alloy-1: 60.03MiB / 128MiB | 0.79%
+grid-meter-app-kafka-1: 688.1MiB / 768MiB | 1.24%
+grid-meter-app-postgres-1: 177MiB / 512MiB | 0.12%
+grid-meter-app-redis-1: 8.566MiB / 128MiB | 0.24%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:37Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 1.94 1.52 1.52
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 351.8MiB / 768MiB | 1.06%
+grid-meter-app-prometheus-1: 77.11MiB / 256MiB | 0.31%
+grid-meter-app-traefik-1: 227.8MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 528.4MiB / 768MiB | 0.56%
+grid-meter-app-loki-1: 239.1MiB / 256MiB | 0.93%
+grid-meter-app-alloy-1: 96.52MiB / 128MiB | 9.16%
+grid-meter-app-kafka-1: 687.9MiB / 768MiB | 1.15%
+grid-meter-app-postgres-1: 176.8MiB / 512MiB | 0.17%
+grid-meter-app-redis-1: 8.32MiB / 128MiB | 0.22%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:44Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 70%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 2.18 1.58 1.54
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 406.9MiB / 768MiB | 98.68%
+grid-meter-app-prometheus-1: 76.98MiB / 256MiB | 0.06%
+grid-meter-app-traefik-1: 239.5MiB / 7.748GiB | 9.72%
+grid-meter-app-grafana-1: 528.6MiB / 768MiB | 0.39%
+grid-meter-app-loki-1: 239.2MiB / 256MiB | 0.51%
+grid-meter-app-alloy-1: 60.28MiB / 128MiB | 2.28%
+grid-meter-app-kafka-1: 688.4MiB / 768MiB | 1.51%
+grid-meter-app-postgres-1: 180.8MiB / 512MiB | 4.37%
+grid-meter-app-redis-1: 8.82MiB / 128MiB | 0.16%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:50Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 2.01 1.55 1.53
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 453MiB / 768MiB | 99.82%
+grid-meter-app-prometheus-1: 76.97MiB / 256MiB | 0.01%
+grid-meter-app-traefik-1: 329.5MiB / 7.748GiB | 12.30%
+grid-meter-app-grafana-1: 542.5MiB / 768MiB | 0.40%
+grid-meter-app-loki-1: 239.6MiB / 256MiB | 0.64%
+grid-meter-app-alloy-1: 84.74MiB / 128MiB | 1.49%
+grid-meter-app-kafka-1: 690.6MiB / 768MiB | 1.48%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 5.69%
+grid-meter-app-redis-1: 9.559MiB / 128MiB | 0.26%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:10:57Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 72%
+-- host load average --
+15:10  up 3 days, 59 mins, 3 users, load averages: 2.58 1.68 1.57
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 459.3MiB / 768MiB | 6.81%
+grid-meter-app-prometheus-1: 78.57MiB / 256MiB | 0.07%
+grid-meter-app-traefik-1: 341.4MiB / 7.748GiB | 0.69%
+grid-meter-app-grafana-1: 542.6MiB / 768MiB | 0.62%
+grid-meter-app-loki-1: 239.2MiB / 256MiB | 0.90%
+grid-meter-app-alloy-1: 125.1MiB / 128MiB | 10.00%
+grid-meter-app-kafka-1: 687.6MiB / 768MiB | 1.34%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.14%
+grid-meter-app-redis-1: 8.359MiB / 128MiB | 1.11%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:04Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 59 mins, 3 users, load averages: 2.77 1.74 1.59
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 456.4MiB / 768MiB | 10.56%
+grid-meter-app-prometheus-1: 78.48MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 343MiB / 7.748GiB | 0.22%
+grid-meter-app-grafana-1: 542.3MiB / 768MiB | 0.39%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.60%
+grid-meter-app-alloy-1: 33.39MiB / 128MiB | 7.02%
+grid-meter-app-kafka-1: 687.6MiB / 768MiB | 1.16%
+grid-meter-app-postgres-1: 181.3MiB / 512MiB | 0.11%
+grid-meter-app-redis-1: 8.328MiB / 128MiB | 0.17%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:10Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 2.79 1.76 1.60
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 456.2MiB / 768MiB | 0.79%
+grid-meter-app-prometheus-1: 75.56MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 342MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 543.3MiB / 768MiB | 0.90%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 1.25%
+grid-meter-app-alloy-1: 124.4MiB / 128MiB | 0.82%
+grid-meter-app-kafka-1: 687.9MiB / 768MiB | 1.09%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.12%
+grid-meter-app-redis-1: 8.578MiB / 128MiB | 0.21%
+grid-meter-app-frontend-1: 8.609MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:17Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 2.43 1.71 1.59
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 455.9MiB / 768MiB | 2.56%
+grid-meter-app-prometheus-1: 78.02MiB / 256MiB | 0.26%
+grid-meter-app-traefik-1: 342.2MiB / 7.748GiB | 0.54%
+grid-meter-app-grafana-1: 542.6MiB / 768MiB | 0.75%
+grid-meter-app-loki-1: 239.2MiB / 256MiB | 0.79%
+grid-meter-app-alloy-1: 123.1MiB / 128MiB | 10.33%
+grid-meter-app-kafka-1: 687.1MiB / 768MiB | 1.13%
+grid-meter-app-postgres-1: 181.4MiB / 512MiB | 0.19%
+grid-meter-app-redis-1: 8.078MiB / 128MiB | 0.26%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:24Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 2.40 1.72 1.59
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 456.9MiB / 768MiB | 1.06%
+grid-meter-app-prometheus-1: 77.77MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 341.8MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 542.4MiB / 768MiB | 0.74%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.89%
+grid-meter-app-alloy-1: 79.96MiB / 128MiB | 1.21%
+grid-meter-app-kafka-1: 687.6MiB / 768MiB | 1.43%
+grid-meter-app-postgres-1: 181.5MiB / 512MiB | 0.20%
+grid-meter-app-redis-1: 8.566MiB / 128MiB | 0.28%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:30Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 2.21 1.69 1.58
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 457.3MiB / 768MiB | 1.39%
+grid-meter-app-prometheus-1: 75.99MiB / 256MiB | 0.22%
+grid-meter-app-traefik-1: 341.8MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 543.3MiB / 768MiB | 0.74%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.99%
+grid-meter-app-alloy-1: 109.5MiB / 128MiB | 0.26%
+grid-meter-app-kafka-1: 688.3MiB / 768MiB | 1.37%
+grid-meter-app-postgres-1: 181.5MiB / 512MiB | 0.22%
+grid-meter-app-redis-1: 8.816MiB / 128MiB | 0.34%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:37Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 2.03 1.67 1.57
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 456.7MiB / 768MiB | 0.82%
+grid-meter-app-prometheus-1: 78.76MiB / 256MiB | 0.28%
+grid-meter-app-traefik-1: 343.8MiB / 7.748GiB | 0.06%
+grid-meter-app-grafana-1: 543.3MiB / 768MiB | 0.85%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 1.08%
+grid-meter-app-alloy-1: 56.37MiB / 128MiB | 9.21%
+grid-meter-app-kafka-1: 687.4MiB / 768MiB | 1.23%
+grid-meter-app-postgres-1: 181.5MiB / 512MiB | 0.17%
+grid-meter-app-redis-1: 8.328MiB / 128MiB | 0.46%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:44Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 1.95 1.66 1.57
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 457.6MiB / 768MiB | 0.86%
+grid-meter-app-prometheus-1: 76.56MiB / 256MiB | 0.22%
+grid-meter-app-traefik-1: 343.8MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 543.6MiB / 768MiB | 1.11%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.94%
+grid-meter-app-alloy-1: 37.99MiB / 128MiB | 2.36%
+grid-meter-app-kafka-1: 687.9MiB / 768MiB | 1.43%
+grid-meter-app-postgres-1: 181.8MiB / 512MiB | 0.19%
+grid-meter-app-redis-1: 8.57MiB / 128MiB | 0.32%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:50Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 1.95 1.66 1.57
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 458.1MiB / 768MiB | 2.86%
+grid-meter-app-prometheus-1: 76.67MiB / 256MiB | 0.12%
+grid-meter-app-traefik-1: 344.1MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 543.3MiB / 768MiB | 0.75%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.91%
+grid-meter-app-alloy-1: 24.29MiB / 128MiB | 1.19%
+grid-meter-app-kafka-1: 687.8MiB / 768MiB | 1.17%
+grid-meter-app-postgres-1: 182MiB / 512MiB | 0.16%
+grid-meter-app-redis-1: 9.289MiB / 128MiB | 0.29%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:11:57Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 72%
+-- host load average --
+15:11  up 3 days, 1 hr, 3 users, load averages: 1.80 1.64 1.56
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 449.4MiB / 768MiB | 1.65%
+grid-meter-app-prometheus-1: 79.63MiB / 256MiB | 0.07%
+grid-meter-app-traefik-1: 343.5MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 543.8MiB / 768MiB | 0.62%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.66%
+grid-meter-app-alloy-1: 89.38MiB / 128MiB | 4.89%
+grid-meter-app-kafka-1: 687.4MiB / 768MiB | 0.96%
+grid-meter-app-postgres-1: 181.9MiB / 512MiB | 0.15%
+grid-meter-app-redis-1: 8.797MiB / 128MiB | 0.19%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:04Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:12  up 3 days, 1 hr, 3 users, load averages: 1.74 1.63 1.56
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 441.6MiB / 768MiB | 1.13%
+grid-meter-app-prometheus-1: 79.14MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 343.9MiB / 7.748GiB | 0.02%
+grid-meter-app-grafana-1: 543.6MiB / 768MiB | 0.85%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.98%
+grid-meter-app-alloy-1: 107.4MiB / 128MiB | 0.25%
+grid-meter-app-kafka-1: 688.3MiB / 768MiB | 1.43%
+grid-meter-app-postgres-1: 181.5MiB / 512MiB | 0.18%
+grid-meter-app-redis-1: 8.824MiB / 128MiB | 0.29%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:10Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 72%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.60 1.60 1.55
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 439.7MiB / 768MiB | 1.20%
+grid-meter-app-prometheus-1: 76.15MiB / 256MiB | 0.12%
+grid-meter-app-traefik-1: 343.1MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 560.5MiB / 768MiB | 1.64%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.98%
+grid-meter-app-alloy-1: 56.71MiB / 128MiB | 1.00%
+grid-meter-app-kafka-1: 687.8MiB / 768MiB | 0.97%
+grid-meter-app-postgres-1: 181.9MiB / 512MiB | 0.13%
+grid-meter-app-redis-1: 8.578MiB / 128MiB | 0.20%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:17Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.35 1.55 1.53
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 436.3MiB / 768MiB | 1.15%
+grid-meter-app-prometheus-1: 78.96MiB / 256MiB | 0.09%
+grid-meter-app-traefik-1: 343.1MiB / 7.748GiB | 0.01%
+grid-meter-app-grafana-1: 583.8MiB / 768MiB | 0.95%
+grid-meter-app-loki-1: 239.2MiB / 256MiB | 1.13%
+grid-meter-app-alloy-1: 69.3MiB / 128MiB | 10.69%
+grid-meter-app-kafka-1: 687.4MiB / 768MiB | 1.38%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.17%
+grid-meter-app-redis-1: 8.078MiB / 128MiB | 0.31%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:24Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.24 1.52 1.52
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 434.8MiB / 768MiB | 0.70%
+grid-meter-app-prometheus-1: 78.73MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 343.1MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 583.5MiB / 768MiB | 0.83%
+grid-meter-app-loki-1: 239.5MiB / 256MiB | 0.96%
+grid-meter-app-alloy-1: 94.29MiB / 128MiB | 0.68%
+grid-meter-app-kafka-1: 688.3MiB / 768MiB | 1.52%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.26%
+grid-meter-app-redis-1: 8.578MiB / 128MiB | 0.33%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:30Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.30 1.53 1.53
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 435.3MiB / 768MiB | 1.67%
+grid-meter-app-prometheus-1: 81.52MiB / 256MiB | 0.25%
+grid-meter-app-traefik-1: 343.6MiB / 7.748GiB | 0.33%
+grid-meter-app-grafana-1: 585.2MiB / 768MiB | 0.78%
+grid-meter-app-loki-1: 239.6MiB / 256MiB | 1.09%
+grid-meter-app-alloy-1: 36.4MiB / 128MiB | 0.28%
+grid-meter-app-kafka-1: 688.6MiB / 768MiB | 1.48%
+grid-meter-app-postgres-1: 182.2MiB / 512MiB | 0.16%
+grid-meter-app-redis-1: 8.824MiB / 128MiB | 0.29%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:37Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.26 1.51 1.52
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 435.8MiB / 768MiB | 1.69%
+grid-meter-app-prometheus-1: 84.09MiB / 256MiB | 0.39%
+grid-meter-app-traefik-1: 343.3MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 584.7MiB / 768MiB | 0.93%
+grid-meter-app-loki-1: 239.3MiB / 256MiB | 1.29%
+grid-meter-app-alloy-1: 123.6MiB / 128MiB | 5.99%
+grid-meter-app-kafka-1: 688.3MiB / 768MiB | 1.57%
+grid-meter-app-postgres-1: 182.3MiB / 512MiB | 0.19%
+grid-meter-app-redis-1: 8.82MiB / 128MiB | 0.30%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:44Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.24 1.50 1.52
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 434.1MiB / 768MiB | 0.97%
+grid-meter-app-prometheus-1: 84.34MiB / 256MiB | 0.18%
+grid-meter-app-traefik-1: 343.3MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 585.2MiB / 768MiB | 1.20%
+grid-meter-app-loki-1: 239.6MiB / 256MiB | 0.97%
+grid-meter-app-alloy-1: 74.25MiB / 128MiB | 0.31%
+grid-meter-app-kafka-1: 688.6MiB / 768MiB | 1.41%
+grid-meter-app-postgres-1: 181.9MiB / 512MiB | 0.18%
+grid-meter-app-redis-1: 8.816MiB / 128MiB | 0.30%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:50Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.14 1.48 1.51
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 432.9MiB / 768MiB | 6.85%
+grid-meter-app-prometheus-1: 84.65MiB / 256MiB | 0.12%
+grid-meter-app-traefik-1: 343.1MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 585MiB / 768MiB | 0.80%
+grid-meter-app-loki-1: 223.9MiB / 256MiB | 1.09%
+grid-meter-app-alloy-1: 56.22MiB / 128MiB | 0.26%
+grid-meter-app-kafka-1: 688.3MiB / 768MiB | 1.33%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.20%
+grid-meter-app-redis-1: 8.828MiB / 128MiB | 0.31%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:12:57Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:12  up 3 days,  1:01, 3 users, load averages: 1.04 1.44 1.50
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 431.3MiB / 768MiB | 0.64%
+grid-meter-app-prometheus-1: 82.17MiB / 256MiB | 0.07%
+grid-meter-app-traefik-1: 343.1MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 605.1MiB / 768MiB | 0.69%
+grid-meter-app-loki-1: 224.7MiB / 256MiB | 0.81%
+grid-meter-app-alloy-1: 48.47MiB / 128MiB | 3.48%
+grid-meter-app-kafka-1: 689MiB / 768MiB | 1.41%
+grid-meter-app-postgres-1: 181.4MiB / 512MiB | 0.16%
+grid-meter-app-redis-1: 8.816MiB / 128MiB | 0.31%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:13:04Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:13  up 3 days,  1:01, 3 users, load averages: 0.96 1.42 1.49
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 431.6MiB / 768MiB | 0.41%
+grid-meter-app-prometheus-1: 81.95MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 343.4MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 607.8MiB / 768MiB | 0.58%
+grid-meter-app-loki-1: 224.1MiB / 256MiB | 0.81%
+grid-meter-app-alloy-1: 127.4MiB / 128MiB | 10.16%
+grid-meter-app-kafka-1: 688.1MiB / 768MiB | 1.07%
+grid-meter-app-postgres-1: 181.4MiB / 512MiB | 0.15%
+grid-meter-app-redis-1: 8.574MiB / 128MiB | 0.22%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:13:10Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 73%
+-- host load average --
+15:13  up 3 days,  1:02, 3 users, load averages: 0.96 1.41 1.48
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 432.1MiB / 768MiB | 1.02%
+grid-meter-app-prometheus-1: 84.87MiB / 256MiB | 0.10%
+grid-meter-app-traefik-1: 342.9MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 640.3MiB / 768MiB | 1.02%
+grid-meter-app-loki-1: 225.4MiB / 256MiB | 1.24%
+grid-meter-app-alloy-1: 30.26MiB / 128MiB | 2.29%
+grid-meter-app-kafka-1: 688.1MiB / 768MiB | 0.87%
+grid-meter-app-postgres-1: 181.5MiB / 512MiB | 0.11%
+grid-meter-app-redis-1: 8.574MiB / 128MiB | 0.35%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:13:17Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 71%
+-- host load average --
+15:13  up 3 days,  1:02, 3 users, load averages: 0.81 1.37 1.47
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 430.9MiB / 768MiB | 0.64%
+grid-meter-app-prometheus-1: 84.55MiB / 256MiB | 0.10%
+grid-meter-app-traefik-1: 320.3MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 639.8MiB / 768MiB | 0.66%
+grid-meter-app-loki-1: 224.4MiB / 256MiB | 0.88%
+grid-meter-app-alloy-1: 52.48MiB / 128MiB | 12.00%
+grid-meter-app-kafka-1: 687.1MiB / 768MiB | 1.27%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.18%
+grid-meter-app-redis-1: 8.328MiB / 128MiB | 0.25%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:13:24Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 72%
+-- host load average --
+15:13  up 3 days,  1:02, 3 users, load averages: 0.83 1.36 1.46
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 431.7MiB / 768MiB | 0.55%
+grid-meter-app-prometheus-1: 84.54MiB / 256MiB | 0.00%
+grid-meter-app-traefik-1: 320.3MiB / 7.748GiB | 0.00%
+grid-meter-app-grafana-1: 639.8MiB / 768MiB | 0.51%
+grid-meter-app-loki-1: 224.9MiB / 256MiB | 0.75%
+grid-meter-app-alloy-1: 21.05MiB / 128MiB | 1.43%
+grid-meter-app-kafka-1: 687.9MiB / 768MiB | 1.09%
+grid-meter-app-postgres-1: 181.6MiB / 512MiB | 0.11%
+grid-meter-app-redis-1: 8.57MiB / 128MiB | 0.22%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+
+=== 2026-08-26T22:13:30Z ===
+-- host memory (macOS memory_pressure) --
+Swapins: 0 
+Swapouts: 0 
+System-wide memory free percentage: 72%
+-- host load average --
+15:13  up 3 days,  1:02, 3 users, load averages: 0.84 1.35 1.46
+-- per-container memory/CPU (docker stats) --
+grid-meter-app-api-1: 432.2MiB / 768MiB | 1.34%
+grid-meter-app-prometheus-1: 85.71MiB / 256MiB | 0.23%
+grid-meter-app-traefik-1: 320.8MiB / 7.748GiB | 0.37%
+grid-meter-app-grafana-1: 640.2MiB / 768MiB | 0.72%
+grid-meter-app-loki-1: 225.6MiB / 256MiB | 0.94%
+grid-meter-app-alloy-1: 61.72MiB / 128MiB | 0.25%
+grid-meter-app-kafka-1: 688.4MiB / 768MiB | 1.36%
+grid-meter-app-postgres-1: 182.1MiB / 512MiB | 0.15%
+grid-meter-app-redis-1: 8.551MiB / 128MiB | 0.24%
+grid-meter-app-frontend-1: 8.605MiB / 64MiB | 0.00%
+

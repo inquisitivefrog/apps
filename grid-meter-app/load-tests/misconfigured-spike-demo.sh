@@ -48,7 +48,12 @@ export ALERTING_URL="${GRAFANA_HOST}/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/misconfigured-spike-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"
 
-BAD_ACCEPT_COUNT="${BAD_ACCEPT_COUNT:-5}"
+# accept-count=2 + 600 threads is deliberately stronger than the 5/400 combo used for the numeric
+# contrast elsewhere in this file's header comment -- confirmed live to reliably cross the edge
+# alert's 5% threshold even after 5-minute-window averaging, where 5/400 alone (4.51%) came in
+# just under it.
+BAD_ACCEPT_COUNT="${BAD_ACCEPT_COUNT:-2}"
+BAD_SPIKE_THREADS="${BAD_SPIKE_THREADS:-600}"
 SPIKE_THREADS="${SPIKE_THREADS:-400}"
 SPIKE_RAMP="${SPIKE_RAMP:-1}"
 BURST_DURATION="${BURST_DURATION:-90}"
@@ -188,50 +193,68 @@ run_phase() {
   echo "$burst_results" > "$RUN_DIR/${prefix}-results-dir.txt"
 }
 
-# Second attempt at sustaining the error rate long enough to trip an alert: sustaining via
-# keep-alive-off (misconfigured-burst.jmx, above) empirically did NOT reproduce the effect either
-# (0.27% errors) -- a real run showed the vulnerability is specific to a genuinely sharp,
-# near-simultaneous burst of *new* connections, not to sustained connection churn spread over
-# time, even at high volume. So: loop the original, keep-alive-ON, sharp rapid-spike burst (the
-# mechanism validated to reliably produce ~7-8% errors under accept-count=5) but recreate api (a
-# cold JVM) before every single iteration -- the first loop attempt (above) showed JVM/JIT warm-up
-# across repeated bursts against the SAME persistent process measurably cuts the error rate each
-# time (4.36%/6.82% decaying under 1% by the eighth loop), so a cold reset each time is what should
-# keep every iteration's error rate consistent instead of decaying away.
-run_cold_reset_loop_phase() {
-  local label="$1" accept_count="$2" prefix="$3" max_iterations="${4:-10}"
-  : > "$RUN_DIR/${prefix}-results-dirs.txt"
+# Superseded by a real finding: High HTTP error rate never fired against ANY sustain mechanism
+# tried here, because it's structurally blind to this failure class -- a request Tomcat's
+# accept-count queue refuses is answered by Traefik with a 502 and never reaches api's own
+# Spring MVC layer at all, so Micrometer's http_server_requests_seconds_count metric never
+# records it. observability/alerting/rules.yml's "High Traefik edge error rate" rule (added
+# after this was diagnosed) queries traefik_service_requests_total instead -- populated by
+# Traefik itself regardless of whether the request ever reached the app -- and a single
+# sufficiently sharp cold-JVM burst is enough to trip it: confirmed live (600 threads,
+# accept-count=2, 20.2% real error rate) transitioning Normal -> Pending -> Firing in ~30-40s.
+# No loop or repeated cold-reset needed once checking the right alert.
+run_bad_phase() {
+  local label="$1" accept_count="$2" prefix="$3"
+  reset_api "$accept_count"
+  sleep 10
+  shoot "${prefix}-00-baseline.png" "$label baseline"
+
+  banner "Running rapid-spike ($BAD_SPIKE_THREADS threads, ${SPIKE_RAMP}s ramp, 10s duration) -- $label"
+  (
+    cd load-tests
+    ./run.sh rapid-spike -Jthreads="$BAD_SPIKE_THREADS" -JrampUp="$SPIKE_RAMP" -Jduration=10 \
+      > "/tmp/misconfigured-spike-demo-${prefix}.log" 2>&1
+  )
+  ls -td load-tests/results/rapid-spike-* | head -1 > "$RUN_DIR/${prefix}-results-dir.txt"
+
   local fired=0
-  for i in $(seq 1 "$max_iterations"); do
-    reset_api "$accept_count"
-    if [ "$i" -eq 1 ]; then
-      sleep 10
-      shoot "${prefix}-00-baseline.png" "$label baseline"
-    fi
-    (
-      cd load-tests
-      ./run.sh rapid-spike -Jthreads="$SPIKE_THREADS" -JrampUp="$SPIKE_RAMP" -Jduration=10 \
-        > "/tmp/misconfigured-spike-demo-${prefix}-${i}.log" 2>&1
-    )
-    ls -td load-tests/results/rapid-spike-* | head -1 >> "$RUN_DIR/${prefix}-results-dirs.txt"
-    if alert_firing "High HTTP error rate"; then
-      echo "High HTTP error rate is now firing (after $i cold-reset burst(s))."
+  for i in $(seq 1 15); do
+    if alert_firing "High Traefik edge error rate"; then
+      echo "High Traefik edge error rate is now firing (after ~$((i * 10))s)."
       fired=1
       shoot "${prefix}-01-firing.png" "$label with the alert firing"
       break
     fi
-    echo "  cold-reset burst $i done, not firing yet -- looping again..."
+    sleep 10
   done
   if [ "$fired" -ne 1 ]; then
-    echo "High HTTP error rate never fired after $max_iterations cold-reset bursts." >&2
+    echo "High Traefik edge error rate never fired within the wait window." >&2
   fi
-  shoot "${prefix}-02-after.png" "$label after $([ "$fired" -eq 1 ] && echo "the alert fired" || echo "$max_iterations cold-reset bursts")"
+  shoot "${prefix}-02-after.png" "$label after $([ "$fired" -eq 1 ] && echo "the alert fired" || echo "the burst")"
 }
 
+# Order matters, confirmed by a real failure: bad-phase-then-good-phase (the original order) let
+# the immediately-preceding good phase's own high-volume traffic (tens of thousands of requests
+# to sustain 90s) sit inside the SAME 5-minute rate() window the alert evaluates the bad phase's
+# burst against, diluting a real 15.17% burst error rate down to ~1% at the edge metric --
+# 537 errors / (537 + 3,004 bad-phase successes + 47,509 good-phase successes) matches almost
+# exactly. Running bad first, before any heavy traffic exists in the window, avoids this: matches
+# the standalone diagnostic that originally confirmed the alert fires at all.
+run_bad_phase "misconfigured (accept-count=$BAD_ACCEPT_COUNT)" "$BAD_ACCEPT_COUNT" bad
 run_phase "properly-configured (accept-count=100, the application.yml default)" 100 good
-run_cold_reset_loop_phase "misconfigured (accept-count=$BAD_ACCEPT_COUNT)" "$BAD_ACCEPT_COUNT" bad
 
 banner "Comparison"
+dir=$(cat "$RUN_DIR/bad-results-dir.txt")
+stats="$dir/report/statistics.json"
+if [ -f "$stats" ]; then
+  samples=$(jq -r '.Total.sampleCount' "$stats")
+  errpct=$(jq -r '.Total.errorPct' "$stats")
+  p95=$(jq -r '.Total.pct2ResTime' "$stats")
+  echo "bad ($dir): samples=$samples  error-rate=${errpct}%  p95=${p95}ms"
+else
+  echo "bad ($dir): no statistics.json found"
+fi
+
 dir=$(cat "$RUN_DIR/good-results-dir.txt")
 stats="$dir/report/statistics.json"
 if [ -f "$stats" ]; then
@@ -241,24 +264,6 @@ if [ -f "$stats" ]; then
   echo "good ($dir): samples=$samples  error-rate=${errpct}%  p95=${p95}ms"
 else
   echo "good ($dir): no statistics.json found"
-fi
-
-total_samples=0
-total_errors=0
-burst_count=0
-while read -r bdir; do
-  [ -n "$bdir" ] || continue
-  bstats="$bdir/report/statistics.json"
-  [ -f "$bstats" ] || continue
-  burst_count=$((burst_count + 1))
-  total_samples=$((total_samples + $(jq -r '.Total.sampleCount' "$bstats")))
-  total_errors=$((total_errors + $(jq -r '.Total.errorCount' "$bstats")))
-done < "$RUN_DIR/bad-results-dirs.txt"
-if [ "$total_samples" -gt 0 ]; then
-  agg_err_pct=$(python3 -c "print(round(100*$total_errors/$total_samples, 4))")
-  echo "bad (${burst_count} cold-reset burst(s), $RUN_DIR/bad-results-dirs.txt): samples=$total_samples  errors=$total_errors  error-rate=${agg_err_pct}%"
-else
-  echo "bad: no statistics.json found across any burst"
 fi
 
 echo
