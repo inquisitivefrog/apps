@@ -48,6 +48,13 @@ server:
       max: 200
       min-spare: 10
     accept-count: 100
+    # Without this, Micrometer's Tomcat binder has no JMX MBean data to read thread-pool/connection
+    # metrics from, so tomcat_threads_busy_threads / tomcat_connections_current never appear on
+    # /actuator/prometheus at all — only tomcat_sessions_* does. Discovered 2026-08-25: this project
+    # had documented "watch tomcat.threads.busy in Grafana during spike/soak" (load-tests/README.md)
+    # since the load-test tier was built, but the metric was never actually exposed.
+    mbeanregistry:
+      enabled: true
     accesslog:
       enabled: true
       directory: /dev
@@ -70,6 +77,13 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  metrics:
+    distribution:
+      percentiles-histogram:
+        # Without this, http_server_requests_seconds only exposes _sum/_count, not the _bucket
+        # series histogram_quantile() needs — no p95/p99 latency panel is possible without it.
+        # Scoped to this one meter (not global) to avoid unbounded cardinality/memory cost.
+        http.server.requests: true
   opentelemetry:
     tracing:
       export:
