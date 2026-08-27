@@ -44,6 +44,13 @@ public abstract class ComponentTestSupport {
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        // The real values (3 replicas, min.insync.replicas=2 -- see application.yml/
+        // KafkaTopicConfig) aren't satisfiable against this single-broker Testcontainers Kafka:
+        // replicas=3 throws InvalidReplicationFactorException at topic creation (validated
+        // against actual broker count), and min.insync.replicas=2 with only 1 broker would make
+        // every produce permanently unsatisfiable even if topic creation itself didn't fail first.
+        registry.add("grid-meter.kafka.readings-topic-replicas", () -> "1");
+        registry.add("grid-meter.kafka.readings-topic-min-insync-replicas", () -> "1");
         registry.add("spring.data.redis.host", REDIS::getHost);
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }

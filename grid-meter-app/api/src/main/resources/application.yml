@@ -142,6 +142,12 @@ grid-meter:
     max-size: 100
   kafka:
     readings-topic: readings
+    # 3 brokers, tolerate one down without losing durability -- see docs/ha-scope.md and
+    # KafkaTopicConfig's own comment for the quorum/acks reasoning. ComponentTestSupport overrides
+    # both to 1 for its single-broker Testcontainers Kafka, where these real values aren't
+    # satisfiable.
+    readings-topic-replicas: 3
+    readings-topic-min-insync-replicas: 2
   security:
     jwt:
       # HS256 requires a >=256-bit key or JJWT throws WeakKeyException at startup — this

@@ -50,6 +50,11 @@ class ApiSecurityComponentTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+        // See ComponentTestSupport's identical override -- this class has its own separate
+        // single-broker Testcontainers Kafka, so the real replicas=3/min.insync.replicas=2
+        // aren't satisfiable here either.
+        registry.add("grid-meter.kafka.readings-topic-replicas", () -> "1");
+        registry.add("grid-meter.kafka.readings-topic-min-insync-replicas", () -> "1");
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
     }

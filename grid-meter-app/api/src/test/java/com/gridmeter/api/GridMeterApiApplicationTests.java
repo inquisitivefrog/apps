@@ -38,6 +38,11 @@ class GridMeterApiApplicationTests {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+        // See ComponentTestSupport's identical override for why -- this class has its own separate
+        // single-broker Testcontainers Kafka, so it needs the same real-values-aren't-satisfiable
+        // override independently.
+        registry.add("grid-meter.kafka.readings-topic-replicas", () -> "1");
+        registry.add("grid-meter.kafka.readings-topic-min-insync-replicas", () -> "1");
     }
 
     @Test
