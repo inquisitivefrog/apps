@@ -191,8 +191,11 @@ Redis-backed caching upstream, a handful of mutations).
   First slice is fully in-cluster — api, frontend, postgres, kafka, redis —
   rather than depending on the host's Compose stack for the data tier, so
   the demo is self-contained (`kind create cluster` + `kubectl apply -f
-  k8s/`). Observability stack (`kube-prometheus-stack` and in-cluster
-  Alloy/Loki/Tempo) is a deferred follow-up slice, not part of this pass.
+  k8s/`). Observability follow-up slice (`kube-prometheus-stack` plus
+  in-cluster Loki/Tempo/Alloy, `k8s/deploy-observability.sh`) is a single
+  unified Prometheus + Grafana pair, not two separate ones — see
+  `k8s/README.md`'s "Observability follow-up slice" section for the full
+  design and the real bugs found validating it against a live cluster.
 - The app's own k8s manifests (Deployment, Service, ConfigMap) are plain
   YAML, not Helm — more legible for an interview walkthrough. Helm is
   reserved for `kube-prometheus-stack`, where its templating earns its

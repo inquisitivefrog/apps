@@ -75,6 +75,13 @@ groups:
       # failure class is visible. See load-tests/README.md's misconfigured-spike-demo.sh section
       # for the real diagnostic (a live burst with genuine 9% app-level errors produced a
       # 0% high-error-rate reading throughout) that found this gap.
+      #
+      # service="grid-meter-api-edge" is a canonical value neither Prometheus's Docker nor
+      # Kubernetes provider produces natively -- both environments' own scrape config relabels
+      # toward it (observability/prometheus.yml for Compose's "api@docker",
+      # k8s/kube-prometheus-stack-values.yaml for k8s's unstable hashed "...@kubernetescrd" name),
+      # so this one rule definition works unchanged in both rather than hardcoding either
+      # environment's actual label value into the query text.
       - uid: edge-5xx-rate
         title: High Traefik edge error rate
         condition: C
@@ -90,7 +97,7 @@ groups:
             relativeTimeRange: { from: 300, to: 0 }
             model:
               refId: A
-              expr: '100 * (sum(rate(traefik_service_requests_total{service="api@docker", code=~"5.."}[5m])) or vector(0)) / sum(rate(traefik_service_requests_total{service="api@docker"}[5m]))'
+              expr: '100 * (sum(rate(traefik_service_requests_total{service="grid-meter-api-edge", code=~"5.."}[5m])) or vector(0)) / sum(rate(traefik_service_requests_total{service="grid-meter-api-edge"}[5m]))'
               instant: true
           - refId: C
             datasourceUid: __expr__

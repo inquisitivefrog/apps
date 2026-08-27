@@ -1,0 +1,62 @@
+# Mirrors docker-compose.yml's tempo service. tempo.yml's content comes from
+# observability/tempo.yml via a ConfigMap generated at deploy time (see deploy.sh) rather than
+# duplicated here, so the two environments share one source of truth. Service MUST be named
+# "tempo" -- application.yml hardcodes management.opentelemetry.tracing.export.otlp.endpoint as
+# http://tempo:4318/v1/traces, matching Compose's service-name-based DNS, so api needs no
+# environment-specific override to find it here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  labels:
+    app: tempo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.10.0
+          args:
+            - -config.file=/etc/tempo/tempo.yml
+          ports:
+            - name: http
+              containerPort: 3200
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+          resources:
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: grid-meter-tempo-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+spec:
+  selector:
+    app: tempo
+  ports:
+    - name: http
+      port: 3200
+      targetPort: 3200
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318

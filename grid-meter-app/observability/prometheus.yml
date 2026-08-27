@@ -14,3 +14,12 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["traefik:8080"]
+    # Docker provider names the api service "api@docker" -- relabeled to the same canonical value
+    # as the k8s deploy's equivalent relabel (k8s/kube-prometheus-stack-values.yaml), where
+    # Traefik's k8s CRD provider generates an unstable hashed name instead. Keeps
+    # observability/alerting/rules.yml's edge-5xx-rate rule identical across both environments.
+    metric_relabel_configs:
+      - source_labels: [service]
+        regex: 'api@docker'
+        target_label: service
+        replacement: grid-meter-api-edge

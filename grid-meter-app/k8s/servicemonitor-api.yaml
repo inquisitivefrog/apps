@@ -1,0 +1,29 @@
+# Tells kube-prometheus-stack's Prometheus (installed via helm in deploy-observability.sh) to
+# scrape api's /actuator/prometheus, same as observability/prometheus.yml's grid-meter-api job in
+# Compose. The `release: kube-prometheus-stack` label matches that Helm release's default
+# serviceMonitorSelector -- without it, this ServiceMonitor exists but Prometheus ignores it.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: grid-meter-api
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: api
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 15s
+      # Prometheus Operator's ServiceMonitor mechanism defaults the `job` label to the discovered
+      # Service's name ("api"), not this ServiceMonitor's own name -- confirmed live, this silently
+      # broke observability/alerting/rules.yml's api-down rule (job="grid-meter-api" matched zero
+      # series). Normalizing here, not by editing the alert rule to say "api" instead: Compose's
+      # prometheus.yml already emits job="grid-meter-api" natively (its job_name IS the label
+      # value), so relabeling k8s toward that existing value keeps one alert-rule definition
+      # working unchanged in both environments, rather than making the rule chase whichever
+      # environment's default happened to differ.
+      relabelings:
+        - targetLabel: job
+          replacement: grid-meter-api

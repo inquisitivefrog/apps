@@ -1,0 +1,130 @@
+# Helm values for kube-prometheus-stack (the one piece of this project's k8s manifests installed
+# via Helm -- see CLAUDE.md/architecture.md). Installed into the `default` namespace, not the
+# usual `monitoring` convention: this project already deliberately keeps everything in `default`
+# for the app's own manifests (see k8s/README.md's "Deliberate simplifications" -- one less
+# concept to explain in an interview walkthrough), and doing the same here avoids
+# extraConfigmapMounts/ServiceMonitor namespace-matching complexity for no real benefit on a
+# single-tenant demo cluster.
+#
+# Design: ONE unified Prometheus + Grafana pair for the whole cluster, not a second app-level pair
+# duplicating it -- this Prometheus scrapes cluster/node metrics (node-exporter, kube-state-metrics,
+# bundled by the chart) AND the api Deployment (via servicemonitor-api.yaml) and Traefik
+# (additionalScrapeConfigs below, since the vendored traefik.yaml/traefik-rbac.yaml stay
+# hand-edited as little as possible). This Grafana gets the app's existing
+# dashboard/alert-rules/Loki+Tempo-datasources layered in via the settings below, rather than
+# running a second Grafana that duplicates the Prometheus datasource this one already has --
+# avoids two redundant Prometheus/Grafana pairs competing for the same tight Docker Desktop VM
+# budget (see docker info's ~7.75GiB ceiling).
+#
+# Alertmanager disabled: this project's alerting is Grafana-managed (observability/alerting/rules.yml,
+# the same Grafana-native apiVersion:1 format reused verbatim here via extraConfigmapMounts below),
+# not Prometheus-rule-file-plus-Alertmanager, so Alertmanager has no job to do.
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    resources:
+      limits:
+        memory: 512Mi
+    # Vendored traefik.yaml/traefik-rbac.yaml stay untouched beyond what's needed for metrics
+    # (see traefik.yaml's own comment) -- a static scrape target here is simpler than adding
+    # ServiceMonitor-compatible labels to those vendored files.
+    additionalScrapeConfigs:
+      - job_name: traefik
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["traefik-metrics:8080"]
+        # Traefik's k8s CRD provider names services like "default-grid-meter-<hash>@kubernetescrd"
+        # -- confirmed live via a direct query against the real metric -- and that hash isn't
+        # guaranteed stable across an IngressRoute rename/recreation, unlike Compose's fixed
+        # "api@docker" (Docker provider naming). A regex-based relabel toward one canonical value
+        # (shared with Compose's own relabel below) means observability/alerting/rules.yml's
+        # edge-5xx-rate rule works unchanged regardless of which provider generated the label, and
+        # keeps working if the hash changes later -- rather than hardcoding a snapshot of it.
+        metric_relabel_configs:
+          - source_labels: [service]
+            regex: '.*grid-meter.*@kubernetescrd'
+            target_label: service
+            replacement: grid-meter-api-edge
+
+prometheusOperator:
+  resources:
+    limits:
+      memory: 256Mi
+
+kube-state-metrics:
+  resources:
+    limits:
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    limits:
+      memory: 64Mi
+
+grafana:
+  # Pinned to match docs/tech-stack-versions.md (13.0.2), not the chart's own default (13.2.0 as
+  # of chart 88.5.4). Not just version-parity for its own sake: 13.2.0's newer "apiserver"
+  # bootstrap (dashboard.grafana.app, folder.grafana.app, playlist.grafana.app, etc., each
+  # registered as a separate multi-second step) pushed real boot time past the chart's default
+  # liveness-probe budget (60s delay + 10x10s failures) in this kind cluster, causing a genuine
+  # crash-loop (exit 137, confirmed NOT a resource-contention artifact -- reproduced identically
+  # with the Compose stack fully stopped). 13.0.2 predates that bootstrap path.
+  image:
+    tag: 13.0.2
+  # Extra headroom kept anyway, independent of the version pin above -- this is a laptop kind
+  # cluster sharing CPU with everything else, not a dedicated node with guaranteed real-time boot
+  # performance.
+  livenessProbe:
+    initialDelaySeconds: 90
+    failureThreshold: 15
+  # Chart default readinessProbe.timeoutSeconds is 1 -- fragile for any HTTP health check on a
+  # laptop kind cluster sharing CPU with everything else, and this pod specifically: confirmed
+  # live (`kubectl describe pod`) failing readiness with "context deadline exceeded" while
+  # otherwise healthy and listening, not down.
+  readinessProbe:
+    timeoutSeconds: 5
+  # 512Mi, not the 256Mi chart default and NOT docker-compose.yml's grafana limit (768Mi) either --
+  # that Compose number is a different, unrelated investigation (a real memory LEAK in
+  # load-tests/screenshot-daemon.js repeatedly opening fresh Playwright sessions against Grafana,
+  # fixed architecturally by reusing one persistent session; see status/claude_code_2026-08-24.md).
+  # Nothing in this k8s cluster does that -- borrowing 768Mi here would be citing an unrelated
+  # precedent as though it were direct evidence. 512Mi comes from a direct measurement instead:
+  # `kubectl exec ... cat /sys/fs/cgroup/memory.current` read 268402688 against a 256Mi
+  # (268435456) limit -- 99.99% utilized, no OOMKilled events yet, but with GOMEMLIMIT=230MiB
+  # forcing the Go runtime's GC to work harder as it approaches that soft cap, plausibly explaining
+  # the readiness-probe slowness above. Real load driving it: two k8s-sidecar containers in
+  # constant WATCH mode (dashboard/datasource provisioning) plus 4 alert rules evaluating on a
+  # 10s scheduler tick. Re-measure memory.current against this new limit after redeploying --
+  # if it still runs near 100%, that's a signal 512Mi was a reasonable first estimate, not a
+  # final one, not a foregone conclusion either way.
+  resources:
+    limits:
+      memory: 512Mi
+  # Matches docker-compose.yml's grafana service -- anonymous admin access, no login screen,
+  # appropriate for a local throwaway demo cluster, not a real deployment.
+  env:
+    GF_AUTH_ANONYMOUS_ENABLED: "true"
+    GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki:3100
+      uid: loki
+    - name: Tempo
+      type: tempo
+      access: proxy
+      url: http://tempo:3200
+      uid: tempo
+  # sidecar.dashboards is chart-default-enabled and searches ALL namespaces, so a ConfigMap
+  # labeled grafana_dashboard: "1" (see deploy-observability.sh) is picked up automatically.
+  # Alert rules have no equivalent sidecar in this chart version (confirmed via `helm show
+  # values` before assuming, not guessed) -- extraConfigmapMounts statically mounts the same
+  # ConfigMap Compose's volume mount points at, generated from the same source file.
+  extraConfigmapMounts:
+    - name: grid-meter-alerting
+      mountPath: /etc/grafana/provisioning/alerting
+      configMap: grid-meter-grafana-alerting
+      readOnly: true

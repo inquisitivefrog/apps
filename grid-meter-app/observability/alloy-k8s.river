@@ -1,0 +1,43 @@
+// k8s-specific counterpart to alloy.river (the Compose config). Compose discovers containers via
+// the Docker socket (discovery.docker) since that's the only log source that exists there; a kind
+// cluster has no Docker socket exposed to pods and containerd (not dockerd) manages the node, so
+// the equivalent here is the Kubernetes API itself. loki.source.kubernetes reads pod logs straight
+// from the API server (the same path `kubectl logs` uses) -- no hostPath mount onto
+// /var/log/pods needed, which is what lets this run as a plain single-replica Deployment rather
+// than a DaemonSet: log collection isn't node-local here, it's centralized via API calls, and this
+// project's kind cluster is single-node anyway so a DaemonSet would buy nothing.
+discovery.kubernetes "pods" {
+  role = "pod"
+}
+
+discovery.relabel "pods" {
+  targets = discovery.kubernetes.pods.targets
+
+  rule {
+    source_labels = ["__meta_kubernetes_namespace"]
+    target_label  = "namespace"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_name"]
+    target_label  = "pod"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_kubernetes_pod_label_app"]
+    target_label  = "app"
+  }
+}
+
+loki.source.kubernetes "pods" {
+  targets    = discovery.relabel.pods.output
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

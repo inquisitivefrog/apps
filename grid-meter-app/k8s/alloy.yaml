@@ -1,0 +1,71 @@
+# k8s counterpart to docker-compose.yml's alloy service. Uses observability/alloy-k8s.river (NOT
+# alloy.river, which is Docker-socket-based and has no equivalent path in a kind cluster) via a
+# ConfigMap generated at deploy time from that source file. Single-replica Deployment, not a
+# DaemonSet -- loki.source.kubernetes pulls logs centrally through the Kubernetes API (the same
+# path `kubectl logs` uses), not from node-local files, so there's nothing per-node to collect and
+# this project's kind cluster is single-node anyway. Needs cluster-wide RBAC to list pods and read
+# their logs across all namespaces (pods/log is a subresource with its own separate permission).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  labels:
+    app: alloy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.18.1
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/var/lib/alloy/data
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+          resources:
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: config
+          configMap:
+            name: grid-meter-alloy-config
