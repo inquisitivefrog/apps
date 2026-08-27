@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.gridmeter.api.auth.dto.LoginRequest;
+import com.gridmeter.api.customer.Customer;
+import com.gridmeter.api.customer.CustomerRepository;
 import com.gridmeter.api.support.ComponentTestSupport;
 import java.time.Instant;
 import java.util.UUID;
@@ -24,15 +26,26 @@ class AuthComponentTest extends ComponentTestSupport {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    private User createUser(String username, String rawPassword) {
+    @Autowired
+    private JwtService jwtService;
+
+    @Autowired
+    private CustomerRepository customerRepository;
+
+    private User createUser(String username, String rawPassword, UUID customerId) {
         Instant now = Instant.now();
         return userRepository.save(User.builder()
                 .id(UUID.randomUUID())
                 .username(username)
                 .passwordHash(passwordEncoder.encode(rawPassword))
+                .customerId(customerId)
                 .createdAt(now)
                 .updatedAt(now)
                 .build());
+    }
+
+    private User createUser(String username, String rawPassword) {
+        return createUser(username, rawPassword, Customer.DEFAULT_ID);
     }
 
     @Test
@@ -45,6 +58,23 @@ class AuthComponentTest extends ComponentTestSupport {
         assertThat(response.accessToken()).isNotBlank();
         assertThat(response.tokenType()).isEqualTo("Bearer");
         assertThat(response.expiresInSeconds()).isEqualTo(3600);
+    }
+
+    @Test
+    void login_embedsTheUsersOwnCustomerIdInTheToken() {
+        String username = "carol-" + UUID.randomUUID();
+        Instant now = Instant.now();
+        Customer otherCustomer = customerRepository.save(Customer.builder()
+                .id(UUID.randomUUID())
+                .name("Other Customer " + UUID.randomUUID())
+                .createdAt(now)
+                .updatedAt(now)
+                .build());
+        createUser(username, "correct-horse-battery-staple", otherCustomer.getId());
+
+        var response = authService.login(new LoginRequest(username, "correct-horse-battery-staple"));
+
+        assertThat(jwtService.extractCustomerId(response.accessToken())).isEqualTo(otherCustomer.getId());
     }
 
     @Test

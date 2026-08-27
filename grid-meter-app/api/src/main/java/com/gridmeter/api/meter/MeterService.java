@@ -19,8 +19,10 @@ public class MeterService {
         this.meterRepository = meterRepository;
     }
 
+    // customerId comes from the authenticated caller's own JWT claim (MeterController), not the
+    // request body -- a client shouldn't be able to assign a meter to an arbitrary customer.
     @Transactional
-    public Meter create(MeterRequest request) {
+    public Meter create(MeterRequest request, UUID customerId) {
         Instant now = Instant.now();
         Meter meter = Meter.builder()
                 .id(UUID.randomUUID())
@@ -28,6 +30,7 @@ public class MeterService {
                 .location(request.location())
                 .status(request.status())
                 .installedAt(request.installedAt())
+                .customerId(customerId)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();

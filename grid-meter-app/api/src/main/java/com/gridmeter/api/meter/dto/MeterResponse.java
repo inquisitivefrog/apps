@@ -11,6 +11,7 @@ public record MeterResponse(
         String location,
         MeterStatus status,
         Instant installedAt,
+        UUID customerId,
         Instant createdAt,
         Instant updatedAt) {
 
@@ -21,6 +22,7 @@ public record MeterResponse(
                 meter.getLocation(),
                 meter.getStatus(),
                 meter.getInstalledAt(),
+                meter.getCustomerId(),
                 meter.getCreatedAt(),
                 meter.getUpdatedAt());
     }

@@ -1,4 +1,4 @@
-package com.gridmeter.api.auth;
+package com.gridmeter.api.customer;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -13,27 +13,22 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "users")
+@Table(name = "customers")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class User {
+public class Customer {
+
+    /** Seeded by V4__create_customers_table.sql; every pre-existing user/meter is assigned here. */
+    public static final UUID DEFAULT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
     @Id
     private UUID id;
 
-    @Column(nullable = false, unique = true)
-    private String username;
-
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
-
-    // One customer per user for this pass (docs/multi-tenancy-scope.md). Embedded in the JWT at
-    // login so downstream requests don't need a per-request DB lookup to resolve it.
-    @Column(name = "customer_id", nullable = false)
-    private UUID customerId;
+    @Column(nullable = false)
+    private String name;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;

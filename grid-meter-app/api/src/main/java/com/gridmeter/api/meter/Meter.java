@@ -39,6 +39,12 @@ public class Meter {
     @Column(name = "installed_at", nullable = false)
     private Instant installedAt;
 
+    // Flat FK field, not a JPA relation -- same convention as Reading.meterId. Every meter belongs
+    // to exactly one customer (docs/multi-tenancy-scope.md); observability-only tenancy for this
+    // pass, so this doesn't gate API access, only reporting.
+    @Column(name = "customer_id", nullable = false)
+    private UUID customerId;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

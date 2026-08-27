@@ -66,6 +66,14 @@ spring:
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
 
+logging:
+  pattern:
+    # Appends customerId (set into MDC by JwtAuthenticationFilter, see docs/multi-tenancy-scope.md)
+    # to every log line's level segment, so it lands in stdout -> Alloy -> Loki without a separate
+    # structured-logging setup. ":-" falls back to empty for unauthenticated requests (login,
+    # actuator) where no customerId is in scope yet.
+    level: "%5p [customerId=%X{customerId:-}]"
+
 server:
   port: 8080
   tomcat:

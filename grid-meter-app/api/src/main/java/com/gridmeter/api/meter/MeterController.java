@@ -1,5 +1,6 @@
 package com.gridmeter.api.meter;
 
+import com.gridmeter.api.auth.AuthenticatedUser;
 import com.gridmeter.api.common.PageResponse;
 import com.gridmeter.api.common.PaginationProperties;
 import com.gridmeter.api.meter.dto.MeterRequest;
@@ -11,6 +12,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,8 +36,9 @@ public class MeterController {
     }
 
     @PostMapping
-    public ResponseEntity<MeterResponse> create(@Valid @RequestBody MeterRequest request) {
-        Meter created = meterService.create(request);
+    public ResponseEntity<MeterResponse> create(
+            @Valid @RequestBody MeterRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
+        Meter created = meterService.create(request, principal.customerId());
         return ResponseEntity.created(URI.create("/api/v1/meters/" + created.getId()))
                 .body(MeterResponse.from(created));
     }
