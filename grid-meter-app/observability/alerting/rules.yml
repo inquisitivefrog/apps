@@ -17,6 +17,7 @@ groups:
         for: 30s
         labels:
           severity: critical
+          alert_class: incident
         annotations:
           summary: "Prometheus cannot scrape grid-meter-api -- the API is unreachable."
         data:
@@ -45,6 +46,7 @@ groups:
         for: 30s
         labels:
           severity: warning
+          alert_class: incident
         annotations:
           summary: "HTTP error rate has exceeded 5% for 30s."
         data:
@@ -79,6 +81,7 @@ groups:
         for: 30s
         labels:
           severity: warning
+          alert_class: incident
         annotations:
           summary: "Traefik's 5xx rate for the api service has exceeded 5% for 30s."
         data:
@@ -107,6 +110,7 @@ groups:
         for: 30s
         labels:
           severity: warning
+          alert_class: incident
         annotations:
           summary: "Tomcat busy threads have exceeded 80% of the configured max for 30s."
         data:
