@@ -248,6 +248,37 @@ Kafka/Postgres/Redis panels. Tomcat's own saturation is a first-class
 signal here, not just an infra afterthought — the whole point of the spike
 profiles is watching it happen.
 
+## Why chaos-demo.sh's postgres outage didn't originally trip an alert
+
+A real re-test (see "user asked to re-confirm all three demo scripts" in
+`status/`) found `High HTTP error rate` and `Tomcat thread pool saturated`
+didn't fire during `chaos-demo.sh`'s postgres-outage step, even though
+`API is down` fired correctly for the api-outage step in the same run.
+Checked the actual JMeter response times during the outage window rather
+than guess: throughput collapsed from ~480 samples/5s down to just 20,
+with average latency climbing to ~25s and one request measured at exactly
+**30107ms**. Not a coincidence — Spring Boot's HikariCP connection pool
+defaults `connection-timeout` to exactly 30 seconds, and `application.yml`
+had no `spring.datasource.hikari.*` block at all, so that default applied
+untouched. `ReadingService.ingest()` calls `meterRepository.existsById()`
+synchronously before publishing to Kafka, so every thread needing a
+connection during the outage blocked for up to 30s instead of failing —
+collapsing throughput (masking the real failure count) rather than
+producing a clean, alertable error-rate spike. The app absorbed a real
+outage as latency, not as visible errors.
+
+**Fixed by declaring HikariCP's settings explicitly in `application.yml`**
+(same reasoning already applied to `server.tomcat.threads.max`/
+`accept-count` in the same file — discoverable and tunable, not an
+unlisted default), with `connection-timeout` deliberately shortened from
+30s to 5s. Rebuilt the `api` image and re-tested the identical scenario
+(steady-state background load, stop Postgres for ~45s, restart): requests
+now fail in ~5s instead of hanging up to 30s, throughput stays sustained
+during the outage (100% failure rate, ~20 samples/5s continuously for
+55+ seconds) instead of collapsing, and **both `High HTTP error rate` and
+`High Traefik edge error rate` fired for real** — confirmed via Grafana's
+alert state history, not assumed from the config change alone.
+
 ## How each profile is built
 
 - **`common/login.jmx`** — shared Test Fragment: logs in as the seed demo

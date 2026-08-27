@@ -6,6 +6,24 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/gridmeter}
     username: ${SPRING_DATASOURCE_USERNAME:gridmeter}
     password: ${SPRING_DATASOURCE_PASSWORD:gridmeter}
+    # Explicit, not left as an unlisted HikariCP default (same reasoning as server.tomcat below) --
+    # discoverable and tunable here rather than requiring a reader to already know HikariCP's own
+    # defaults. maximum-pool-size/idle-timeout/max-lifetime/validation-timeout are HikariCP's own
+    # defaults, written down deliberately. connection-timeout is NOT the 30s default -- a real
+    # chaos-demo.sh postgres outage showed requests hanging up to 30007ms (matching that default
+    # almost exactly) instead of failing fast: ReadingService.ingest() calls
+    # meterRepository.existsById() synchronously before publishing to Kafka, so every thread
+    # needing a connection during an outage blocked for up to 30s rather than erroring, collapsing
+    # throughput (~480 samples/5s down to ~20) and diluting the resulting error rate well below
+    # any alert's threshold -- the app absorbed a real outage as latency, not as visible errors.
+    # 5s fails fast enough to surface as real errors within a realistic outage window, without
+    # being so short that normal pool contention under genuine load causes spurious failures.
+    hikari:
+      connection-timeout: 5000
+      maximum-pool-size: 10
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      validation-timeout: 5000
 
   jpa:
     hibernate:
