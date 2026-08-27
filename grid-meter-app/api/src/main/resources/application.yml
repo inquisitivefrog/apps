@@ -43,6 +43,17 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      # Explicit, not left as an unlisted client default (same reasoning as datasource.hikari
+      # above) -- max-block-ms is what actually bounds how long ReadingService.ingest()'s
+      # kafkaTemplate.send() call can hang the calling Tomcat thread when Kafka is unreachable.
+      # send() is fire-and-forget (no .get()), but the producer still blocks synchronously inside
+      # send() itself while it can't fetch fresh cluster metadata for the topic. A real Kafka
+      # stop/restart test (46s outage) showed individual requests blocking up to ~49.8s before
+      # succeeding once Kafka came back -- close to, but under, this 60s default. Written down
+      # deliberately so the ceiling this app is relying on is visible, not an unlisted default a
+      # reader would have to already know the Kafka client's internals to explain.
+      properties:
+        max.block.ms: 60000
     consumer:
       group-id: grid-meter-api
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
