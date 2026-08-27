@@ -6,12 +6,17 @@ import com.gridmeter.api.reading.dto.ReadingRequest;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.orm.jpa.JpaSystemException;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 /**
  * Ingest is async: the service publishes a {@link ReadingEvent} to Kafka and returns immediately;
@@ -37,6 +42,33 @@ public class ReadingService {
         this.readingsTopic = readingsTopic;
     }
 
+    // A brief, self-resolving Postgres blip (a failover completing, a momentary connection-pool
+    // squeeze, an already-open pooled connection getting killed server-side) shouldn't have to
+    // surface as a hard failure just because meterRepository.existsById() below happened to hit
+    // it on its first attempt -- retry 3 times (standard practice) with a short exponential
+    // backoff before giving up for real. Scoped to specific exception types, not a blanket
+    // catch-all, so a genuinely missing meter (ResourceNotFoundException, thrown below) is never
+    // retried -- that's not a transient condition, retrying it would just waste 3 attempts on a
+    // request that was always going to fail. CannotCreateTransactionException covers "can't
+    // acquire a new pooled connection" (the chaos-demo postgres-outage scenario this was
+    // originally built for); JpaSystemException covers a different, empirically-confirmed real
+    // case: a real test killed Postgres mid-request and got "JpaSystemException: Unable to
+    // rollback against JDBC Connection" (root cause: "Connection is closed", from an
+    // already-open pooled connection Postgres terminated server-side) -- Spring's own hierarchy
+    // classifies JpaSystemException as non-transient by default, which is the wrong call for
+    // this specific case, hence listing it explicitly rather than trusting TransientDataAccess-
+    // Exception alone to cover it. Each attempt still fails fast on its own (see
+    // spring.datasource.hikari.connection-timeout in application.yml, 5s) -- this decouples how
+    // long one attempt waits from how long the overall request tolerates a transient outage,
+    // rather than just making the single timeout itself longer.
+    @Retryable(
+            retryFor = {
+                TransientDataAccessException.class,
+                CannotCreateTransactionException.class,
+                JpaSystemException.class
+            },
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 200, multiplier = 2))
     public ReadingEvent ingest(ReadingRequest request) {
         if (!meterRepository.existsById(request.meterId())) {
             throw new ResourceNotFoundException("Meter not found: " + request.meterId());

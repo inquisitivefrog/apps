@@ -279,6 +279,42 @@ during the outage (100% failure rate, ~20 samples/5s continuously for
 `High Traefik edge error rate` fired for real** — confirmed via Grafana's
 alert state history, not assumed from the config change alone.
 
+**A valid pushback on the 5s timeout, and the more complete fix it led
+to**: shortening `connection-timeout` from 30s to 5s was questioned as
+possibly optimizing for this demo rather than general production
+practice — 30s is HikariCP's deliberate default specifically to tolerate
+a brief HA failover or a momentary pool squeeze without converting it
+into a hard, user-facing error. Fair, and correct for a database layer
+that actually has something to fail over to; this project's Postgres is a
+single, unclustered instance (`docker-compose.yml`), so there's nothing
+to wait for during a real outage here — but the general point stands for
+a real deployment. The actual production-grade answer isn't "pick a
+smaller timeout," it's decoupling how long *one attempt* waits from how
+long the *request* tolerates a blip: `ReadingService.ingest()`'s
+`meterRepository.existsById()` call now has `@Retryable` (Spring Retry,
+`spring-retry` — not managed by this project's Spring Boot BOM, needed an
+explicit version), 3 attempts with a 200ms/2x exponential backoff.
+
+**A second real exception-targeting bug, found by actually testing the
+retry rather than trusting the annotation compiled**: the first attempt
+scoped `retryFor` to `TransientDataAccessException`/
+`CannotCreateTransactionException` — the two Spring exception types
+that cover "can't acquire a *new* pooled connection," matching the
+original chaos-demo scenario. A live test (kill Postgres mid-request,
+restart it 2s later, confirm the request still succeeds) instead got an
+immediate 500 in 94ms — far too fast to be the 5s connection-timeout
+engaging, meaning the retry never fired at all. The actual exception, from
+the api logs: `JpaSystemException: Unable to rollback against JDBC
+Connection` (root cause: `SQLException: Connection is closed`, from an
+*already-open* pooled connection that Postgres killed server-side on
+shutdown) — a different, and empirically more common, failure mode than
+"can't get a new connection," and one Spring's own hierarchy classifies
+as non-transient by default despite genuinely being transient here. Added
+`JpaSystemException` to `retryFor` explicitly and re-ran the identical
+live test: the request that previously failed in 94ms now succeeds in
+~3.2s (`HTTP_CODE:201`) — the retry absorbed the outage and the client
+never saw a failure at all.
+
 ## How each profile is built
 
 - **`common/login.jmx`** — shared Test Fragment: logs in as the seed demo

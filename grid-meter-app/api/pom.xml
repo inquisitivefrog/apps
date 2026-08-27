@@ -20,6 +20,10 @@
         <java.version>25</java.version>
         <testcontainers.version>2.0.5</testcontainers.version>
         <jjwt.version>0.13.0</jjwt.version>
+        <!-- Not managed by spring-boot-dependencies' BOM: spring-retry is a separate Spring
+             team project with its own release cadence, needs an explicit version regardless of
+             Spring Boot version. -->
+        <spring-retry.version>2.0.11</spring-retry.version>
         <rest-assured.version>5.5.2</rest-assured.version>
         <!-- rest-assured 5.5.2 transitively pulls Groovy 5.0.6, but rest-assured doesn't support
              Groovy 5 yet (open issue: https://github.com/rest-assured/rest-assured/issues/1846 —
@@ -70,6 +74,15 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- spring-boot-starter-aop doesn't exist as an artifact for this Spring Boot version,
+             and isn't needed anyway: @Retryable only requires proxy-based Spring AOP, already
+             transitively present via spring-boot-starter-data-jpa/security's own
+             @Transactional/@PreAuthorize proxying, not full AspectJ weaving. -->
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+            <version>${spring-retry.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
