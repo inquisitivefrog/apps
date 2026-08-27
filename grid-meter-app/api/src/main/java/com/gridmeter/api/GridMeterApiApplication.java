@@ -2,11 +2,13 @@ package com.gridmeter.api;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.retry.annotation.EnableRetry;
+import org.springframework.resilience.annotation.EnableResilientMethods;
 
-// @EnableRetry backs ReadingService.ingest()'s @Retryable -- see its own comment for why
-// (a transient Postgres blip shouldn't have to surface as a hard failure).
-@EnableRetry
+// @EnableResilientMethods backs ReadingService.ingest()'s @Retryable -- see its own comment for
+// why (a transient Postgres blip shouldn't have to surface as a hard failure). Spring Framework
+// 7's own native resilience annotations, not the older spring-retry library -- no extra
+// dependency needed, spring-context (already required regardless) is all this takes.
+@EnableResilientMethods
 @SpringBootApplication
 public class GridMeterApiApplication {
 

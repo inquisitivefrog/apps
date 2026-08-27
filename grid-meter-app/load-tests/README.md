@@ -315,6 +315,31 @@ live test: the request that previously failed in 94ms now succeeds in
 ~3.2s (`HTTP_CODE:201`) — the retry absorbed the outage and the client
 never saw a failure at all.
 
+**Migrated off `spring-retry` entirely once a real gap in the initial
+implementation surfaced**: this project's own scoping docs (a parallel
+architecture-discussion thread) pointed out that Spring Boot 4 ships its
+*own* native `@Retryable`/`@ConcurrencyLimit` annotations
+(`org.springframework.resilience.annotation`, Spring Framework 7.0+,
+enabled via `@EnableResilientMethods`) — no external library needed at
+all, since the mechanism lives in `spring-context`, already a required
+dependency regardless. Verified this wasn't just a plausible-sounding
+claim before acting on it: found both classes for real in the installed
+`spring-context-7.0.8.jar`, then pulled the actual sources jar
+(`mvn dependency:get -Dclassifier=sources`) to read the real Javadoc
+rather than guess at attribute semantics (`maxRetries` counts retries
+*after* the initial attempt, unlike `spring-retry`'s `maxAttempts` which
+counts the initial attempt too — `maxRetries=2` is the equivalent of the
+`maxAttempts=3` used above). Migrated `ingest()`'s `@Retryable` to the
+native annotation, removed the `spring-retry` dependency (and its
+unmanaged-version workaround) from `pom.xml` entirely, and re-ran the
+identical live Postgres-kill test again: `HTTP_CODE:201` in ~3.19s,
+matching the `spring-retry` version's behavior almost exactly. All 53
+existing tests still pass. Net effect: same resilience behavior, one
+fewer dependency, matching this project's stated minimal-scope ethos —
+and a good reminder that a working `@Retryable`+external-library
+implementation doesn't mean it was the leanest available option for a
+Spring Boot 4 project specifically.
+
 ## How each profile is built
 
 - **`common/login.jmx`** — shared Test Fragment: logs in as the seed demo
