@@ -459,25 +459,44 @@ succeeded, zero impact, confirming RF=3's whole point. Scenario 3 (rolling
 maintenance) — 30/30 succeeded across all three sequential restarts, zero
 downtime, the actual payoff of "3, not 2" quorum math.
 
-**Scenario 2 (two-broker quorum loss) produced a genuinely important
-finding, not a clean pass**: 10/10 requests returned `201`, and a direct
-Postgres query afterward confirmed all 10 readings landed durably —
-zero visible failure anywhere, even though the cluster was genuinely
-below the 2-of-3 majority it needs. This is *not* evidence quorum loss is
-harmless. `ReadingService.ingest()`'s `kafkaTemplate.send()` only blocks
-synchronously on **metadata** fetch (bounded by `max.block.ms`, declared
-explicitly at 60000ms — see `application.yml`); the actual delivery
-retry, once metadata is already cached from earlier successful sends,
-runs in the background under `delivery.timeout.ms` — an **undeclared**
-client default of 120000ms. The quorum-loss window in this run (~15-20s)
-was well under that budget, so the producer's background retries silently
-absorbed the entire outage once brokers came back — HTTP success
-immediately, data delivered late but intact. A short outage landing 100%
-of readings does not prove a longer one would too. Two concrete follow-ups
-this surfaces, neither done yet: (1) re-run with the quorum-loss window
-extended past 120s to actually observe the failure mode this scenario is
-meant to demonstrate; (2) declare `delivery.timeout.ms` explicitly
-(matching the `max.block.ms` precedent from the earlier Kafka-outage-
-durability investigation) so how long a quorum-loss incident can be
-silently absorbed is a real decision, not an accident of an undeclared
-default.
+**Scenario 2 (two-broker quorum loss), first attempt (~15-20s outage)**:
+10/10 requests returned `201`, and a direct Postgres query afterward
+confirmed all 10 readings landed durably — zero visible failure anywhere,
+even though the cluster was genuinely below the 2-of-3 majority it needs.
+This was *not* evidence quorum loss is harmless, just an outage window too
+short to prove anything: `ReadingService.ingest()`'s `kafkaTemplate.send()`
+only blocks synchronously on **metadata** fetch (bounded by `max.block.ms`,
+declared explicitly at 60000ms); the actual delivery retry runs in the
+background under `delivery.timeout.ms` — an **undeclared** client default
+of 120000ms — and a ~15-20s outage is well inside that budget, so
+background retries silently absorbed it once brokers came back.
+
+**Scenario 2, re-run with the outage extended to 150s (past the 120s
+`delivery.timeout.ms` budget) — CONFIRMED real, permanent data loss.**
+All 10 readings sent during the outage were lost forever: 0 landed while
+still below quorum, 0 more landed after brokers recovered, `total 0 of
+10`. The api container's own logs show the exact mechanism, not a guess:
+
+```
+org.apache.kafka.common.errors.TimeoutException: Expiring 8 record(s) for readings-0:120001 ms has passed since batch creation
+```
+
+(all expirations against `readings-0` specifically — the default
+partitioner hashes by key, and every reading in this test used the same
+meter ID, so every send landed on the same partition). Throughout the
+entire 150s outage, every one of the 10 `POST /readings` calls still
+returned `201 Created` — the app told the client "created successfully"
+for data that was, at that exact moment, permanently gone. This is a real
+silent-data-loss bug, not a hypothetical: `ReadingService.ingest()` never
+checks the `Future`/callback `kafkaTemplate.send()` returns, so a
+producer-side delivery failure has no path back to the caller, and nothing
+logs it either beyond the raw Kafka client's own internal `Sender` thread
+warning (which nothing in the app's own log aggregation currently treats
+as actionable). Two concrete fixes, neither done yet: (1) declare
+`delivery.timeout.ms` explicitly (matching the `max.block.ms` precedent)
+so how long a quorum-loss incident can silently eat writes is a real,
+documented decision rather than an accident of an undeclared default; (2)
+add a `whenComplete`/`ProducerListener` callback on the `send()` call so a
+delivery failure becomes a real, actionable server-side signal (a metric,
+a log line CI/alerting can catch) instead of disappearing into a discarded
+`Future`.

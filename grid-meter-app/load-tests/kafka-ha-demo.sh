@@ -98,16 +98,49 @@ echo "Waiting for kafka-2 to rejoin and catch up..."
 sleep 15
 cluster_state
 
-banner "SCENARIO 2: Two-broker quorum loss (kafka-2 AND kafka-3 stopped)"
+# Must clear the Kafka client's own delivery.timeout.ms (undeclared default: 120000ms) -- a
+# shorter outage gets silently absorbed by the producer's background retries once brokers return
+# (confirmed via a real run, see load-tests/README.md), which proves nothing about what happens
+# when quorum loss actually outlasts that budget. 150s gives 30s of margin past it.
+QUORUM_LOSS_SECONDS="${QUORUM_LOSS_SECONDS:-150}"
+
+banner "SCENARIO 2: Two-broker quorum loss (kafka-2 AND kafka-3 stopped, ${QUORUM_LOSS_SECONDS}s)"
 echo "Below the 2-of-3 majority; min.insync.replicas=2 cannot be satisfied with 1 broker up."
+BASELINE_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+  "SELECT COUNT(*) FROM readings r JOIN meters m ON r.meter_id = m.id WHERE m.id = '$METER_ID';" | tr -d ' ')
+echo "Readings for this meter before scenario 2: $BASELINE_COUNT"
+
 docker compose stop kafka-2 kafka-3
-sleep 5
+sleep 3
 send_readings 10 "$METER_ID"
 S2_SUCCESS=$SUCCESS_COUNT; S2_FAIL=$FAIL_COUNT
+SENT_AT=$(date +%s)
+ELAPSED=$(( $(date +%s) - SENT_AT + 3 ))
+REMAINING=$(( QUORUM_LOSS_SECONDS - ELAPSED ))
+if [ "$REMAINING" -gt 0 ]; then
+  echo "Holding quorum loss for ${REMAINING}s more (total ~${QUORUM_LOSS_SECONDS}s) so"
+  echo "delivery.timeout.ms has a chance to actually expire before brokers come back..."
+  sleep "$REMAINING"
+fi
+
+echo "--- Checking Postgres and api logs BEFORE restoring brokers (still below quorum) ---"
+DURING_OUTAGE_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+  "SELECT COUNT(*) FROM readings r JOIN meters m ON r.meter_id = m.id WHERE m.id = '$METER_ID';" | tr -d ' ')
+LANDED_DURING_OUTAGE=$(( DURING_OUTAGE_COUNT - BASELINE_COUNT ))
+echo "Readings landed while still below quorum: $LANDED_DURING_OUTAGE (of the 10 sent)"
+echo "api log lines mentioning delivery/timeout errors during the outage:"
+docker compose logs api --since "${QUORUM_LOSS_SECONDS}s" 2>&1 | grep -iE "delivery.*timeout|expir.*record|TimeoutException" | tail -10 || echo "  (none found)"
+
 docker compose start kafka-2 kafka-3
 echo "Waiting for kafka-2/kafka-3 to rejoin and catch up..."
 sleep 20
 cluster_state
+
+AFTER_RECOVERY_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+  "SELECT COUNT(*) FROM readings r JOIN meters m ON r.meter_id = m.id WHERE m.id = '$METER_ID';" | tr -d ' ')
+LANDED_AFTER_RECOVERY=$(( AFTER_RECOVERY_COUNT - DURING_OUTAGE_COUNT ))
+echo "Additional readings that landed AFTER brokers recovered: $LANDED_AFTER_RECOVERY"
+echo "Total readings from the 10 sent during outage that ever landed: $(( LANDED_DURING_OUTAGE + LANDED_AFTER_RECOVERY )) of 10"
 
 banner "SCENARIO 3: Rolling maintenance (restart all 3 brokers, one at a time)"
 S3_SUCCESS=0
@@ -125,21 +158,28 @@ banner "Results"
 echo "Scenario 1 (tolerate one broker loss):   $S1_SUCCESS succeeded, $S1_FAIL failed (of $((S1_SUCCESS + S1_FAIL)))"
 [ "$S1_FAIL" -eq 0 ] && echo "  PASS: zero impact from a single broker loss, as RF=3 promises." \
   || echo "  Some failures during single-broker loss -- worth investigating, not automatically a bug (see script header)."
-echo "Scenario 2 (two-broker quorum loss):     $S2_SUCCESS succeeded, $S2_FAIL failed (of $((S2_SUCCESS + S2_FAIL)))"
-if [ "$S2_FAIL" -gt 0 ]; then
-  echo "  EXPECTED: real failures below quorum -- this is the correct outcome, not a bug."
+echo "Scenario 2 (two-broker quorum loss, ${QUORUM_LOSS_SECONDS}s):"
+echo "  HTTP level:     $S2_SUCCESS succeeded, $S2_FAIL failed (of $((S2_SUCCESS + S2_FAIL))) -- NOT the real evidence, see below."
+echo "  Durability:     $LANDED_DURING_OUTAGE of 10 landed while still below quorum; $LANDED_AFTER_RECOVERY more landed after recovery."
+TOTAL_LANDED=$(( LANDED_DURING_OUTAGE + LANDED_AFTER_RECOVERY ))
+if [ "$TOTAL_LANDED" -lt 10 ]; then
+  echo "  CONFIRMED: $(( 10 - TOTAL_LANDED )) reading(s) permanently lost -- delivery.timeout.ms"
+  echo "  (undeclared default: 120000ms) expired before quorum was restored, and nothing in"
+  echo "  ReadingService.ingest() checks the send() future's outcome, so the failure is silent at"
+  echo "  the HTTP level (still 201) and silent server-side unless the raw Kafka client logged it"
+  echo "  (see the grep output above). This is the real gap: declare delivery.timeout.ms explicitly"
+  echo "  and/or add a callback that surfaces/retries a failed send, matching the max.block.ms"
+  echo "  precedent from the earlier Kafka-outage-durability investigation."
+elif [ "$TOTAL_LANDED" -eq 10 ] && [ "$LANDED_DURING_OUTAGE" -eq 10 ]; then
+  echo "  UNEXPECTED: all 10 landed WHILE still below quorum -- worth understanding why (are these"
+  echo "  partitions' leaders still up on the surviving broker with a stale ISR, or is this test's"
+  echo "  meter/partition assignment not exercising the leaderless case?) before trusting quorum"
+  echo "  loss is safe."
 else
-  echo "  Zero HTTP-level failures is NOT evidence quorum loss was harmless -- confirmed via a real"
-  echo "  run (2026-08-27) that this masks a genuine gap rather than proving one doesn't exist:"
-  echo "  kafkaTemplate.send() only blocks synchronously on METADATA fetch (max.block.ms); the"
-  echo "  actual delivery retry runs in the background under delivery.timeout.ms (undeclared"
-  echo "  default: 120000ms). A quorum-loss window shorter than that gets silently absorbed by"
-  echo "  background retries once brokers return -- HTTP 201 immediately, data lands late but"
-  echo "  intact. Query Postgres directly for the actual proof; a short outage here landing 100%"
-  echo "  of readings does NOT mean a LONGER one would too -- re-run with QUORUM_LOSS_SECONDS set"
-  echo "  well past delivery.timeout.ms (2+ minutes) to actually see this fail, or declare a"
-  echo "  shorter delivery.timeout.ms explicitly first (matching the max.block.ms precedent) so"
-  echo "  this behavior is a real decision, not an accident of an undeclared default."
+  echo "  All 10 eventually landed, but only after recovery -- confirms delivery was blocked/queued"
+  echo "  during the outage (not lost), and resumed once quorum returned. Not silent data loss, but"
+  echo "  still worth knowing the HTTP response gave zero indication of the wait these readings"
+  echo "  went through."
 fi
 echo "Scenario 3 (rolling maintenance):        $S3_SUCCESS succeeded, $S3_FAIL failed (of $((S3_SUCCESS + S3_FAIL)))"
 [ "$S3_FAIL" -eq 0 ] && echo "  PASS: zero downtime across the full rolling restart." \
