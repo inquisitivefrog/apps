@@ -86,7 +86,19 @@ services:
       # Spring Boot Actuator maps a DOWN aggregate status to HTTP 503 by default (independent of
       # show-details, which only hides the per-component breakdown, not the status code), and
       # Traefik's healthcheck treats any non-2xx as unhealthy -- no extra status-code config needed.
-      - traefik.http.services.api.loadbalancer.healthcheck.path=/actuator/health
+      #
+      # Originally pointed at the full aggregate /actuator/health -- a real load test (measuring
+      # outbox growth under a sustained Kafka outage, since retired -- see docs/resilience-scope.md)
+      # then showed that config taking down GET /meters, GET /readings, and POST /meters as
+      # collateral damage during a Kafka-only outage, none of which touch Kafka. Retargeted at the
+      # readiness probe group (application.yml's management.endpoint.health.probes.enabled), which
+      # by default tracks only Spring's own startup/shutdown
+      # lifecycle state, not the DataSource/Kafka/Redis indicators -- correct here specifically
+      # because all three of those are single shared instances behind both api replicas, so
+      # gating routing on their health can never provide real per-replica failover (every replica
+      # observes the same DOWN simultaneously); it can only ever take all traffic offline for a
+      # dependency problem that isn't replica-specific.
+      - traefik.http.services.api.loadbalancer.healthcheck.path=/actuator/health/readiness
       - traefik.http.services.api.loadbalancer.healthcheck.interval=10s
       - traefik.http.services.api.loadbalancer.healthcheck.timeout=3s
     deploy:

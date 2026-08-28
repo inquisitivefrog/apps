@@ -141,12 +141,10 @@ AFTER_RECOVERY_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d grid
 LANDED_AFTER_RECOVERY=$(( AFTER_RECOVERY_COUNT - DURING_OUTAGE_COUNT ))
 echo "Additional readings that landed in the real readings table AFTER recovery: $LANDED_AFTER_RECOVERY"
 echo "Total readings from the 10 sent during outage that ever landed in readings: $(( LANDED_DURING_OUTAGE + LANDED_AFTER_RECOVERY )) of 10"
-OUTBOX_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
-  "SELECT COUNT(*) FROM reading_outbox WHERE meter_id = '$METER_ID';" | tr -d ' ')
-echo "Of those, landed in reading_outbox instead (Stage A, docs/resilience-scope.md): $OUTBOX_COUNT of 10"
-echo "Note: outbox rows are NOT yet visible via GET /readings -- no reconciler drains them back"
-echo "to Kafka/the readings table yet (Stage D, not built). The data survives the outage; it just"
-echo "isn't queryable through the normal API path yet."
+# A transactional-outbox pattern was built and load-tested here at one point (captured a
+# failed-delivery reading in a reading_outbox table instead of losing it outright), then
+# deliberately retired -- see docs/resilience-scope.md. Any reading that never lands in
+# `readings` below is genuinely gone, not delayed-but-recoverable, per that decision.
 
 banner "SCENARIO 3: Rolling maintenance (restart all 3 brokers, one at a time)"
 S3_SUCCESS=0
@@ -167,20 +165,13 @@ echo "Scenario 1 (tolerate one broker loss):   $S1_SUCCESS succeeded, $S1_FAIL f
 echo "Scenario 2 (two-broker quorum loss, ${QUORUM_LOSS_SECONDS}s):"
 echo "  HTTP level:     $S2_SUCCESS succeeded, $S2_FAIL failed (of $((S2_SUCCESS + S2_FAIL))) -- NOT the real evidence, see below."
 echo "  Durability:     $LANDED_DURING_OUTAGE of 10 landed while still below quorum; $LANDED_AFTER_RECOVERY more landed after recovery."
-echo "  Outbox:         $OUTBOX_COUNT of 10 captured in reading_outbox (Stage A -- not yet visible via GET /readings)."
 TOTAL_LANDED=$(( LANDED_DURING_OUTAGE + LANDED_AFTER_RECOVERY ))
-TOTAL_ACCOUNTED_FOR=$(( TOTAL_LANDED + OUTBOX_COUNT ))
-if [ "$TOTAL_ACCOUNTED_FOR" -lt 10 ]; then
-  echo "  REAL DATA LOSS: $(( 10 - TOTAL_ACCOUNTED_FOR )) reading(s) missing from BOTH readings AND"
-  echo "  reading_outbox -- genuinely gone, not just delayed or captured. Investigate before trusting"
-  echo "  the outbox write path."
-elif [ "$TOTAL_LANDED" -lt 10 ]; then
-  echo "  Data captured, not lost: $(( 10 - TOTAL_LANDED )) reading(s) never reached the real readings"
-  echo "  table, but all of those landed in reading_outbox instead (Stage A, docs/resilience-scope.md)"
-  echo "  -- delivery.timeout.ms (undeclared default: 120000ms) expired before quorum was restored,"
-  echo "  same root cause as before, but the outbox write path (added after the first version of this"
-  echo "  test found real permanent loss) now catches what the raw Kafka client gives up on. Still"
-  echo "  not queryable via the API until the reconciler (Stage D) exists to drain the outbox."
+if [ "$TOTAL_LANDED" -lt 10 ]; then
+  echo "  REAL DATA LOSS: $(( 10 - TOTAL_LANDED )) reading(s) never reached the readings table --"
+  echo "  delivery.timeout.ms (undeclared default: 120000ms) expired before quorum was restored."
+  echo "  Accepted per docs/resilience-scope.md's redo-path decision: a simulated meter reading has"
+  echo "  no real downstream consequence if lost, so this is observed (deliveryFailureCounter, the"
+  echo "  'reading delivery failures' alert) rather than prevented via an outbox+reconciler."
 elif [ "$TOTAL_LANDED" -eq 10 ] && [ "$LANDED_DURING_OUTAGE" -eq 10 ]; then
   echo "  UNEXPECTED: all 10 landed WHILE still below quorum -- worth understanding why (are these"
   echo "  partitions' leaders still up on the surviving broker with a stale ISR, or is this test's"

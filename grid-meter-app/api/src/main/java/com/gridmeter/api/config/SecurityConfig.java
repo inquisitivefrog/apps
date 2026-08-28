@@ -53,7 +53,11 @@ public class SecurityConfig {
                 .cors(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()
+                        // /** (not just the exact path) so the readiness/liveness probe sub-paths
+                        // Traefik's healthcheck uses (application.yml's management.endpoint
+                        // .health.probes.enabled) are reachable without a JWT too.
+                        .requestMatchers("/actuator/health/**", "/actuator/health", "/actuator/prometheus")
+                        .permitAll()
                         .requestMatchers("/api/v1/auth/login").permitAll()
                         // Spring Boot renders 404s/405s (any request Spring MVC can't dispatch —
                         // an unknown path, or PUT /api/v1/readings/{id}, which has no PUT mapping

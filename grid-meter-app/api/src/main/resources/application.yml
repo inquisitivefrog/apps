@@ -61,9 +61,11 @@ spring:
       # long gone (201, returned near-instantly) -- see ReadingService.ingest()'s own comment and
       # load-tests/README.md's Kafka HA section for the full investigation. Declared at its
       # existing default value deliberately, not shortened or lengthened: changing this number
-      # doesn't fix data loss during an outage longer than it (that needs a durable outbox, see
-      # docs/resilience-scope.md, not built yet) -- the fix landing alongside this declaration is
-      # visibility (a whenComplete callback logging the failure), not prevention.
+      # doesn't fix data loss during an outage longer than it. A durable fix (transactional
+      # outbox) was built, load-tested, and deliberately retired -- docs/resilience-scope.md's
+      # redo-path decision concluded a lost simulated reading has no real consequence worth it --
+      # so the fix landing alongside this declaration is visibility (a whenComplete callback
+      # logging the failure and incrementing a counter/alert), not prevention, by design.
       properties:
         max.block.ms: 60000
         delivery.timeout.ms: 120000
@@ -131,6 +133,20 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+      # Spring Boot only auto-enables the liveness/readiness health groups when it detects a
+      # Kubernetes environment (KUBERNETES_SERVICE_HOST) -- Docker Compose never sets that, so
+      # without this the /actuator/health/readiness endpoint Traefik's healthcheck now targets
+      # (docker-compose.yml) would 404. The readiness group defaults to just
+      # ReadinessStateHealthIndicator (tracks Spring's own startup/shutdown lifecycle state) --
+      # it does NOT pull in the DataSource/Kafka/Redis indicators that feed the full aggregate
+      # /actuator/health, which is exactly the point: those dependencies are each a single
+      # shared instance behind both api replicas, so gating routing on their health doesn't buy
+      # any real failover (every replica would report the same DOWN simultaneously) -- it just
+      # takes ALL traffic offline for a problem that isn't replica-specific. See docker-compose.yml
+      # for the incident this fixed: a Kafka-only outage was taking down GET /meters, GET
+      # /readings, and POST /meters too, none of which touch Kafka.
+      probes:
+        enabled: true
   metrics:
     distribution:
       percentiles-histogram:

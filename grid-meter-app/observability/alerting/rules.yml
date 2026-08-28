@@ -140,11 +140,13 @@ groups:
 
       # Fires on ANY increase, not a threshold/percentage like the other 4 rules -- a single
       # occurrence is a real reading permanently lost (confirmed via the 150s Kafka quorum-loss
-      # test, load-tests/kafka-ha-demo.sh: ReadingService.ingest() never checks kafkaTemplate.
-      # send()'s returned Future, so a delivery failure has no other path back to the caller).
-      # This makes the loss observable, not prevented -- the durable fix is an outbox
-      # (docs/resilience-scope.md, not built yet), so this alert firing means data is already gone,
-      # not just at risk.
+      # test, load-tests/kafka-ha-demo.sh: without this, a delivery failure had no other path back
+      # to the caller, since POST /readings already returned 201 before Kafka ever acknowledged).
+      # A transactional-outbox pattern was built and load-tested as a durable fix, then
+      # deliberately retired (docs/resilience-scope.md): a lost simulated meter reading has no
+      # real downstream consequence (no billing, no regulatory record, nothing to redo), so this
+      # alert is the accepted, sufficient signal rather than a placeholder for a fix still coming
+      # -- when it fires, that reading is gone for good, and that is the intended, scoped outcome.
       - uid: reading-delivery-failures
         title: Reading delivery failures
         condition: C
@@ -153,7 +155,7 @@ groups:
           severity: critical
           alert_class: incident
         annotations:
-          summary: "At least one reading failed to publish to Kafka and landed in reading_outbox instead -- it is NOT yet visible via GET /readings (no reconciler drains the outbox back to Kafka yet, see docs/resilience-scope.md Stage D)."
+          summary: "At least one reading failed to publish to Kafka after client-side retries were exhausted -- it is permanently lost (accepted per docs/resilience-scope.md's redo-path scope decision, not a recoverable delay)."
         data:
           - refId: A
             datasourceUid: prometheus

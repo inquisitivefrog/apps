@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Logger;
@@ -21,7 +19,6 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -35,7 +32,6 @@ import org.springframework.kafka.support.SendResult;
 class ReadingServiceTest {
 
     private MeterRepository meterRepository;
-    private ReadingOutboxRepository readingOutboxRepository;
     private KafkaTemplate<Object, Object> kafkaTemplate;
     private SimpleMeterRegistry meterRegistry;
     private ReadingService readingService;
@@ -44,16 +40,10 @@ class ReadingServiceTest {
     @BeforeEach
     void setUp() {
         meterRepository = mock(MeterRepository.class);
-        readingOutboxRepository = mock(ReadingOutboxRepository.class);
         kafkaTemplate = mock(KafkaTemplate.class);
         meterRegistry = new SimpleMeterRegistry();
         readingService = new ReadingService(
-                mock(ReadingRepository.class),
-                meterRepository,
-                readingOutboxRepository,
-                kafkaTemplate,
-                "readings",
-                meterRegistry);
+                mock(ReadingRepository.class), meterRepository, kafkaTemplate, "readings", meterRegistry);
 
         logAppender = new ListAppender<>();
         logAppender.start();
@@ -66,7 +56,7 @@ class ReadingServiceTest {
     }
 
     @Test
-    void ingest_kafkaDeliveryFails_incrementsCounterLogsAndWritesToOutbox() {
+    void ingest_kafkaDeliveryFails_incrementsCounterAndLogs() {
         UUID meterId = UUID.randomUUID();
         Instant readingTimestamp = Instant.parse("2026-08-28T12:00:00Z");
         BigDecimal value = new BigDecimal("42.5");
@@ -86,17 +76,10 @@ class ReadingServiceTest {
                     .contains(readingTimestamp.toString())
                     .contains("42.5");
         });
-        ArgumentCaptor<ReadingOutbox> outboxCaptor = ArgumentCaptor.forClass(ReadingOutbox.class);
-        verify(readingOutboxRepository).save(outboxCaptor.capture());
-        ReadingOutbox saved = outboxCaptor.getValue();
-        assertThat(saved.getId()).isEqualTo(event.id());
-        assertThat(saved.getMeterId()).isEqualTo(meterId);
-        assertThat(saved.getReadingTimestamp()).isEqualTo(readingTimestamp);
-        assertThat(saved.getValue()).isEqualByComparingTo(value);
     }
 
     @Test
-    void ingest_kafkaDeliverySucceeds_doesNotIncrementCounterLogErrorOrWriteToOutbox() {
+    void ingest_kafkaDeliverySucceeds_doesNotIncrementCounterOrLogError() {
         UUID meterId = UUID.randomUUID();
         when(meterRepository.existsById(meterId)).thenReturn(true);
         when(kafkaTemplate.send(anyString(), any(), any()))
@@ -109,6 +92,5 @@ class ReadingServiceTest {
         // asserting count=0 here, not that the counter is absent.
         assertThat(meterRegistry.get("reading.delivery.failures").counter().count()).isEqualTo(0.0);
         assertThat(logAppender.list).noneMatch(logEvent -> logEvent.getLevel().toString().equals("ERROR"));
-        verify(readingOutboxRepository, never()).save(any());
     }
 }

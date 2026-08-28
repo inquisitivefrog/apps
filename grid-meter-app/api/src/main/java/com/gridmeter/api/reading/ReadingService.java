@@ -33,7 +33,6 @@ public class ReadingService {
 
     private final ReadingRepository readingRepository;
     private final MeterRepository meterRepository;
-    private final ReadingOutboxRepository readingOutboxRepository;
     private final KafkaTemplate<Object, Object> kafkaTemplate;
     private final String readingsTopic;
     private final Counter deliveryFailureCounter;
@@ -41,13 +40,11 @@ public class ReadingService {
     public ReadingService(
             ReadingRepository readingRepository,
             MeterRepository meterRepository,
-            ReadingOutboxRepository readingOutboxRepository,
             KafkaTemplate<Object, Object> kafkaTemplate,
             @Value("${grid-meter.kafka.readings-topic}") String readingsTopic,
             MeterRegistry meterRegistry) {
         this.readingRepository = readingRepository;
         this.meterRepository = meterRepository;
-        this.readingOutboxRepository = readingOutboxRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.readingsTopic = readingsTopic;
         // Exported as reading_delivery_failures_total on /actuator/prometheus (Micrometer's
@@ -113,40 +110,27 @@ public class ReadingService {
         // POST /readings returned 201 for all 10, and none of them ever reached Postgres, with
         // nothing logged anywhere pointing at why.
         //
-        // Stage A of docs/resilience-scope.md's outbox pattern (write path only, no reconciler
-        // yet): a failed delivery now lands in reading_outbox instead of being lost outright. This
-        // does NOT make the reading visible to GET /readings yet -- nothing drains this table back
-        // to Kafka/Postgres's real readings table until the reconciler (Stage D) exists -- but the
-        // data itself now survives the outage, which the log-only version of this fix (still kept
-        // below) did not achieve on its own.
-        //
-        // A DIFFERENT, still-open gap this does NOT cover, distinct from resilience-scope.md's
-        // named reconciler crash-window caveat (that one's about Stage D, not built yet): if this
-        // process crashes/is killed between send() returning and this whenComplete callback firing,
-        // neither branch ever runs -- the record isn't in Kafka (not yet acknowledged) and never
-        // reaches the outbox either, while the caller already got 201. That window is milliseconds
-        // in normal operation, but stretches to the full delivery.timeout.ms (120s) for any request
-        // in flight during a real outage -- meaning a process restart/OOM/eviction WHILE an outage
-        // is already underway could silently lose exactly the in-flight requests Stage A exists to
-        // protect. Accepted for this pass (fixing it properly means writing to the outbox BEFORE
-        // attempting Kafka, not as a failure fallback after -- a bigger change than Stage A's scope),
-        // named here so it isn't confused with the already-documented reconciler-side caveat.
+        // A transactional-outbox pattern (write the failed delivery to a durable side table
+        // instead of just logging it) was built and load-tested here, then deliberately retired
+        // (docs/resilience-scope.md): a real load test found the outbox only ever captured the
+        // narrow window before Traefik's own health check took the API out of rotation during a
+        // Kafka outage, and -- separately -- an outbox with no reconciler to drain it back to
+        // Kafka/Postgres isn't durability, just an ever-growing, never-queried table. This
+        // project's redo-path analysis (a simulated meter reading has no real downstream
+        // consequence if lost -- no billing, no regulatory record, nothing to redo) concluded
+        // that gap isn't worth the reconciler it would take to close properly. The counter+log
+        // below, plus the "reading delivery failures" alert (observability/alerting/rules.yml),
+        // is the accepted, sufficient signal: an operator learns a reading was lost and roughly
+        // when, which is all anyone would act on for data with no real consequence.
         kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
                         deliveryFailureCounter.increment();
-                        log.error("Reading for meter {} (readingTimestamp={}, value={}) failed to publish to "
-                                        + "Kafka after client-side retries were exhausted -- writing to the "
-                                        + "outbox instead of losing it",
+                        log.error(
+                                "Reading for meter {} (readingTimestamp={}, value={}) failed to publish to "
+                                        + "Kafka after client-side retries were exhausted -- this reading is "
+                                        + "lost, not just delayed (see docs/resilience-scope.md)",
                                 event.meterId(), event.readingTimestamp(), event.value(), ex);
-                        readingOutboxRepository.save(ReadingOutbox.builder()
-                                .id(event.id())
-                                .meterId(event.meterId())
-                                .readingTimestamp(event.readingTimestamp())
-                                .receivedAt(event.receivedAt())
-                                .value(event.value())
-                                .createdAt(Instant.now())
-                                .build());
                     }
                 });
         return event;
