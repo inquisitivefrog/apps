@@ -3,6 +3,8 @@ package com.gridmeter.api.reading;
 import com.gridmeter.api.common.ResourceNotFoundException;
 import com.gridmeter.api.meter.MeterRepository;
 import com.gridmeter.api.reading.dto.ReadingRequest;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -33,16 +35,29 @@ public class ReadingService {
     private final MeterRepository meterRepository;
     private final KafkaTemplate<Object, Object> kafkaTemplate;
     private final String readingsTopic;
+    private final Counter deliveryFailureCounter;
 
     public ReadingService(
             ReadingRepository readingRepository,
             MeterRepository meterRepository,
             KafkaTemplate<Object, Object> kafkaTemplate,
-            @Value("${grid-meter.kafka.readings-topic}") String readingsTopic) {
+            @Value("${grid-meter.kafka.readings-topic}") String readingsTopic,
+            MeterRegistry meterRegistry) {
         this.readingRepository = readingRepository;
         this.meterRepository = meterRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.readingsTopic = readingsTopic;
+        // Exported as reading_delivery_failures_total on /actuator/prometheus (Micrometer's
+        // Prometheus naming convention: dots -> underscores, "_total" appended for counters).
+        // Page-worthy on its own, not just a dashboard number -- see the "reading delivery
+        // failures" alert rule in observability/alerting/rules.yml, which fires on ANY increase
+        // (not a threshold/percentage like the other 4 rules), since even one occurrence is a
+        // real reading permanently lost, confirmed via the 150s quorum-loss test (load-tests/
+        // kafka-ha-demo.sh).
+        this.deliveryFailureCounter = Counter.builder("reading.delivery.failures")
+                .description("Readings whose Kafka publish failed after client-side retries were "
+                        + "exhausted -- these never reach Postgres")
+                .register(meterRegistry);
     }
 
     // A brief, self-resolving Postgres blip (a failover completing, a momentary connection-pool
@@ -93,18 +108,22 @@ public class ReadingService {
         // Kafka quorum-loss test (150s outage, exceeding the delivery.timeout.ms client default of
         // 120000ms, now declared explicitly below) confirmed this let 10 readings silently vanish:
         // POST /readings returned 201 for all 10, and none of them ever reached Postgres, with
-        // nothing logged anywhere pointing at why. This callback doesn't prevent that loss -- the
+        // nothing logged anywhere pointing at why. This callback does NOT prevent that loss -- the
         // record is already unrecoverable by the time delivery.timeout.ms expires, and actually
-        // preventing it needs a durable outbox (see docs/resilience-scope.md, not built yet) -- but
-        // an ERROR log with the reading's own id is a real, actionable signal (alertable, greppable
-        // in Loki) where before there was none at all.
+        // preventing it needs a durable outbox (see docs/resilience-scope.md, not built yet). What
+        // it adds is observability: an ERROR log with enough context (meterId, timestamp, value) to
+        // manually recreate the reading later -- the reading's own random id is deliberately NOT
+        // the recovery key, since nothing durable exists under that id to look up -- plus a counter
+        // an alert rule (observability/alerting/rules.yml) pages on for any increase at all.
         kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
-                        log.error("Reading {} for meter {} failed to publish to Kafka after client-side "
-                                        + "retries were exhausted -- this reading will never reach Postgres unless"
-                                        + " manually resubmitted",
-                                event.id(), event.meterId(), ex);
+                        deliveryFailureCounter.increment();
+                        log.error("Reading for meter {} (readingTimestamp={}, value={}) failed to publish to "
+                                        + "Kafka after client-side retries were exhausted -- this reading will "
+                                        + "never reach Postgres unless manually resubmitted with this "
+                                        + "meterId/readingTimestamp/value",
+                                event.meterId(), event.readingTimestamp(), event.value(), ex);
                     }
                 });
         return event;
