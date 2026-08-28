@@ -79,8 +79,12 @@ verified on its own:
 - `reading_delivery_failures_total` (Micrometer counter)
 - The `ERROR` log line on delivery failure (meterId/timestamp/value, for
   manual recovery if anyone ever needs it)
-- The `Reading delivery failures` Grafana alert rule (`alert_class:
-  incident`)
+- The `Reading delivery failures` Grafana alert rule — reclassified
+  2026-08-28 from `alert_class: incident` to `alert_class: notice` (see
+  `docs/observability-taxonomy.md` §3): the same redo-path reasoning that
+  retired the outbox also argues this shouldn't page anyone, since the
+  lost data has no real downstream consequence. A durable record, not an
+  interruption.
 - `ReadingsKafkaHealthIndicator`
 - The Traefik readiness fix (independent bug, unconditionally correct)
 

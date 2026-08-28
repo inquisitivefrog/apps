@@ -49,11 +49,13 @@ public class ReadingService {
         this.readingsTopic = readingsTopic;
         // Exported as reading_delivery_failures_total on /actuator/prometheus (Micrometer's
         // Prometheus naming convention: dots -> underscores, "_total" appended for counters).
-        // Page-worthy on its own, not just a dashboard number -- see the "reading delivery
-        // failures" alert rule in observability/alerting/rules.yml, which fires on ANY increase
-        // (not a threshold/percentage like the other 4 rules), since even one occurrence is a
-        // real reading permanently lost, confirmed via the 150s quorum-loss test (load-tests/
-        // kafka-ha-demo.sh).
+        // Backs the "reading delivery failures" rule in observability/alerting/rules.yml, which
+        // fires on ANY increase since even one occurrence is a real reading permanently lost
+        // (confirmed via the 150s quorum-loss test, load-tests/kafka-ha-demo.sh). Classified as a
+        // notice, not an incident (docs/observability-taxonomy.md) -- a durable, queryable record
+        // rather than a page, per the same redo-path reasoning that retired the outbox pattern
+        // (docs/resilience-scope.md): the data has no real downstream consequence, so losing it
+        // doesn't warrant interrupting anyone in real time.
         this.deliveryFailureCounter = Counter.builder("reading.delivery.failures")
                 .description("Readings whose Kafka publish failed after client-side retries were "
                         + "exhausted -- these never reach Postgres")
