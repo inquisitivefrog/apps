@@ -119,6 +119,18 @@ public class ReadingService {
         // to Kafka/Postgres's real readings table until the reconciler (Stage D) exists -- but the
         // data itself now survives the outage, which the log-only version of this fix (still kept
         // below) did not achieve on its own.
+        //
+        // A DIFFERENT, still-open gap this does NOT cover, distinct from resilience-scope.md's
+        // named reconciler crash-window caveat (that one's about Stage D, not built yet): if this
+        // process crashes/is killed between send() returning and this whenComplete callback firing,
+        // neither branch ever runs -- the record isn't in Kafka (not yet acknowledged) and never
+        // reaches the outbox either, while the caller already got 201. That window is milliseconds
+        // in normal operation, but stretches to the full delivery.timeout.ms (120s) for any request
+        // in flight during a real outage -- meaning a process restart/OOM/eviction WHILE an outage
+        // is already underway could silently lose exactly the in-flight requests Stage A exists to
+        // protect. Accepted for this pass (fixing it properly means writing to the outbox BEFORE
+        // attempting Kafka, not as a failure fallback after -- a bigger change than Stage A's scope),
+        // named here so it isn't confused with the already-documented reconciler-side caveat.
         kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {

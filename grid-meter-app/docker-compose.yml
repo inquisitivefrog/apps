@@ -78,6 +78,17 @@ services:
       - traefik.http.routers.api.rule=PathPrefix(`/api`) || PathPrefix(`/actuator`)
       - traefik.http.routers.api.priority=10
       - traefik.http.services.api.loadbalancer.server.port=8080
+      # Without this, Traefik had NO active check at all for api -- not even TCP-level -- and would
+      # keep routing to a replica whose /actuator/health aggregate status is DOWN (e.g. from
+      # ReadingsKafkaHealthIndicator during a Kafka outage) for as long as its container process is
+      # still running and the port accepts connections. Found while verifying that indicator
+      # actually had a consumer -- it didn't, making the whole health-indicator investment inert.
+      # Spring Boot Actuator maps a DOWN aggregate status to HTTP 503 by default (independent of
+      # show-details, which only hides the per-component breakdown, not the status code), and
+      # Traefik's healthcheck treats any non-2xx as unhealthy -- no extra status-code config needed.
+      - traefik.http.services.api.loadbalancer.healthcheck.path=/actuator/health
+      - traefik.http.services.api.loadbalancer.healthcheck.interval=10s
+      - traefik.http.services.api.loadbalancer.healthcheck.timeout=3s
     deploy:
       resources:
         limits:
