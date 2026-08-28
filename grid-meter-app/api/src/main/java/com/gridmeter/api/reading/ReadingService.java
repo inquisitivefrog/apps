@@ -6,6 +6,8 @@ import com.gridmeter.api.reading.dto.ReadingRequest;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +26,8 @@ import org.springframework.transaction.CannotCreateTransactionException;
  */
 @Service
 public class ReadingService {
+
+    private static final Logger log = LoggerFactory.getLogger(ReadingService.class);
 
     private final ReadingRepository readingRepository;
     private final MeterRepository meterRepository;
@@ -84,7 +88,25 @@ public class ReadingService {
                 request.readingTimestamp(),
                 Instant.now(),
                 request.value());
-        kafkaTemplate.send(readingsTopic, event.meterId().toString(), event);
+        // send() is fire-and-forget from the caller's perspective (ingest() returns before this
+        // resolves), but the returned Future's outcome was previously discarded entirely -- a real
+        // Kafka quorum-loss test (150s outage, exceeding the delivery.timeout.ms client default of
+        // 120000ms, now declared explicitly below) confirmed this let 10 readings silently vanish:
+        // POST /readings returned 201 for all 10, and none of them ever reached Postgres, with
+        // nothing logged anywhere pointing at why. This callback doesn't prevent that loss -- the
+        // record is already unrecoverable by the time delivery.timeout.ms expires, and actually
+        // preventing it needs a durable outbox (see docs/resilience-scope.md, not built yet) -- but
+        // an ERROR log with the reading's own id is a real, actionable signal (alertable, greppable
+        // in Loki) where before there was none at all.
+        kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
+                .whenComplete((result, ex) -> {
+                    if (ex != null) {
+                        log.error("Reading {} for meter {} failed to publish to Kafka after client-side "
+                                        + "retries were exhausted -- this reading will never reach Postgres unless"
+                                        + " manually resubmitted",
+                                event.id(), event.meterId(), ex);
+                    }
+                });
         return event;
     }
 
