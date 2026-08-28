@@ -442,3 +442,42 @@ test for the first time, not a defect in the app or the test. Decided
 `soak.jmx` — keeps the test's purpose (leak/exhaustion detection) separate
 from re-exercising a tradeoff that's already covered by the auth test
 suite.
+
+## Kafka HA demo (`kafka-ha-demo.sh`)
+
+Exercises `docs/ha-scope.md`'s three stated test goals against the real
+3-broker KRaft cluster (`docker-compose.yml`'s `kafka-1`/`kafka-2`/
+`kafka-3`): tolerate-one-broker-loss, two-broker quorum-loss, and rolling
+maintenance (restart all three, one at a time). Deliberately lighter than
+`chaos-demo.sh`/`misconfigured-spike-demo.sh` — no Playwright screenshots;
+evidence is real HTTP status codes plus `kafka-topics.sh --describe`'s
+actual replica/ISR state, which answers "did this work, and why" more
+directly for a broker-quorum question than a dashboard screenshot would.
+
+**Real run (2026-08-27/28)**: scenario 1 (tolerate one broker loss) — 20/20
+succeeded, zero impact, confirming RF=3's whole point. Scenario 3 (rolling
+maintenance) — 30/30 succeeded across all three sequential restarts, zero
+downtime, the actual payoff of "3, not 2" quorum math.
+
+**Scenario 2 (two-broker quorum loss) produced a genuinely important
+finding, not a clean pass**: 10/10 requests returned `201`, and a direct
+Postgres query afterward confirmed all 10 readings landed durably —
+zero visible failure anywhere, even though the cluster was genuinely
+below the 2-of-3 majority it needs. This is *not* evidence quorum loss is
+harmless. `ReadingService.ingest()`'s `kafkaTemplate.send()` only blocks
+synchronously on **metadata** fetch (bounded by `max.block.ms`, declared
+explicitly at 60000ms — see `application.yml`); the actual delivery
+retry, once metadata is already cached from earlier successful sends,
+runs in the background under `delivery.timeout.ms` — an **undeclared**
+client default of 120000ms. The quorum-loss window in this run (~15-20s)
+was well under that budget, so the producer's background retries silently
+absorbed the entire outage once brokers came back — HTTP success
+immediately, data delivered late but intact. A short outage landing 100%
+of readings does not prove a longer one would too. Two concrete follow-ups
+this surfaces, neither done yet: (1) re-run with the quorum-loss window
+extended past 120s to actually observe the failure mode this scenario is
+meant to demonstrate; (2) declare `delivery.timeout.ms` explicitly
+(matching the `max.block.ms` precedent from the earlier Kafka-outage-
+durability investigation) so how long a quorum-loss incident can be
+silently absorbed is a real decision, not an accident of an undeclared
+default.
