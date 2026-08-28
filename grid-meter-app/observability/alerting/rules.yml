@@ -153,7 +153,7 @@ groups:
           severity: critical
           alert_class: incident
         annotations:
-          summary: "At least one reading failed to publish to Kafka and was permanently lost -- see the api logs for the specific meterId/readingTimestamp/value needed to manually resubmit it."
+          summary: "At least one reading failed to publish to Kafka and landed in reading_outbox instead -- it is NOT yet visible via GET /readings (no reconciler drains the outbox back to Kafka yet, see docs/resilience-scope.md Stage D)."
         data:
           - refId: A
             datasourceUid: prometheus

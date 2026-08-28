@@ -33,6 +33,7 @@ public class ReadingService {
 
     private final ReadingRepository readingRepository;
     private final MeterRepository meterRepository;
+    private final ReadingOutboxRepository readingOutboxRepository;
     private final KafkaTemplate<Object, Object> kafkaTemplate;
     private final String readingsTopic;
     private final Counter deliveryFailureCounter;
@@ -40,11 +41,13 @@ public class ReadingService {
     public ReadingService(
             ReadingRepository readingRepository,
             MeterRepository meterRepository,
+            ReadingOutboxRepository readingOutboxRepository,
             KafkaTemplate<Object, Object> kafkaTemplate,
             @Value("${grid-meter.kafka.readings-topic}") String readingsTopic,
             MeterRegistry meterRegistry) {
         this.readingRepository = readingRepository;
         this.meterRepository = meterRepository;
+        this.readingOutboxRepository = readingOutboxRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.readingsTopic = readingsTopic;
         // Exported as reading_delivery_failures_total on /actuator/prometheus (Micrometer's
@@ -108,22 +111,30 @@ public class ReadingService {
         // Kafka quorum-loss test (150s outage, exceeding the delivery.timeout.ms client default of
         // 120000ms, now declared explicitly below) confirmed this let 10 readings silently vanish:
         // POST /readings returned 201 for all 10, and none of them ever reached Postgres, with
-        // nothing logged anywhere pointing at why. This callback does NOT prevent that loss -- the
-        // record is already unrecoverable by the time delivery.timeout.ms expires, and actually
-        // preventing it needs a durable outbox (see docs/resilience-scope.md, not built yet). What
-        // it adds is observability: an ERROR log with enough context (meterId, timestamp, value) to
-        // manually recreate the reading later -- the reading's own random id is deliberately NOT
-        // the recovery key, since nothing durable exists under that id to look up -- plus a counter
-        // an alert rule (observability/alerting/rules.yml) pages on for any increase at all.
+        // nothing logged anywhere pointing at why.
+        //
+        // Stage A of docs/resilience-scope.md's outbox pattern (write path only, no reconciler
+        // yet): a failed delivery now lands in reading_outbox instead of being lost outright. This
+        // does NOT make the reading visible to GET /readings yet -- nothing drains this table back
+        // to Kafka/Postgres's real readings table until the reconciler (Stage D) exists -- but the
+        // data itself now survives the outage, which the log-only version of this fix (still kept
+        // below) did not achieve on its own.
         kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
                         deliveryFailureCounter.increment();
                         log.error("Reading for meter {} (readingTimestamp={}, value={}) failed to publish to "
-                                        + "Kafka after client-side retries were exhausted -- this reading will "
-                                        + "never reach Postgres unless manually resubmitted with this "
-                                        + "meterId/readingTimestamp/value",
+                                        + "Kafka after client-side retries were exhausted -- writing to the "
+                                        + "outbox instead of losing it",
                                 event.meterId(), event.readingTimestamp(), event.value(), ex);
+                        readingOutboxRepository.save(ReadingOutbox.builder()
+                                .id(event.id())
+                                .meterId(event.meterId())
+                                .readingTimestamp(event.readingTimestamp())
+                                .receivedAt(event.receivedAt())
+                                .value(event.value())
+                                .createdAt(Instant.now())
+                                .build());
                     }
                 });
         return event;
