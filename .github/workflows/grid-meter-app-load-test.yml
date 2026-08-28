@@ -92,7 +92,7 @@ jobs:
       - name: Bring up the stack
         run: |
           export GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05
-          docker compose up -d --build traefik api postgres kafka redis
+          docker compose up -d --build traefik api postgres kafka-1 kafka-2 kafka-3 redis
           ./scripts/wait-for-health.sh "http://localhost/actuator/health" 90
 
       - name: Run ${{ steps.params.outputs.profile }}

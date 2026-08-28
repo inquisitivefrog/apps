@@ -8,8 +8,8 @@
 #
 # Prerequisites:
 #   - Full stack up, including the observability tier:
-#       docker compose up -d --scale api=2 traefik frontend api postgres kafka redis \
-#         prometheus loki tempo grafana alloy
+#       docker compose up -d --scale api=2 traefik frontend api postgres \
+#         kafka-1 kafka-2 kafka-3 redis prometheus loki tempo grafana alloy
 #   - Playwright's Chromium downloaded once: npx --yes playwright install chromium
 #     (the `playwright` npm module itself is bootstrapped automatically into
 #     load-tests/node_modules on first run -- see below)
@@ -41,7 +41,11 @@ cd "$(dirname "$0")/.."
 BASELINE_SECONDS="${BASELINE_SECONDS:-60}"
 OUTAGE_SECONDS="${OUTAGE_SECONDS:-45}"
 RECOVERY_SECONDS="${RECOVERY_SECONDS:-20}"
-LINKS=(traefik api kafka postgres redis)
+# kafka-1 (not "kafka") since docs/ha-scope.md's 3-broker cluster -- see load-tests/kafka-ha-demo.sh
+# for the real multi-broker HA scenarios (tolerate-one-loss, quorum-loss, rolling maintenance) this
+# single-outage demo can no longer exercise on its own now that Kafka isn't a single point of
+# failure.
+LINKS=(traefik api kafka-1 postgres redis)
 export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
 export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/chaos-demo-$(date +%Y%m%d-%H%M%S)"
@@ -138,8 +142,11 @@ for service in "${LINKS[@]}"; do
                   "Grafana itself stays reachable (direct port, bypasses Traefik). No alert rule" \
                   "covers Traefik directly -- Prometheus scrapes api:8080 over the Docker network," \
                   "bypassing Traefik entirely, so this is an honest scope boundary, not a bug." ;;
-    kafka) echo "Watch: does POST /readings still 201 or start failing? Genuinely worth observing," \
-                "not assumed -- check consumer lag/error panels too." ;;
+    kafka-1) echo "Watch: with the 3-broker cluster (docs/ha-scope.md), losing ONE broker should" \
+                  "now be a non-event -- POST /readings should keep returning 201 throughout, per" \
+                  "load-tests/kafka-ha-demo.sh's real scenario-1 result (20/20 succeeded, zero" \
+                  "impact). If this outage DOES visibly affect the app, that's a real regression" \
+                  "worth investigating, not the expected/documented behavior anymore." ;;
     postgres) echo "Watch: reads (GET /meters, /readings) should start failing; the async Kafka" \
                    "consumer's writes should start erroring too -- check Loki for the actual" \
                    "exception logged. The 'High HTTP error rate' alert rule should fire if the" \

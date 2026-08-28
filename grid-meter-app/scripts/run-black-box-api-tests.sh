@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-docker compose up -d --build traefik api postgres kafka redis
+docker compose up -d --build traefik api postgres kafka-1 kafka-2 kafka-3 redis
 ./scripts/wait-for-health.sh "http://localhost/actuator/health" 90
 
 
