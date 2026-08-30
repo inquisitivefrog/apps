@@ -144,6 +144,67 @@ Automated gates on load test runs are intentionally coarse — error rate
 it does needs a human watching Grafana while it runs, not a pass/fail gate
 pretending to replace that.
 
+## Test-infrastructure lesson: fixed sleeps racing unbounded readiness signals
+
+**Confirmed as a real, recurring category of test-script bug for this
+project (2026-08-28), not a one-off — three independent occurrences
+found across two different technologies within the same HA testing
+effort.** In every case, a test script used a fixed-duration `sleep N`
+to wait for some asynchronous condition to become true, and the actual
+condition took longer than `N` under real (if unremarkable) contention —
+either producing a false result, or, worse, producing a correct result
+for the wrong stated reason.
+
+- **Redis Finding B** (`docs/redis-ha-scope.md`): a fixed `sleep 8` after
+  topology reset was racing Sentinel's own replica-discovery poll
+  (normally ~2–4s, not reliably bounded under contention). This one
+  **did** produce a false verdict — a real failover was aborted
+  (`-failover-abort-no-good-slave`) and misread as a defect, when the
+  actual cause was the test not waiting long enough before asserting.
+- **Redis Stage 5's own quorum check**: a stale quorum check reading
+  ~3 seconds too early, caught while building Stage 5's chaos test
+  itself, same underlying pattern.
+- **Kafka `kafka-ha-demo.sh` Scenario 3**: a fixed `sleep 8` assumed to
+  represent real ISR-rejoin time. Measured directly across two full
+  runs: **actual rejoin time was 13–30 seconds — 2 to nearly 4x the
+  assumed 8s, every single time.** This one did **not** produce a false
+  verdict (the scenario's "zero client impact" result held in both
+  runs) — but it meant the test's own explanation for *why* it passed
+  was wrong. The corrected explanation is actually the stronger finding:
+  zero client impact was demonstrated while a broker was genuinely still
+  mid-rejoin, not merely after things had already quietly settled —
+  direct, measured proof that `min.insync.replicas=2` provides real
+  margin during a slow, in-progress recovery, not just once recovery is
+  complete.
+
+**The general lesson, worth applying to any future test-script work in
+this project**: a fixed sleep after triggering an asynchronous condition
+(topology reset, broker restart, leader election, replica rejoin) is
+never really "waiting for X" — it's "guessing how long X usually takes."
+When it guesses short, you get a false failure or a misdiagnosed defect
+(as in Redis's two cases). When it guesses long enough by luck, you get
+a result that happens to be correct but is unverified against the
+actual condition (as in Kafka's case) — and the real margin/behavior the
+test was supposed to characterize goes unmeasured and unreported.
+
+**Standing guidance**: new chaos/failover test scripts in this project
+should poll for the actual readiness condition (a specific log line, a
+specific `CONFIG GET`/`SENTINEL`/`kafka-topics.sh` state, a successful
+direct read) rather than sleeping a fixed duration and assuming success,
+even when the fixed duration "usually works." Where a fixed wait is
+kept for simplicity, report the actual measured convergence time
+alongside the pass/fail result (as `kafka-ha-demo.sh`'s Scenario 3 now
+does) rather than only the boolean outcome — the real number is often
+the more useful finding, as it was here.
+
+**Not yet audited**: `kafka-ha-demo.sh`'s Scenario 2 (20s recovery-wait —
+checked and ruled out; those records are discarded client-side by
+`delivery.timeout.ms` expiry during the outage, independent of the
+post-recovery wait duration) and Scenario 1 (5s pre-send sleep — lower
+risk, since the script already treats `S1_FAIL` skeptically rather than
+asserting a blind pass on it). Both reviewed and closed as part of this
+same pass, not left as open questions.
+
 ## CI wiring (GitHub Actions)
 
 All three jobs below run on every push/PR touching `grid-meter-app/**`

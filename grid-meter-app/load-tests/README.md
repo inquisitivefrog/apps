@@ -459,6 +459,20 @@ succeeded, zero impact, confirming RF=3's whole point. Scenario 3 (rolling
 maintenance) — 30/30 succeeded across all three sequential restarts, zero
 downtime, the actual payoff of "3, not 2" quorum math.
 
+**Correction/strengthening (2026-08-30)**: the original run's zero-downtime
+result was real, but the script's own narration ("waiting for the broker to
+rejoin and catch up" after a fixed 8s sleep) overclaimed what that wait
+actually achieved. Measured directly across two full re-runs: real
+ISR-rejoin time per broker restart is **13-30 seconds**, 2 to nearly 4x the
+assumed 8s — not a bug in the *outcome* (0 failures held every time,
+confirmed twice), but the test's own account of *why* was wrong. The real
+explanation is stronger than what was originally claimed: zero client
+impact was demonstrated **while a broker was still mid-rejoin**, not after
+quiet convergence — direct proof that `min.insync.replicas=2` provides
+real margin during a slow rejoin, not just against a broker that's already
+fully caught up. `kafka-ha-demo.sh` now measures and reports the real
+convergence time per restart instead of assuming it.
+
 **Scenario 2 (two-broker quorum loss), first attempt (~15-20s outage)**:
 10/10 requests returned `201`, and a direct Postgres query afterward
 confirmed all 10 readings landed durably — zero visible failure anywhere,

@@ -1,0 +1,132 @@
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:04.287 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.282 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.326 # +sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.337 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.399 # +odown master mymaster redis 6379 #quorum 2/2
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.399 # +new-epoch 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.399 # +try-failover master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.409 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.409 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.409 # +vote-for-leader c56c1e98544ae8b802ff13b1cd53c33a54e2d0b4 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.421 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.421 * e3297adcabbb7f165cfaf7b2a804da5462629a37 voted for e3297adcabbb7f165cfaf7b2a804da5462629a37 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.429 * b3e095aaf4c27cbcdead8aa0eee6cea54ee89843 voted for c56c1e98544ae8b802ff13b1cd53c33a54e2d0b4 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.487 # +elected-leader master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.487 # +failover-state-select-slave master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.554 # -failover-abort-no-good-slave master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:08.617 * Next failover delay: I will not start a failover before Sun Aug 30 04:33:28 2026
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:09.344 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:09.457 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:10.396 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:10.504 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:11.444 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:11.520 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:12.458 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:12.561 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:13.490 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:13.620 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:14.503 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:14.641 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:15.518 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:15.658 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:16.526 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:16.692 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:17.554 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:17.734 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:18.560 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:18.761 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:19.355 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:19.584 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:19.836 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:20.661 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:20.858 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:21.738 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:21.893 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:22.782 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:22.921 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:23.852 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:23.940 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:24.884 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:24.982 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:25.945 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:26.061 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:27.006 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:27.075 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.108 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.133 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.707 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.719 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.719 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.719 # +new-epoch 2
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.732 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.732 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.732 # +vote-for-leader e3297adcabbb7f165cfaf7b2a804da5462629a37 2
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:28.732 * Next failover delay: I will not start a failover before Sun Aug 30 04:33:49 2026
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:29.170 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:29.808 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:30.226 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:30.821 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:31.289 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:31.845 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:32.347 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:32.868 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:33.405 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:33.876 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:34.461 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:34.469 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:34.900 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:35.541 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:35.947 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:36.614 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:37.019 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:37.631 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:38.044 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:38.660 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:39.056 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:39.676 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:40.114 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:40.701 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:41.172 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:41.735 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:42.223 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:42.792 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:43.275 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:43.892 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:44.298 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:44.934 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:45.345 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:45.990 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:46.429 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:47.014 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:47.438 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.082 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.473 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.922 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.930 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.930 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.930 # +new-epoch 3
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.937 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.937 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.937 # +vote-for-leader e3297adcabbb7f165cfaf7b2a804da5462629a37 3
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:48.955 * Next failover delay: I will not start a failover before Sun Aug 30 04:34:09 2026
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:49.154 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:49.589 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:49.954 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:50.213 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:50.982 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:51.236 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:51.994 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:52.256 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:53.033 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:53.281 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:53.421 - Accepted 172.18.0.8:38092
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:53.421 - Client closed connection id=8 addr=172.18.0.8:38092 laddr=172.18.0.15:26379 fd=12 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=25 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.412 * +reboot master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.412 * +slave slave 172.18.0.17:6379 172.18.0.17 6379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.472 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.472 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.472 * +slave slave 172.18.0.18:6379 172.18.0.18 6379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.488 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.488 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.489 # -sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:33:54.489 # -odown master mymaster redis 6379

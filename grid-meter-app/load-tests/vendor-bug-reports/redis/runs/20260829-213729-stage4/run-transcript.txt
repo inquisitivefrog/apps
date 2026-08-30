@@ -1,0 +1,47 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260829-213729-stage4/run-transcript.txt
+
+================================================================
+Resetting to canonical topology before this run (redis=primary, replicas replicate from it)
+================================================================
+ Container grid-meter-app-redis-1 Recreate 
+ Container grid-meter-app-redis-1 Recreated 
+ Container grid-meter-app-sentinel-2-1 Recreate 
+ Container grid-meter-app-redis-replica-1-1 Recreate 
+ Container grid-meter-app-sentinel-1-1 Recreate 
+ Container grid-meter-app-redis-replica-2-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreated 
+ Container grid-meter-app-sentinel-2-1 Recreated 
+ Container grid-meter-app-sentinel-1-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreated 
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Starting 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Started 
+ Container grid-meter-app-redis-replica-2-1 Started 
+ Container grid-meter-app-sentinel-2-1 Started 
+ Container grid-meter-app-sentinel-1-1 Started 
+ Container grid-meter-app-sentinel-3-1 Started 
+
+================================================================
+Actively waiting for Sentinel to discover BOTH replicas before proceeding (root cause of
+================================================================
+Finding B: a fixed sleep here raced Sentinel's own replica-discovery poll -- confirmed
+empirically that discovery normally completes in ~4s but is not reliably bounded by any fixed
+sleep duration under contention, so this polls for the actual condition instead of guessing
+a longer number).
+t+1s: sentinel-1 knows about 0 replica(s)
+t+2s: sentinel-1 knows about 2 replica(s)
+Both replicas discovered at t+2s -- safe to proceed
+Current master service: redis
+
+================================================================
+Writing marker to primary (redis) BEFORE killing it, confirming acknowledgment
+================================================================
+SET result: NOREPLICAS Not enough good replicas to write.
+Write was not acknowledged -- aborting this run, nothing to test against.

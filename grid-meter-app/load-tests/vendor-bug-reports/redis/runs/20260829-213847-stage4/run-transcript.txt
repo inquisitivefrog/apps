@@ -1,0 +1,159 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260829-213847-stage4/run-transcript.txt
+
+================================================================
+Resetting to canonical topology before this run (redis=primary, replicas replicate from it)
+================================================================
+ Container grid-meter-app-redis-1 Recreate 
+ Container grid-meter-app-redis-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreate 
+ Container grid-meter-app-sentinel-1-1 Recreate 
+ Container grid-meter-app-sentinel-2-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreate 
+ Container grid-meter-app-redis-replica-2-1 Recreate 
+ Container grid-meter-app-sentinel-1-1 Recreated 
+ Container grid-meter-app-sentinel-2-1 Recreated 
+ Container grid-meter-app-sentinel-3-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreated 
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Starting 
+ Container grid-meter-app-sentinel-2-1 Started 
+ Container grid-meter-app-sentinel-1-1 Started 
+ Container grid-meter-app-sentinel-3-1 Started 
+ Container grid-meter-app-redis-replica-1-1 Started 
+ Container grid-meter-app-redis-replica-2-1 Started 
+
+================================================================
+Actively waiting for Sentinel to discover BOTH replicas before proceeding (root cause of
+================================================================
+Finding B: a fixed sleep here raced Sentinel's own replica-discovery poll -- confirmed
+empirically that discovery normally completes in ~4s but is not reliably bounded by any fixed
+sleep duration under contention, so this polls for the actual condition instead of guessing
+a longer number).
+t+1s: sentinel-1 knows about 0 replica(s)
+t+2s: sentinel-1 knows about 0 replica(s)
+t+3s: sentinel-1 knows about 0 replica(s)
+t+4s: sentinel-1 knows about 0 replica(s)
+t+5s: sentinel-1 knows about 0 replica(s)
+t+6s: sentinel-1 knows about 0 replica(s)
+t+7s: sentinel-1 knows about 0 replica(s)
+t+8s: sentinel-1 knows about 0 replica(s)
+t+9s: sentinel-1 knows about 0 replica(s)
+t+10s: sentinel-1 knows about 0 replica(s)
+t+11s: sentinel-1 knows about 2 replica(s)
+Both replicas discovered at t+11s -- safe to proceed
+
+================================================================
+Also waiting for the PRIMARY ITSELF to consider both replicas 'good' for min-replicas-to-write
+================================================================
+A second, related race found while fixing the first: Sentinel discovering a replica (via
+polling INFO) is a different readiness signal than the PRIMARY's own min-replicas-to-write
+gate considering that replica synced/ack'd within min-replicas-max-lag. Confirmed empirically
+-- a marker write attempted right after Sentinel's discovery alone returned NOREPLICAS.
+t+1s: primary reports min_slaves_good_slaves=2
+Primary considers replicas good at t+1s -- safe to write
+Current master service: redis
+
+================================================================
+Writing marker to primary (redis) BEFORE killing it, confirming acknowledgment
+================================================================
+SET result: OK
+
+================================================================
+Confirming the marker is present on BOTH replicas via direct GET before killing anything
+================================================================
+redis-replica-1 GET stage4-marker-1788064742 -> primary-failure-test-value (confirmed, attempt 1)
+redis-replica-2 GET stage4-marker-1788064742 -> primary-failure-test-value (confirmed, attempt 1)
+
+================================================================
+Killing the primary (redis) at epoch 1788064742
+================================================================
+ Container grid-meter-app-redis-1 Stopping 
+ Container grid-meter-app-redis-1 Stopped 
+
+================================================================
+Polling up to 30s for a surviving replica to become master
+================================================================
+
+================================================================
+Promotion detected: redis-replica-1 is now master. Measured RTO ~= 7s (kill-to-promotion, 1s polling granularity)
+================================================================
+
+================================================================
+Checking redis-replica-1 actually has the marker write (direct GET, not inferred)
+================================================================
+redis-replica-1 GET stage4-marker-1788064742 -> primary-failure-test-value (expect: primary-failure-test-value)
+
+================================================================
+Checking whether min-replicas-to-write / min-replicas-max-lag survived the promotion
+================================================================
+Hypothesis: NO -- only the original 'redis' service's docker-compose command declared these;
+Sentinel's promotion (REPLICAOF NO ONE) does not carry arbitrary CONFIG SET values with it.
+min-replicas-to-write
+0
+min-replicas-max-lag
+10
+
+================================================================
+Checking the other surviving replica now follows redis-replica-1
+================================================================
+--- redis-replica-2 ---
+role:slave
+master_host:redis
+master_link_status:down
+
+================================================================
+Restarting the old primary (redis) -- probing for a split-brain window at sub-second resolution
+================================================================
+Confirming it demotes and starts replicating from the new primary BEFORE it could accept any
+writes -- not just that it eventually shows up as a replica in INFO replication.
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+t+0.34s after restart: role=slave  write-attempt-result=READONLY You can't write against a read only replica.
+-> demoted to replica at t+0.34s; sampling a couple more points then stopping the probe
+t+0.84s after restart: role=slave  write-attempt-result=READONLY You can't write against a read only replica.
+Demoted at: 0.34
+
+================================================================
+Final state after reconciliation
+================================================================
+--- redis ---
+role:slave
+master_host:172.18.0.18
+master_link_status:up
+connected_slaves:0
+--- redis-replica-1 ---
+role:master
+connected_slaves:2
+--- redis-replica-2 ---
+role:slave
+master_host:172.18.0.18
+master_link_status:up
+connected_slaves:0
+
+================================================================
+Saving full Sentinel logs from the kill window (for post-hoc failover-mechanism analysis)
+================================================================
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-213847-stage4/sentinel-1.log (      39 lines)
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-213847-stage4/sentinel-2.log (      29 lines)
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-213847-stage4/sentinel-3.log (      29 lines)
+Did a real +switch-master event ever occur (per sentinel-1's log): yes
+'Failed to resolve hostname' occurrences in sentinel-1's log during this window: 5
+
+================================================================
+VERDICT SUMMARY
+================================================================
+Pre-kill: marker acknowledged (SET -> OK) and confirmed on both replicas via direct GET: YES
+Kill target (old primary): redis
+Promoted: redis-replica-1
+Measured RTO (kill-to-promotion): 7s (1s polling granularity -- a floor, not a precise number)
+Marker write survived on promoted node (direct GET, not inferred): YES
+min-replicas-to-write survived promotion: see CONFIG GET output above
+Old primary demoted to replica at: t+0.34s after restart (sub-second polling)
+Real failover completed this run (+switch-master seen): yes
+SPLIT-BRAIN: NO

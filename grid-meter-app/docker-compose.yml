@@ -156,13 +156,132 @@ services:
     networks:
       - grid-meter
 
+  # Redis HA (Sentinel) -- see docs/redis-ha-scope.md for the full scope/staging plan. Stage 1's
+  # config audit found min-replicas-to-write=0 live on this instance (confirmed via `redis-cli
+  # CONFIG GET`, not just a repo grep) -- the direct structural twin of Kafka's undeclared acks=1
+  # gap (Finding 1 in docs/testing-strategy-ha-supplement.md): a durability-relevant setting
+  # silently defaulting to "no real guarantee" until checked, matching every other instance of this
+  # pattern found this session (HikariCP's connection-timeout, Kafka's max.block.ms/
+  # delivery.timeout.ms/acks/unclean.leader.election.enable -- see CLAUDE.md's "Architectural
+  # decisions to preserve" for the standing principle this became). Declaring it explicitly now
+  # that real replicas exist to enforce against, rather than deferring the fix already diagnosed in
+  # Stage 1.
+  #
+  # min-replicas-to-write 1 (not 2, the full replica count) mirrors Kafka's own N=3,
+  # min.insync.replicas=2 pattern: require a majority-ish subset (primary + at least 1 of 2
+  # replicas), not unanimity from every node, matching this project's established "tolerate one
+  # node loss without losing durability" bar rather than a stricter all-replicas requirement that
+  # would block writes on a single replica hiccup.
   redis:
     image: redis:8.10
+    # Sentinel-aware entrypoint fixes docs/redis-ha-scope.md's Finding A: a plain `redis-server`
+    # command has no memory of Sentinel's failover decisions across a restart, so this container
+    # would boot back up believing it's still primary even if Sentinel demoted it while it was
+    # down -- a real, confirmed split-brain window (see
+    # load-tests/vendor-bug-reports/redis/NOTES.md). The entrypoint asks Sentinel who's actually
+    # master before starting, instead of trusting this static config to still be true.
+    entrypoint: ["/entrypoint.sh"]
+    command: ["--min-replicas-to-write", "1", "--min-replicas-max-lag", "10", "--loglevel", "debug"]
+    environment:
+      MY_HOSTNAME: redis
+    volumes:
+      - ./scripts/redis-entrypoint.sh:/entrypoint.sh:ro
     logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 128m
+    networks:
+      - grid-meter
+
+  # 2 replicas -- see docs/redis-ha-scope.md's topology decision: primary + 2 replicas (not 1),
+  # so one replica can be down without losing the ability to promote a fully-caught-up standby.
+  redis-replica-1:
+    image: redis:8.10
+    entrypoint: ["/entrypoint.sh"]
+    command: ["--loglevel", "debug"]
+    environment:
+      MY_HOSTNAME: redis-replica-1
+      # Only used if Sentinel is genuinely unreachable at startup -- preserves this node's old
+      # static assumption instead of risking it silently becoming an unintended second primary.
+      FALLBACK_REPLICAOF_HOST: redis
+      FALLBACK_REPLICAOF_PORT: "6379"
+    volumes:
+      - ./scripts/redis-entrypoint.sh:/entrypoint.sh:ro
+    depends_on:
+      - redis
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  redis-replica-2:
+    image: redis:8.10
+    entrypoint: ["/entrypoint.sh"]
+    command: ["--loglevel", "debug"]
+    environment:
+      MY_HOSTNAME: redis-replica-2
+      FALLBACK_REPLICAOF_HOST: redis
+      FALLBACK_REPLICAOF_PORT: "6379"
+    volumes:
+      - ./scripts/redis-entrypoint.sh:/entrypoint.sh:ro
+    depends_on:
+      - redis
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  # 3 Sentinels -- quorum of 2 needed to mark the primary ODOWN and authorize failover (see
+  # docs/redis-ha-scope.md's quorum-mechanics section: this `quorum` value gates *detection*: the
+  # separate failover-*authorization* step always needs a majority of ALL sentinels, 2 of 3 here,
+  # which happens to be the same number in a 3-sentinel deployment but is a distinct mechanism, not
+  # the same threshold by coincidence). No sentinel.conf file is mounted -- every directive is
+  # passed on the command line and Sentinel is left to create/rewrite its own conf file inside the
+  # container's ephemeral writable layer, matching this project's existing no-persistent-volume
+  # treatment of the Kafka brokers (state is expected to reset on container recreation).
+  sentinel-1:
+    image: redis:8.10
+    command: sh -c "touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    depends_on:
+      - redis
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+    networks:
+      - grid-meter
+
+  sentinel-2:
+    image: redis:8.10
+    command: sh -c "touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    depends_on:
+      - redis
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 32m
+    networks:
+      - grid-meter
+
+  sentinel-3:
+    image: redis:8.10
+    command: sh -c "touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    depends_on:
+      - redis
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 32m
     networks:
       - grid-meter
 

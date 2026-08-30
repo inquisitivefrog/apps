@@ -148,15 +148,46 @@ echo "Total readings from the 10 sent during outage that ever landed in readings
 # `readings` below is genuinely gone, not delayed-but-recoverable, per that decision.
 
 banner "SCENARIO 3: Rolling maintenance (restart all 3 brokers, one at a time)"
+# The 8s wait below does NOT reliably mean the restarted broker has fully rejoined ISR --
+# confirmed empirically (2026-08-30) across two full runs: real ISR-rejoin times measured at
+# 13s, 18s, 19s, and 30s (once right at the original 30s poll ceiling, since raised to 60s) --
+# 2 to nearly 4x the assumed 8s wait, every single time. That's not a bug in this test's outcome:
+# min.insync.replicas=2 is already satisfied by the other two healthy brokers regardless of the
+# restarting one's rejoin status, so sending traffic before full convergence is actually the MORE
+# rigorous version of this test -- it proves zero client impact during partial rejoin (confirmed:
+# 0 failures across 30 requests in both full runs), not just after everything has quietly
+# settled. The actual bug was this test's own narration implying convergence had happened by the
+# time reads/writes were sent, which measurement showed is essentially never true -- fixed below
+# by measuring and reporting the real convergence time instead of assuming it.
 S3_SUCCESS=0
 S3_FAIL=0
 for broker in kafka-1 kafka-2 kafka-3; do
   echo "--- Restarting $broker ---"
+  RESTART_EPOCH=$(date +%s)
   docker compose restart "$broker"
   sleep 8
+  echo "Sending traffic now -- NOT waiting for full ISR rejoin first (see comment above for why)"
   send_readings 10 "$METER_ID"
   S3_SUCCESS=$((S3_SUCCESS + SUCCESS_COUNT))
   S3_FAIL=$((S3_FAIL + FAIL_COUNT))
+  BROKER_ID="${broker##*-}"
+  REJOINED_AT=""
+  # 60s ceiling, not 30 -- a real measurement came in at exactly t+30s once, meaning a 30s ceiling
+  # risks silently capping (and understating) a genuinely longer convergence time in a future run.
+  for i in $(seq 1 60); do
+    ISR_LINES=$(cluster_state)
+    MISSING=$(echo "$ISR_LINES" | grep "Isr:" | grep -vc "\b${BROKER_ID}\b")
+    if [ "$MISSING" -eq 0 ]; then
+      REJOINED_AT=$(( $(date +%s) - RESTART_EPOCH ))
+      break
+    fi
+    sleep 1
+  done
+  if [ -n "$REJOINED_AT" ]; then
+    echo "Measured: $broker fully rejoined ISR on all partitions at t+${REJOINED_AT}s after restart (test sent traffic at t+8s, before this measurement)"
+  else
+    echo "Measured: $broker had NOT fully rejoined ISR even after 60s -- worth investigating on its own"
+  fi
 done
 
 banner "Results"

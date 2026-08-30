@@ -1,0 +1,118 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260829-210333-stage4/run-transcript.txt
+
+================================================================
+Resetting to canonical topology before this run (redis=primary, replicas replicate from it)
+================================================================
+ Container grid-meter-app-redis-1 Recreate 
+ Container grid-meter-app-redis-1 Recreated 
+ Container grid-meter-app-sentinel-1-1 Recreate 
+ Container grid-meter-app-sentinel-2-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreate 
+ Container grid-meter-app-redis-replica-2-1 Recreate 
+ Container grid-meter-app-redis-replica-1-1 Recreate 
+ Container grid-meter-app-redis-replica-1-1 Recreated 
+ Container grid-meter-app-sentinel-2-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreated 
+ Container grid-meter-app-sentinel-1-1 Recreated 
+ Container grid-meter-app-sentinel-3-1 Recreated 
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Starting 
+ Container grid-meter-app-sentinel-3-1 Started 
+ Container grid-meter-app-sentinel-2-1 Started 
+ Container grid-meter-app-redis-replica-2-1 Started 
+ Container grid-meter-app-redis-replica-1-1 Started 
+ Container grid-meter-app-sentinel-1-1 Started 
+Current master service: redis
+
+================================================================
+Writing marker to primary (redis) BEFORE killing it, confirming acknowledgment
+================================================================
+SET result: OK
+
+================================================================
+Confirming the marker is present on BOTH replicas via direct GET before killing anything
+================================================================
+redis-replica-1 GET stage4-marker-1788062624 -> primary-failure-test-value (confirmed, attempt 1)
+redis-replica-2 GET stage4-marker-1788062624 -> primary-failure-test-value (confirmed, attempt 1)
+
+================================================================
+Killing the primary (redis) at epoch 1788062624
+================================================================
+ Container grid-meter-app-redis-1 Stopping 
+ Container grid-meter-app-redis-1 Stopped 
+
+================================================================
+Polling up to 30s for a surviving replica to become master
+================================================================
+
+================================================================
+VERDICT: NO PROMOTION DETECTED within 30s -- this is itself a real, reportable finding
+================================================================
+
+================================================================
+Restarting the old primary (redis) -- probing for a split-brain window at sub-second resolution
+================================================================
+Confirming it demotes and starts replicating from the new primary BEFORE it could accept any
+writes -- not just that it eventually shows up as a replica in INFO replication.
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+t+0.34s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+0.84s after restart: role=master  write-attempt-result=OK
+t+1.34s after restart: role=master  write-attempt-result=OK
+t+1.83s after restart: role=master  write-attempt-result=OK
+t+2.32s after restart: role=master  write-attempt-result=OK
+t+2.80s after restart: role=master  write-attempt-result=OK
+t+3.29s after restart: role=master  write-attempt-result=OK
+t+3.77s after restart: role=master  write-attempt-result=OK
+t+4.27s after restart: role=master  write-attempt-result=OK
+t+4.76s after restart: role=master  write-attempt-result=OK
+t+5.24s after restart: role=master  write-attempt-result=OK
+t+5.72s after restart: role=master  write-attempt-result=OK
+t+6.19s after restart: role=master  write-attempt-result=OK
+t+6.71s after restart: role=master  write-attempt-result=OK
+t+7.23s after restart: role=master  write-attempt-result=OK
+t+7.71s after restart: role=master  write-attempt-result=OK
+t+8.18s after restart: role=master  write-attempt-result=OK
+t+8.69s after restart: role=master  write-attempt-result=OK
+t+9.19s after restart: role=master  write-attempt-result=OK
+t+9.69s after restart: role=master  write-attempt-result=OK
+t+10.18s after restart: role=master  write-attempt-result=OK
+t+10.69s after restart: role=master  write-attempt-result=OK
+t+11.21s after restart: role=master  write-attempt-result=OK
+t+11.67s after restart: role=master  write-attempt-result=OK
+t+12.16s after restart: role=master  write-attempt-result=OK
+Demoted at: not observed within the probe window
+
+================================================================
+Final state after reconciliation
+================================================================
+--- redis ---
+role:master
+connected_slaves:2
+--- redis-replica-1 ---
+role:slave
+master_host:redis
+master_link_status:up
+connected_slaves:0
+--- redis-replica-2 ---
+role:slave
+master_host:redis
+master_link_status:up
+connected_slaves:0
+
+================================================================
+VERDICT SUMMARY
+================================================================
+Pre-kill: marker acknowledged (SET -> OK) and confirmed on both replicas via direct GET: YES
+Kill target (old primary): redis
+Promoted: NONE
+Measured RTO (kill-to-promotion): 49s (1s polling granularity -- a floor, not a precise number)
+Marker write survived on promoted node (direct GET, not inferred): NO / not applicable
+min-replicas-to-write survived promotion: see CONFIG GET output above
+Old primary demoted to replica at: t+NOT OBSERVEDs after restart (sub-second polling)
+Split-brain window observed (old primary answered as master AND accepted a write post-restart): yes

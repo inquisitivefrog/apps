@@ -66,6 +66,36 @@ upstream as of Loki 3.7.3.
   authenticated request should log in via `POST /api/v1/auth/login`
   (seed credentials: `demo` / `GridMeter!Demo2026`, Flyway-seeded in
   `V3__create_users_table.sql`) rather than mocking the security layer.
+- **Assume any durability/quorum-relevant setting is an undeclared
+  default until verified live against the running system.** This project
+  has now found six separate instances of this same gap across its HA
+  work — the HikariCP `connection-timeout`, Kafka's `max.block.ms`,
+  `delivery.timeout.ms`, `acks`, `unclean.leader.election.enable`, and
+  Redis's `min-replicas-to-write` — every one silently defaulting to "no
+  real guarantee" until someone checked the live config (not just a repo
+  grep) and declared it explicitly. Treat this as the standing prior for
+  any remaining or future HA work (Postgres/Patroni, and any new service
+  added later), not a coincidence specific to Kafka. See
+  `docs/ha-scope.md`, `docs/testing-strategy-ha-supplement.md`,
+  `docs/redis-ha-scope.md`, and `docs/postgres-ha-scope.md` for the full
+  investigation trail.
+- **In chaos/failover test scripts, poll for the actual readiness
+  condition — never assume a fixed `sleep N` reflects real convergence
+  time.** The same HA testing effort found this exact bug shape three
+  independent times: twice in Redis Sentinel testing (a fixed `sleep 8`
+  racing Sentinel's replica-discovery poll, and a stale quorum check
+  reading ~3s early) and once in `kafka-ha-demo.sh` (a fixed `sleep 8`
+  assumed to represent ISR-rejoin time, when actual measured rejoin took
+  13–30s — 2 to nearly 4x the assumption, every run). Two of the three
+  produced a false or misdiagnosed result; the third produced a correct
+  result for the wrong stated reason, hiding a stronger finding
+  (`min.insync.replicas=2` providing real margin *during* a slow rejoin,
+  not just after). Same sibling pattern as the undeclared-defaults lesson
+  above — verify the actual condition, don't trust a plausible-looking
+  assumption — applied to test infrastructure rather than production
+  config. See `docs/testing-strategy.md`'s "Test-infrastructure lesson"
+  section for the full account and the standing guidance for new test
+  scripts.
 
 ## Dev workflow
 

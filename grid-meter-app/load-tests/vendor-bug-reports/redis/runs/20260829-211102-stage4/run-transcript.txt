@@ -1,0 +1,151 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260829-211102-stage4/run-transcript.txt
+
+================================================================
+Resetting to canonical topology before this run (redis=primary, replicas replicate from it)
+================================================================
+ Container grid-meter-app-redis-1 Recreate 
+ Container grid-meter-app-redis-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreate 
+ Container grid-meter-app-sentinel-2-1 Recreate 
+ Container grid-meter-app-redis-replica-1-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreate 
+ Container grid-meter-app-sentinel-1-1 Recreate 
+ Container grid-meter-app-sentinel-2-1 Recreated 
+ Container grid-meter-app-sentinel-1-1 Recreated 
+ Container grid-meter-app-sentinel-3-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreated 
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Starting 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Started 
+ Container grid-meter-app-redis-replica-1-1 Started 
+ Container grid-meter-app-redis-replica-2-1 Started 
+ Container grid-meter-app-sentinel-2-1 Started 
+ Container grid-meter-app-sentinel-3-1 Started 
+Current master service: redis
+
+================================================================
+Writing marker to primary (redis) BEFORE killing it, confirming acknowledgment
+================================================================
+SET result: OK
+
+================================================================
+Confirming the marker is present on BOTH replicas via direct GET before killing anything
+================================================================
+redis-replica-1 GET stage4-marker-1788063072 -> primary-failure-test-value (confirmed, attempt 1)
+redis-replica-2 GET stage4-marker-1788063072 -> primary-failure-test-value (confirmed, attempt 1)
+
+================================================================
+Killing the primary (redis) at epoch 1788063073
+================================================================
+ Container grid-meter-app-redis-1 Stopping 
+ Container grid-meter-app-redis-1 Stopped 
+
+================================================================
+Polling up to 30s for a surviving replica to become master
+================================================================
+
+================================================================
+Promotion detected: redis-replica-1 is now master. Measured RTO ~= 7s (kill-to-promotion, 1s polling granularity)
+================================================================
+
+================================================================
+Checking redis-replica-1 actually has the marker write (direct GET, not inferred)
+================================================================
+redis-replica-1 GET stage4-marker-1788063072 -> primary-failure-test-value (expect: primary-failure-test-value)
+
+================================================================
+Checking whether min-replicas-to-write / min-replicas-max-lag survived the promotion
+================================================================
+Hypothesis: NO -- only the original 'redis' service's docker-compose command declared these;
+Sentinel's promotion (REPLICAOF NO ONE) does not carry arbitrary CONFIG SET values with it.
+min-replicas-to-write
+0
+min-replicas-max-lag
+10
+
+================================================================
+Checking the other surviving replica now follows redis-replica-1
+================================================================
+--- redis-replica-2 ---
+role:slave
+master_host:172.18.0.15
+master_link_status:up
+
+================================================================
+Restarting the old primary (redis) -- probing for a split-brain window at sub-second resolution
+================================================================
+Confirming it demotes and starts replicating from the new primary BEFORE it could accept any
+writes -- not just that it eventually shows up as a replica in INFO replication.
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+t+0.26s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+0.78s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+1.27s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+1.75s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+2.25s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+2.77s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+3.24s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+3.75s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+4.23s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+4.71s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+5.23s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+5.71s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+6.20s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+6.69s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+7.20s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+7.71s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+8.29s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+8.81s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+9.29s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+9.79s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+10.28s after restart: role=master  write-attempt-result=NOREPLICAS Not enough good replicas to write.
+t+10.78s after restart: role=master  write-attempt-result=READONLY You can't write against a read only replica.
+t+11.29s after restart: role=slave  write-attempt-result=READONLY You can't write against a read only replica.
+-> demoted to replica at t+11.29s; sampling a couple more points then stopping the probe
+t+11.85s after restart: role=slave  write-attempt-result=READONLY You can't write against a read only replica.
+Demoted at: 11.29
+
+================================================================
+Final state after reconciliation
+================================================================
+--- redis ---
+role:slave
+master_host:172.18.0.15
+master_link_status:down
+connected_slaves:0
+--- redis-replica-1 ---
+role:master
+connected_slaves:2
+--- redis-replica-2 ---
+role:slave
+master_host:172.18.0.15
+master_link_status:up
+connected_slaves:0
+
+================================================================
+Saving full Sentinel logs from the kill window (for post-hoc failover-mechanism analysis)
+================================================================
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-211102-stage4/sentinel-1.log (      33 lines)
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-211102-stage4/sentinel-2.log (      34 lines)
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-211102-stage4/sentinel-3.log (      41 lines)
+Did a real +switch-master event ever occur (per sentinel-1's log): yes
+'Failed to resolve hostname' occurrences in sentinel-1's log during this window: 10
+
+================================================================
+VERDICT SUMMARY
+================================================================
+Pre-kill: marker acknowledged (SET -> OK) and confirmed on both replicas via direct GET: YES
+Kill target (old primary): redis
+Promoted: redis-replica-1
+Measured RTO (kill-to-promotion): 7s (1s polling granularity -- a floor, not a precise number)
+Marker write survived on promoted node (direct GET, not inferred): YES
+min-replicas-to-write survived promotion: see CONFIG GET output above
+Old primary demoted to replica at: t+11.29s after restart (sub-second polling)
+Real failover completed this run (+switch-master seen): yes
+SPLIT-BRAIN: NO

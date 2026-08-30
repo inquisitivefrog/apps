@@ -1,0 +1,24 @@
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:48.868 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.822 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.888 # +sdown master mymaster redis 6379
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.904 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.964 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.967 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.967 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.967 # +new-epoch 1
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.970 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.970 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.970 # +vote-for-leader c2f7b82cb065a94a3967c1d9764d32863b49adef 1
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.989 # +odown master mymaster redis 6379 #quorum 2/2
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:52.989 * Next failover delay: I will not start a failover before Sun Aug 30 04:28:13 2026
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:53.865 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.001 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.049 # +config-update-from sentinel c2f7b82cb065a94a3967c1d9764d32863b49adef 172.18.0.16 26379 @ mymaster redis 6379
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.049 # +switch-master mymaster redis 6379 172.18.0.17 6379
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.053 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.053 * +slave slave redis:6379 redis 6379 @ mymaster 172.18.0.17 6379
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.058 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.058 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.113 * +slave slave 172.18.0.18:6379 172.18.0.18 6379 @ mymaster 172.18.0.17 6379
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.116 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 30 Aug 2026 04:27:54.116 * Sentinel new configuration saved on disk

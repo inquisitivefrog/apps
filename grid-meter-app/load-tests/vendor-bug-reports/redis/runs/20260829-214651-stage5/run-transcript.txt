@@ -1,0 +1,120 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260829-214651-stage5/run-transcript.txt
+
+================================================================
+Resetting to canonical topology before this run
+================================================================
+ Container grid-meter-app-redis-1 Recreate 
+ Container grid-meter-app-redis-1 Recreated 
+ Container grid-meter-app-sentinel-1-1 Recreate 
+ Container grid-meter-app-redis-replica-2-1 Recreate 
+ Container grid-meter-app-sentinel-2-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreate 
+ Container grid-meter-app-redis-replica-1-1 Recreate 
+ Container grid-meter-app-sentinel-1-1 Recreated 
+ Container grid-meter-app-sentinel-2-1 Recreated 
+ Container grid-meter-app-sentinel-3-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreated 
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Started 
+ Container grid-meter-app-sentinel-1-1 Started 
+ Container grid-meter-app-sentinel-3-1 Started 
+ Container grid-meter-app-redis-replica-2-1 Started 
+ Container grid-meter-app-sentinel-2-1 Started 
+
+================================================================
+Waiting for Sentinel to discover both replicas (Finding B's fix)
+================================================================
+Both replicas discovered at t+11s
+
+================================================================
+Waiting for the primary to consider both replicas 'good' for min-replicas-to-write
+================================================================
+Primary considers replicas good at t+1s
+Current master service: redis
+
+================================================================
+Baseline: quorum reachable with all 3 Sentinels healthy
+================================================================
+OK 3 usable Sentinels. Quorum and failover authorization can be reached
+
+================================================================
+SUB-TEST A: killing sentinel-2 and sentinel-3 (2 of 3) -- primary/replicas stay healthy
+================================================================
+ Container grid-meter-app-sentinel-2-1 Stopping 
+ Container grid-meter-app-sentinel-3-1 Stopping 
+ Container grid-meter-app-sentinel-3-1 Stopped 
+ Container grid-meter-app-sentinel-2-1 Stopped 
+
+================================================================
+Confirming the lone sentinel-1 reports it can no longer reach quorum/failover-authorization
+================================================================
+OK 3 usable Sentinels. Quorum and failover authorization can be reached
+
+================================================================
+Confirming the primary is unaffected -- still serves writes normally
+================================================================
+SET result: OK
+Primary role after 2-Sentinel loss: master (expect: master, unchanged)
+
+================================================================
+SUB-TEST B: with sentinel-2/3 still down, ALSO killing the primary -- the real test
+================================================================
+Pre-kill marker SET result: OK
+redis-replica-1 GET stage5b-marker-1788065230 -> quorum-loss-unsafe-case-marker
+redis-replica-2 GET stage5b-marker-1788065230 -> quorum-loss-unsafe-case-marker
+ Container grid-meter-app-redis-1 Stopping 
+ Container grid-meter-app-redis-1 Stopped 
+
+================================================================
+Polling 30s: does the lone sentinel-1 unsafely promote a replica despite lacking quorum?
+================================================================
+Unsafe promotion occurred: no 
+
+================================================================
+Sentinel-1's own final view (quorum + master state)
+================================================================
+NOQUORUM 1 usable Sentinels. Not enough available Sentinels to reach the specified quorum for this master. Not enough available Sentinels to reach the majority and authorize a failover
+
+flags
+s_down,master
+
+================================================================
+Saving sentinel-1's full log from the incident window
+================================================================
+Saved load-tests/vendor-bug-reports/redis/runs/20260829-214651-stage5/sentinel-1.log (      16 lines)
+
+================================================================
+Restoring the full topology
+================================================================
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-sentinel-2-1 Started 
+ Container grid-meter-app-sentinel-3-1 Started 
+--- redis ---
+role:master
+--- redis-replica-1 ---
+role:slave
+master_host:redis
+master_link_status:up
+--- redis-replica-2 ---
+role:slave
+master_host:redis
+master_link_status:up
+
+================================================================
+VERDICT SUMMARY
+================================================================
+Sub-test A (quorum lost, primary healthy): write result=OK, role stayed=master
+Sub-test B (quorum lost AND primary killed): unsafe promotion = no 
+PASS: quorum loss alone changed nothing (primary kept serving normally), and the system
+correctly failed safe when quorum loss was combined with a real primary failure -- no
+unauthorized promotion occurred despite the primary being down.

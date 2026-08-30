@@ -1,0 +1,32 @@
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:18.147 - Accepted 127.0.0.1:50172
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:18.148 - Client closed connection id=18 addr=127.0.0.1:50172 laddr=127.0.0.1:26379 fd=22 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|replicas user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=46 tot-net-out=1351 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.420 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.469 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.484 # +sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.534 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.537 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.537 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.537 # +new-epoch 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.539 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.539 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.539 # +vote-for-leader 01a7e02563aaecbaafa62072a12372cd559ecad1 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.542 # +odown master mymaster redis 6379 #quorum 3/2
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:24.542 * Next failover delay: I will not start a failover before Sun Aug 30 04:40:44 2026
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.489 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.565 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.565 - -role-change slave 172.18.0.16:6379 172.18.0.16 6379 @ mymaster redis 6379 new reported role is master
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.753 # +config-update-from sentinel 01a7e02563aaecbaafa62072a12372cd559ecad1 172.18.0.18 26379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.753 # +switch-master mymaster redis 6379 172.18.0.16 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.753 * +slave slave 172.18.0.17:6379 172.18.0.17 6379 @ mymaster 172.18.0.16 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.756 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.756 * +slave slave redis:6379 redis 6379 @ mymaster 172.18.0.16 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.759 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.759 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.772 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.772 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.16 6379 #Name or service not known
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:25.772 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.16 6379 #Name or service not known
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:26.264 - Accepted 172.18.0.8:48722
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:26.265 - Client closed connection id=19 addr=172.18.0.8:48722 laddr=172.18.0.15:26379 fd=20 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=32 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:27.304 * +slave slave 172.18.0.8:6379 172.18.0.8 6379 @ mymaster 172.18.0.16 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:27.317 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:40:27.317 * Sentinel new configuration saved on disk

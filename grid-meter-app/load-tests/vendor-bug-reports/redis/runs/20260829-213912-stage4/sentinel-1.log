@@ -1,0 +1,30 @@
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:33.926 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:33.933 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:33.941 # +sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.005 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.010 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.010 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.010 # +new-epoch 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.017 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.017 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.017 # +vote-for-leader fc2e08b36c83ac7234b4fd813a41a308a97972e0 1
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.031 # +odown master mymaster redis 6379 #quorum 3/2
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.031 * Next failover delay: I will not start a failover before Sun Aug 30 04:39:54 2026
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:34.987 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.088 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.099 - -role-change slave 172.18.0.18:6379 172.18.0.18 6379 @ mymaster redis 6379 new reported role is master
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.138 # +config-update-from sentinel fc2e08b36c83ac7234b4fd813a41a308a97972e0 172.18.0.16 26379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.138 # +switch-master mymaster redis 6379 172.18.0.18 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.138 * +slave slave 172.18.0.15:6379 172.18.0.15 6379 @ mymaster 172.18.0.18 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.141 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.141 * +slave slave redis:6379 redis 6379 @ mymaster 172.18.0.18 6379
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.163 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.163 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.166 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.166 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.18 6379 #Name or service not known
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:35.166 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.18 6379 #Name or service not known
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:36.185 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:36.185 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.18 6379 #Name or service not known
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:36.185 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.18 6379 #Name or service not known
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:36.867 - Accepted 172.18.0.8:58910
+sentinel-1-1  | 1:X 30 Aug 2026 04:39:36.868 - Client closed connection id=19 addr=172.18.0.8:58910 laddr=172.18.0.11:26379 fd=20 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=32 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
