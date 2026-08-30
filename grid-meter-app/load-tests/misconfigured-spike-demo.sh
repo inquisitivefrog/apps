@@ -38,6 +38,7 @@
 #   load-tests/screenshots/misconfigured-spike-<run-timestamp>/.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+source scripts/check-disk-headroom.sh || exit 1
 
 # Grafana's HTTP API always lives at root-relative /api/*, regardless of GF_SERVER_SERVE_FROM_
 # SUB_PATH -- that setting only affects the UI's own page/asset URLs (used for GRAFANA_URL/

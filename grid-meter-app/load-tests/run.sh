@@ -14,6 +14,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Load tests are exactly the kind of run that has repeatedly pushed Docker's disk usage over the
+# edge (see scripts/check-disk-headroom.sh for the full mechanism) -- check headroom before adding
+# more container log volume on top of whatever's already there.
+source ../scripts/check-disk-headroom.sh
+
 PROFILE="${1:-}"
 case "$PROFILE" in
   steady-state|ramp-up|rapid-spike|gentle-spike|soak) ;;

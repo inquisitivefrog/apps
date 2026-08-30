@@ -17,6 +17,7 @@
 #   controls. Screenshots + logs land in load-tests/screenshots/autoscale-<run-timestamp>/.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+source scripts/check-disk-headroom.sh || exit 1
 
 export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
 export ALERTING_URL="http://localhost:3001/grafana/alerting/list"

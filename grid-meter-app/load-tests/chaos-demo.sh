@@ -37,6 +37,7 @@
 #   Resource log lands alongside them as resource-log.txt.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+source scripts/check-disk-headroom.sh || exit 1
 
 BASELINE_SECONDS="${BASELINE_SECONDS:-60}"
 OUTAGE_SECONDS="${OUTAGE_SECONDS:-45}"

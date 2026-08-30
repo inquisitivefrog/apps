@@ -44,6 +44,18 @@ reproduced locally, because Homebrew's own `jmeter` formula hardcodes
 build, verify its actual JDK/runtime requirement independently rather than
 assuming it inherits the app's pin.
 
+**For any Helm chart, verify the chart version's own bundled sub-chart
+defaults, not just the top-level chart version.** A chart's *own* default
+for a bundled dependency (e.g. `kube-prometheus-stack`'s default Grafana
+sub-chart version) can silently drift ahead of whatever was pinned
+elsewhere, even when the outer chart version looks stable — discovered
+when a chart's default pulled Grafana 13.2.0 against this project's pinned
+13.0.2, and the newer version's changed bootstrap behavior broke a
+liveness-probe budget tuned against the older one. Check `helm show
+values <chart>` (or the chart's own `Chart.yaml` dependencies) for actual
+sub-chart versions before assuming a pinned application version travels
+through a Helm chart unchanged.
+
 ## Test-writing pitfalls
 
 **Don't tamper with encoded/hashed data by flipping only its very last
@@ -81,6 +93,74 @@ behaves differently from `curl` against the identical running stack, the
 library's own defaults (not just the environment) are a real suspect —
 found here via a `tcpdump` packet capture comparing a working probe
 against the failing one.
+
+## Kubernetes and infrastructure-as-code pitfalls
+
+**A config language's comment syntax isn't universal — verify it per
+language, not per project.** Alloy's River language uses `//` for
+comments, not `#` — an easy assumption to get wrong coming from
+YAML-heavy Kubernetes/Compose work, where `#` is nearly universal. A
+`#`-prefixed line in a `.river` file isn't a comment, it's invalid syntax,
+and crash-loops the container. The general rule: never assume a new
+config language shares comment syntax with the languages around it —
+check its own docs before writing the first comment.
+
+**`ServiceMonitor.spec.selector` matches a `Service`'s `metadata.labels`,
+not its `spec.selector`.** This is a widely-relearned Prometheus Operator
+trap, not specific to this project: a `ServiceMonitor` written against a
+`Service`'s *selector* (the labels it uses to find pods) silently matches
+zero targets, because the `ServiceMonitor` is actually matching against
+the `Service` object's own top-level labels instead. No error, no
+warning — just an empty target list that looks like a scrape-config or
+networking problem until traced back to this specific mismatch. Worth
+checking this exact field relationship first, before assuming a
+networking issue, any time a `ServiceMonitor`-based target shows as
+missing.
+
+**`hostPort` plus the default `RollingUpdate` strategy deadlocks a
+single-node cluster.** A `Deployment` using `hostPort` binds that port on
+the node itself, not just inside the pod — so a `RollingUpdate` (which
+tries to start the new pod before terminating the old one) can never
+schedule the replacement on a single-node cluster, since the port is
+already held by the pod being replaced. The fix is `strategy: type:
+Recreate`, not a `RollingUpdate` tuning parameter. General rule: any
+`Deployment` using `hostPort` on a single-node target (a `kind` cluster,
+a single-node k3s box) needs `Recreate`, not the k8s default — this isn't
+specific to this project's manifests.
+
+**Don't borrow a resource limit from a different environment's status log
+by analogy — verify against this environment's own measured numbers.**
+Compose's Grafana runs at 768m, but that number's real justification was
+a *specific fixed bug* (a screenshot-automation script leaking 80–170MB
+per run by opening a fresh browser session instead of reusing one) — not
+"Grafana needs 768Mi to serve dashboards" in general. Applying that number
+to a differently-loaded k8s Grafana pod (two sidecars in constant watch
+mode, continuous alert evaluation, no screenshot automation at all) would
+have been citing an unrelated precedent. The actual, correct fix came
+from direct measurement (`memory.current`/`memory.max` from the pod's own
+cgroup, found at 99.99% of a 256Mi limit) informing a new number (512Mi)
+grounded in *this* workload — not a borrowed one. When a resource limit
+elsewhere in the project looks like a ready-made answer, check what
+specifically justified it before reusing it; a number and its reasoning
+don't automatically transfer just because the component name matches.
+
+**Alert rules (or any PromQL/query text) that hardcode one environment's
+native label values silently break in a different environment with
+different labels — normalize labels at scrape time, don't hardcode either
+snapshot.** The same alert rules that worked against Compose's Prometheus
+(`job="grid-meter-api"`, `service="api@docker"` — Traefik's Docker
+provider naming) matched zero series once deployed against a k8s cluster,
+where Prometheus Operator's `ServiceMonitor` defaults `job` to `api`, and
+Traefik's k8s CRD provider generates an unstable, hash-suffixed `service`
+value instead. The fix wasn't updating the rule text to k8s's values
+either — that would just break Compose next time, and the CRD-generated
+value isn't even guaranteed stable across an `IngressRoute` recreation.
+The durable fix is a `relabelings`/`metricRelabelings` step at scrape
+time in each environment's scrape config, normalizing every environment
+toward one shared canonical label value — so the alert rule itself stays
+environment-agnostic and only the scrape-time mapping differs per
+environment. Applies to any project running the same alerting rules
+across more than one deployment target.
 
 ## Build tooling
 
