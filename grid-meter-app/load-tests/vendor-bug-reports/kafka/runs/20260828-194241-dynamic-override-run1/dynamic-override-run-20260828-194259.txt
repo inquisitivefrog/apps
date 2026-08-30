@@ -1,0 +1,86 @@
+Saving this run's output to load-tests/kafka-bug-report/dynamic-override-run-20260828-194259.txt
+
+================================================================
+Setting an EXPLICIT DYNAMIC topic-level override: unclean.leader.election.enable=false
+================================================================
+Completed updating config for topic readings.
+
+================================================================
+Confirming the dynamic override is genuinely in effect (not assumed)
+================================================================
+  unclean.leader.election.enable=false sensitive=false synonyms={DYNAMIC_TOPIC_CONFIG:unclean.leader.election.enable=false, DEFAULT_CONFIG:unclean.leader.election.enable=false}
+
+================================================================
+Discovering a target partition via a throwaway raw record
+================================================================
+Target partition: 1
+Topic: readings	TopicId: rB1-3tJlQr6eYucJV8g-jw	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 3	Replicas: 3,1,2	Isr: 3,1,2	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+Leader: kafka-3, followers: kafka-1 kafka-2
+
+================================================================
+Stopping followers ( kafka-1 kafka-2) -- ISR should shrink to leader-only
+================================================================
+ Container grid-meter-app-kafka-1-1 Stopping 
+ Container grid-meter-app-kafka-2-1 Stopping 
+ Container grid-meter-app-kafka-2-1 Stopped 
+ Container grid-meter-app-kafka-1-1 Stopped 
+
+================================================================
+Producing the marked record directly to Kafka with acks=1 (bypassing this app entirely)
+================================================================
+
+================================================================
+Immediately stopping the leader (kafka-3) too -- followers never received the marker
+================================================================
+ Container grid-meter-app-kafka-3-1 Stopping 
+ Container grid-meter-app-kafka-3-1 Stopped 
+
+================================================================
+Restarting followers ONLY (leader still down)
+================================================================
+ Container grid-meter-app-kafka-1-1 Starting 
+ Container grid-meter-app-kafka-2-1 Starting 
+ Container grid-meter-app-kafka-1-1 Started 
+ Container grid-meter-app-kafka-2-1 Started 
+Topic: readings	TopicId: rB1-3tJlQr6eYucJV8g-jw	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: none	Replicas: 1,2,3	Isr: 	Elr: 3	LastKnownElr: 3
+	Topic: readings	Partition: 1	Leader: none	Replicas: 3,1,2	Isr: 	Elr: 3	LastKnownElr: 3
+	Topic: readings	Partition: 2	Leader: none	Replicas: 1,2,3	Isr: 	Elr: 3	LastKnownElr: 3
+
+================================================================
+Restoring kafka-3
+================================================================
+ Container grid-meter-app-kafka-3-1 Starting 
+ Container grid-meter-app-kafka-3-1 Started 
+Topic: readings	TopicId: rB1-3tJlQr6eYucJV8g-jw	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 3	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 3	Replicas: 3,1,2	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 3	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+
+================================================================
+VERDICT
+================================================================
+NOT REPRODUCED this run with the dynamic override in place (new leader for partition
+1: none/leaderless). Suggests the original reproduction may be
+specific to relying on the implicit/unset default rather than the election check ignoring
+config outright -- worth re-running the ORIGINAL default-config script again on this same
+cluster state to confirm the default-config case still reproduces, isolating override-vs-default
+as the actual variable rather than run-to-run timing noise.
+
+================================================================
+Pulling per-broker controller.log / state-change.log (debug overlay TRACE output, if active)
+================================================================
+Saved load-tests/kafka-bug-report/20260828-194259-kafka-1-controller.log
+Saved load-tests/kafka-bug-report/20260828-194259-kafka-1-state-change.log
+Saved load-tests/kafka-bug-report/20260828-194259-kafka-2-controller.log
+Saved load-tests/kafka-bug-report/20260828-194259-kafka-2-state-change.log
+Saved load-tests/kafka-bug-report/20260828-194259-kafka-3-controller.log
+Saved load-tests/kafka-bug-report/20260828-194259-kafka-3-state-change.log
+
+================================================================
+Cleanup: removing the dynamic topic-level override (never meant to be permanent)
+================================================================
+Completed updating config for topic readings.

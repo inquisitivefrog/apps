@@ -43,6 +43,22 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      # Undeclared here defaults to the raw Kafka client's "1" (leader-only ack), NOT "all" --
+      # confirmed via spring-boot-kafka's real sources jar (KafkaProperties.Producer.acks is
+      # @Nullable with no default assignment). This silently defeated the readings topic's
+      # min.insync.replicas=2 (KafkaTopicConfig.java): that check only fires under acks=all, so
+      # with the undeclared "1" default, a write only ever needed the partition LEADER's ack,
+      # regardless of how many replicas were actually in sync. Reproduced live
+      # (load-tests/kafka-acks-gap-repro.sh): stopped both followers for a target partition,
+      # sent a write, got 201 in under a second even though only the leader had it -- then killed
+      # that leader too and watched a follower with NO copy of the write get elected leader
+      # anyway (real unclean leader election, not just a theoretical risk). The write happened to
+      # survive once the original leader rejoined, only because no conflicting write landed on
+      # the data-less leader in the meantime -- a timing-dependent survival, not a guarantee.
+      # acks=all makes the producer wait for min.insync.replicas (2 of 3) to acknowledge, so the
+      # same scenario now fails/blocks the write instead of silently accepting one only 1 broker
+      # has -- verified live post-fix, same script, same scenario.
+      acks: all
       # Explicit, not left as an unlisted client default (same reasoning as datasource.hikari
       # above) -- max-block-ms is what actually bounds how long ReadingService.ingest()'s
       # kafkaTemplate.send() call can hang the calling Tomcat thread when Kafka is unreachable.

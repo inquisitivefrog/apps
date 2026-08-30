@@ -1,0 +1,46 @@
+Saving this snapshot to load-tests/kafka-bug-report/before-20260828-194241.txt
+
+================================================================
+[before] readings topic: effective config
+================================================================
+  min.insync.replicas=2 sensitive=false synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:min.insync.replicas=2, STATIC_BROKER_CONFIG:min.insync.replicas=2, DEFAULT_CONFIG:min.insync.replicas=1}
+  unclean.leader.election.enable=false sensitive=false synonyms={DEFAULT_CONFIG:unclean.leader.election.enable=false}
+
+================================================================
+[before] readings topic: partition/replica/ISR state
+================================================================
+Topic: readings	TopicId: rB1-3tJlQr6eYucJV8g-jw	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2
+	Topic: readings	Partition: 0	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 3	Replicas: 3,1,2	Isr: 3,1,2	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+
+================================================================
+[before] Active controller
+================================================================
+ClusterId:              zWOyaccGQkG1ikHT88v3XA
+LeaderId:               1
+LeaderEpoch:            1
+HighWatermark:          889
+MaxFollowerLag:         0
+MaxFollowerLagTimeMs:   0
+CurrentVoters:          [{"id": 1, "endpoints": ["CONTROLLER://kafka-1:9093"]}, {"id": 2, "endpoints": ["CONTROLLER://kafka-2:9093"]}, {"id": 3, "endpoints": ["CONTROLLER://kafka-3:9093"]}]
+CurrentObservers:       []
+Active controller broker: kafka-1
+
+================================================================
+[before] JMX counters (only meaningful on the active controller: kafka-1)
+================================================================
+kafka.controller:type=ControllerStats,name=UncleanLeaderElectionsPerSec:
+1787971367746,0,elections,0.0,0.0,0.0,0.0,SECONDS
+kafka.controller:type=ControllerStats,name=ElectionFromEligibleLeaderReplicasPerSec:
+1787971369239,0,elections,0.0,0.0,0.0,0.0,SECONDS
+kafka.controller:type=KafkaController,name=OfflinePartitionsCount:
+1787971370008,0
+kafka.server:type=ReplicaManager,name=UnderMinIsrPartitionCount:
+1787971370925,0
+kafka.server:type=ReplicaManager,name=IsrShrinksPerSec:
+1787971371826,0,shrinks,0.0,0.0,0.0,0.0,SECONDS
+kafka.server:type=ReplicaManager,name=IsrExpandsPerSec:
+1787971372807,0,expands,0.0,0.0,0.0,0.0,SECONDS
+kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions:
+1787971373858,0

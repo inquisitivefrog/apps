@@ -1,0 +1,148 @@
+# DefaultRolloverStrategy (max: 5) added to every RollingFile appender below, on top of the stock
+# image config -- these files live inside each broker container's writable layer (no volume), and
+# without a retention cap, rotated files accumulate forever for as long as a debug session runs.
+# This matters more here than on the stock config specifically because TRACE-level
+# controller/state-change output (this file's whole reason for existing) is much higher-volume than
+# the stock INFO level -- a single ~1-minute chaos experiment already produced 1.6-3.1MB per broker.
+Configuration:
+  Properties:
+    Property:
+    - name: "kafka.logs.dir"
+      value: "."
+    - name: "logPattern"
+      value: "[%d] %p %m (%c)%n"
+  Appenders:
+    Console:
+      name: "STDOUT"
+      PatternLayout:
+        pattern: "${logPattern}"
+    RollingFile:
+    - name: "KafkaAppender"
+      fileName: "${sys:kafka.logs.dir}/server.log"
+      filePattern: "${sys:kafka.logs.dir}/server.log.%d{yyyy-MM-dd-HH}"
+      PatternLayout:
+        pattern: "${logPattern}"
+      TimeBasedTriggeringPolicy:
+        modulate: true
+        interval: 1
+      DefaultRolloverStrategy:
+        max: 5
+    - name: "StateChangeAppender"
+      fileName: "${sys:kafka.logs.dir}/state-change.log"
+      filePattern: "${sys:kafka.logs.dir}/state-change.log.%d{yyyy-MM-dd-HH}"
+      PatternLayout:
+        pattern: "${logPattern}"
+      TimeBasedTriggeringPolicy:
+        modulate: true
+        interval: 1
+      DefaultRolloverStrategy:
+        max: 5
+    - name: "RequestAppender"
+      fileName: "${sys:kafka.logs.dir}/kafka-request.log"
+      filePattern: "${sys:kafka.logs.dir}/kafka-request.log.%d{yyyy-MM-dd-HH}"
+      PatternLayout:
+        pattern: "${logPattern}"
+      TimeBasedTriggeringPolicy:
+        modulate: true
+        interval: 1
+      DefaultRolloverStrategy:
+        max: 5
+    - name: "CleanerAppender"
+      fileName: "${sys:kafka.logs.dir}/log-cleaner.log"
+      filePattern: "${sys:kafka.logs.dir}/log-cleaner.log.%d{yyyy-MM-dd-HH}"
+      PatternLayout:
+        pattern: "${logPattern}"
+      TimeBasedTriggeringPolicy:
+        modulate: true
+        interval: 1
+      DefaultRolloverStrategy:
+        max: 5
+    - name: "ControllerAppender"
+      fileName: "${sys:kafka.logs.dir}/controller.log"
+      filePattern: "${sys:kafka.logs.dir}/controller.log.%d{yyyy-MM-dd-HH}"
+      PatternLayout:
+        pattern: "${logPattern}"
+      TimeBasedTriggeringPolicy:
+        modulate: true
+        interval: 1
+      DefaultRolloverStrategy:
+        max: 5
+    - name: "AuthorizerAppender"
+      fileName: "${sys:kafka.logs.dir}/kafka-authorizer.log"
+      filePattern: "${sys:kafka.logs.dir}/kafka-authorizer.log.%d{yyyy-MM-dd-HH}"
+      PatternLayout:
+        pattern: "${logPattern}"
+      TimeBasedTriggeringPolicy:
+        modulate: true
+        interval: 1
+      DefaultRolloverStrategy:
+        max: 5
+  Loggers:
+    Root:
+      level: "INFO"
+      AppenderRef:
+      - ref: "STDOUT"
+      - ref: "KafkaAppender"
+    Logger:
+    # --- Debug additions for the unclean-leader-election investigation (2026-08-29) ---
+    # org.apache.kafka.controller: QuorumController/ReplicationControlManager, which owns the
+    # actual KRaft election decision. Raised from INFO to TRACE to catch the decision-making
+    # itself (including whatever it reads for the effective unclean.leader.election.enable value),
+    # not just the outcome.
+    - name: "org.apache.kafka.controller"
+      level: "TRACE"
+      additivity: false
+      AppenderRef:
+        ref: "ControllerAppender"
+    # org.apache.kafka.metadata: PartitionChangeBuilder lives here -- the class that actually
+    # evaluates ISR state + the effective unclean-election config per partition. Not broken out as
+    # its own logger in the stock config (inherits INFO from the blanket "org.apache.kafka" entry
+    # below), routed into the same controller.log since it's the other half of the same decision.
+    - name: "org.apache.kafka.metadata"
+      level: "TRACE"
+      additivity: false
+      AppenderRef:
+        ref: "ControllerAppender"
+    # state.change.logger: the classic per-partition leader/ISR transition log -- the definitive
+    # record of what actually got elected and when, independent of the controller's own internal
+    # reasoning traced above.
+    - name: "state.change.logger"
+      level: "TRACE"
+      additivity: false
+      AppenderRef:
+        ref: "StateChangeAppender"
+    # --- End debug additions; everything below is unchanged from the stock image config ---
+    - name: "org.apache.kafka.storage.internals.log.LogCleaner"
+      level: "INFO"
+      additivity: false
+      AppenderRef:
+        ref: "CleanerAppender"
+    - name: "org.apache.kafka.storage.internals.log.Cleaner"
+      level: "INFO"
+      additivity: false
+      AppenderRef:
+        ref: "CleanerAppender"
+    - name: "org.apache.kafka"
+      level: "INFO"
+    - name: "kafka.request.logger"
+      level: "WARN"
+      additivity: false
+      AppenderRef:
+        ref: "RequestAppender"
+    - name: "kafka"
+      level: "INFO"
+    - name: "kafka.authorizer.logger"
+      level: "INFO"
+      additivity: false
+      AppenderRef:
+        ref: "AuthorizerAppender"
+    - name: "kafka.network.RequestChannel$"
+      level: "WARN"
+      additivity: false
+      AppenderRef:
+        ref: "RequestAppender"
+    - name: "org.apache.kafka.storage.internals.log.LogCleaner$CleanerThread"
+      level: "INFO"
+      additivity: false
+      AppenderRef:
+        ref: "CleanerAppender"

@@ -1,0 +1,52 @@
+# Debug overlay for the unclean-leader-election investigation (see
+# docs/testing-strategy-ha-supplement.md's Finding 2 and
+# load-tests/kafka-unclean-election-*.sh). Not a separate environment -- an override merged on top
+# of the normal stack, so everything else (api, frontend, postgres, observability) is untouched.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.kafka-debug.yml up -d
+#
+# What this adds, per Kafka broker:
+# - Swaps in observability/kafka-debug-log4j2.yaml, which raises org.apache.kafka.controller,
+#   org.apache.kafka.metadata, and state.change.logger to TRACE (see that file's comments for why
+#   those three specifically). Everything else logs at the same level as the stock image config.
+#   Mounted at /mnt/shared/config/log4j2.yaml, NOT directly at /opt/kafka/config/log4j2.yaml --
+#   this image's own launch script runs `kafka-run-class.sh kafka.docker.KafkaDockerWrapper setup`
+#   at startup, which writes the FINAL merged config into /opt/kafka/config from
+#   /etc/kafka/docker (its own defaults) + /mnt/shared/config (this mount, the documented override
+#   point). Mounting straight at /opt/kafka/config/log4j2.yaml instead fails outright -- the
+#   wrapper tries to write that exact path and gets "Resource busy" against a bind-mounted file
+#   (confirmed by hitting this directly before landing on the /mnt/shared/config path).
+# - Exposes JMX via KAFKA_JMX_PORT specifically (not the plain JMX_PORT env var some other Kafka
+#   distros use) -- this image's launch script has its own explicit KAFKA_JMX_PORT handling that
+#   also sets java.rmi.server.hostname correctly for the container. Queried from inside the
+#   container (no host port published -- avoids the RMI-hostname-vs-published-port headache that
+#   plain `docker run -p` JMX setups run into):
+#     docker compose exec kafka-1 /opt/kafka/bin/kafka-run-class.sh org.apache.kafka.tools.JmxTool \
+#       --jmx-url service:jmx:rmi:///jndi/rmi://localhost:9999/jmxrmi --one-time true \
+#       --object-name 'kafka.controller:type=KafkaController,name=ActiveControllerCount'
+#
+# Log files land in each container at /opt/kafka/logs/{controller,state-change,server}.log --
+# pull them out with `docker compose cp kafka-1:/opt/kafka/logs/controller.log .` before tearing
+# the stack down, since they live in the container's writable layer, not a named volume (this
+# overlay is meant for an active investigation session, not persistent log retention).
+#
+# Bring the debug overlay down and go back to normal with a plain `docker compose up -d` (no -f
+# flags) -- the base docker-compose.yml alone is a complete, valid stack on its own.
+services:
+  kafka-1:
+    environment:
+      KAFKA_JMX_PORT: 9999
+    volumes:
+      - ./observability/kafka-debug-log4j2.yaml:/mnt/shared/config/log4j2.yaml:ro
+
+  kafka-2:
+    environment:
+      KAFKA_JMX_PORT: 9999
+    volumes:
+      - ./observability/kafka-debug-log4j2.yaml:/mnt/shared/config/log4j2.yaml:ro
+
+  kafka-3:
+    environment:
+      KAFKA_JMX_PORT: 9999
+    volumes:
+      - ./observability/kafka-debug-log4j2.yaml:/mnt/shared/config/log4j2.yaml:ro

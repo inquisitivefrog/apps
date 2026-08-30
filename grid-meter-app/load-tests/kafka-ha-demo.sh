@@ -25,6 +25,7 @@
 # Usage: load-tests/kafka-ha-demo.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
+source scripts/check-disk-headroom.sh || exit 1
 
 TOKEN=""
 SUCCESS_COUNT=0

@@ -1,6 +1,21 @@
+# Docker's default json-file logging driver has NO size cap -- every container's stdout/stderr
+# accumulates forever inside Docker Desktop's VM disk until the container is removed. This bit
+# repeatedly during load testing and the Kafka TRACE-debug overlay (docker-compose.kafka-debug.yml)
+# work: high-request-volume load tests generate large Traefik/api access logs, `--scale api=2`
+# multiplies that per replica, and none of it was ever capped -- a real, repeated cause of Docker
+# Desktop's VM disk (Docker.raw) growing to consume nearly all host disk across several sessions
+# (see status/ for the incident history). 10m x 3 files = 30MB cap per container instance, still
+# comfortably enough for `docker compose logs` to be useful for recent debugging.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   traefik:
     image: traefik:v3.7.10
+    logging: *default-logging
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
@@ -23,6 +38,7 @@ services:
   frontend:
     build:
       context: ./frontend
+    logging: *default-logging
     labels:
       - traefik.enable=true
       - traefik.http.routers.frontend.rule=PathPrefix(`/`)
@@ -38,6 +54,7 @@ services:
   api:
     build:
       context: ./api
+    logging: *default-logging
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gridmeter
       SPRING_DATASOURCE_USERNAME: gridmeter
@@ -125,6 +142,7 @@ services:
 
   postgres:
     image: postgres:18.4
+    logging: *default-logging
     environment:
       POSTGRES_DB: gridmeter
       POSTGRES_USER: gridmeter
@@ -140,6 +158,7 @@ services:
 
   redis:
     image: redis:8.10
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -161,6 +180,7 @@ services:
   # project otherwise uses.
   kafka-1:
     image: apache/kafka:4.3.1
+    logging: *default-logging
     environment:
       CLUSTER_ID: zWOyaccGQkG1ikHT88v3XA
       KAFKA_NODE_ID: 1
@@ -178,6 +198,16 @@ services:
       # topics (__consumer_offsets, etc.), which aren't under the app's control.
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
+      # Declared explicitly rather than relying on Kafka's own default (which happens to also be
+      # false) -- see docs/testing-strategy-ha-supplement.md's Finding 2. Confirmed via
+      # `kafka-configs.sh --describe --all` that before this line existed, the effective value came
+      # from Kafka's DEFAULT_CONFIG synonym tier, not a static override from this project. Declaring
+      # it doesn't change behavior (the default already matched) and does NOT close the underlying
+      # race-condition finding -- a live dynamic override was independently confirmed not to prevent
+      # it either -- this only removes the "true by accident, not by declaration" gap, matching this
+      # project's declare-defaults-explicitly convention elsewhere (HikariCP, max.block.ms,
+      # delivery.timeout.ms, acks).
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
     deploy:
       resources:
         limits:
@@ -187,6 +217,7 @@ services:
 
   kafka-2:
     image: apache/kafka:4.3.1
+    logging: *default-logging
     environment:
       CLUSTER_ID: zWOyaccGQkG1ikHT88v3XA
       KAFKA_NODE_ID: 2
@@ -199,6 +230,16 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
+      # Declared explicitly rather than relying on Kafka's own default (which happens to also be
+      # false) -- see docs/testing-strategy-ha-supplement.md's Finding 2. Confirmed via
+      # `kafka-configs.sh --describe --all` that before this line existed, the effective value came
+      # from Kafka's DEFAULT_CONFIG synonym tier, not a static override from this project. Declaring
+      # it doesn't change behavior (the default already matched) and does NOT close the underlying
+      # race-condition finding -- a live dynamic override was independently confirmed not to prevent
+      # it either -- this only removes the "true by accident, not by declaration" gap, matching this
+      # project's declare-defaults-explicitly convention elsewhere (HikariCP, max.block.ms,
+      # delivery.timeout.ms, acks).
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
     deploy:
       resources:
         limits:
@@ -208,6 +249,7 @@ services:
 
   kafka-3:
     image: apache/kafka:4.3.1
+    logging: *default-logging
     environment:
       CLUSTER_ID: zWOyaccGQkG1ikHT88v3XA
       KAFKA_NODE_ID: 3
@@ -220,6 +262,16 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
+      # Declared explicitly rather than relying on Kafka's own default (which happens to also be
+      # false) -- see docs/testing-strategy-ha-supplement.md's Finding 2. Confirmed via
+      # `kafka-configs.sh --describe --all` that before this line existed, the effective value came
+      # from Kafka's DEFAULT_CONFIG synonym tier, not a static override from this project. Declaring
+      # it doesn't change behavior (the default already matched) and does NOT close the underlying
+      # race-condition finding -- a live dynamic override was independently confirmed not to prevent
+      # it either -- this only removes the "true by accident, not by declaration" gap, matching this
+      # project's declare-defaults-explicitly convention elsewhere (HikariCP, max.block.ms,
+      # delivery.timeout.ms, acks).
+      KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
     deploy:
       resources:
         limits:
@@ -229,6 +281,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.11.2
+    logging: *default-logging
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     labels:
@@ -245,6 +298,7 @@ services:
   loki:
     image: grafana/loki:3.7.6
     command: -config.file=/etc/loki/local-config.yaml
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -255,6 +309,7 @@ services:
   tempo:
     image: grafana/tempo:2.10.0
     command: -config.file=/etc/tempo/tempo.yml
+    logging: *default-logging
     volumes:
       - ./observability/tempo.yml:/etc/tempo/tempo.yml:ro
     deploy:
@@ -266,6 +321,7 @@ services:
 
   grafana:
     image: grafana/grafana:13.0.2
+    logging: *default-logging
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -318,6 +374,7 @@ services:
 
   alloy:
     image: grafana/alloy:v1.18.1
+    logging: *default-logging
     command:
       - run
       - /etc/alloy/config.alloy
@@ -335,6 +392,7 @@ services:
   toolbox:
     image: nicolaka/netshoot
     command: sleep infinity
+    logging: *default-logging
     profiles:
       - debug
     networks:

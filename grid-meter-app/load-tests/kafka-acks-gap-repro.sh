@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Reproduces (then, after the acks=all fix ships, re-verifies) the gap testing-strategy-ha-
+# supplement.md's Failover/RTO test explicitly calls for: "verify acks=all and a replication
+# factor > 1 are actually configured, not just present in a config file." Running that check for
+# real found replication factor correctly configured (3) but acks left undeclared, silently
+# defaulting to the raw Kafka client's "1" (leader-only ack) -- meaning min.insync.replicas=2
+# (broker-side) is never actually consulted, since that check only fires under acks=all.
+#
+# This script does NOT assume the textbook "acks=1 silently loses acknowledged writes" story is
+# exactly what happens here -- it reproduces the real scenario against this real cluster and
+# reports what actually happens, same discipline as every other empirical test in this project
+# (the 150s quorum-loss re-test, the Traefik live verification, etc.). Modern Kafka defaults
+# unclean.leader.election.enable=false, which could mean the real failure mode is a temporary
+# availability gap (partition leaderless until the original leader returns) rather than permanent
+# silent loss -- worth confirming either way, not assuming.
+#
+# Usage: load-tests/kafka-acks-gap-repro.sh
+# Prerequisites: full stack up, all 3 Kafka brokers healthy.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+source scripts/check-disk-headroom.sh || exit 1
+
+KAFKA_BIN="docker compose exec -T kafka-1 /opt/kafka/bin"
+TOKEN=""
+
+banner() {
+  echo
+  echo "================================================================"
+  echo "$1"
+  echo "================================================================"
+}
+
+login() {
+  TOKEN=$(curl -s -X POST http://localhost/api/v1/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"demo","password":"GridMeter!Demo2026"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['accessToken'])")
+}
+
+partition_offsets() {
+  $KAFKA_BIN/kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic readings 2>/dev/null | sort
+}
+
+describe_topic() {
+  $KAFKA_BIN/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic readings
+}
+
+banner "Logging in and creating a test meter"
+login
+METER_ID=$(curl -s -X POST http://localhost/api/v1/meters \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"serialNumber":"MTR-ACKS-GAP-'"$(date +%s)"'","location":"acks-gap-test","status":"ACTIVE","installedAt":"2026-01-01T00:00:00Z"}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+echo "Meter: $METER_ID"
+
+banner "Baseline per-partition offsets"
+BEFORE=$(partition_offsets)
+echo "$BEFORE"
+
+banner "Sending one baseline reading (value=100.001) to discover this meter's target partition"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost/api/v1/readings \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:00Z","value":100.001}'
+sleep 2
+AFTER=$(partition_offsets)
+echo "$AFTER"
+
+TARGET_PARTITION=$(diff <(echo "$BEFORE") <(echo "$AFTER") | grep '^>' | sed -E 's/.*readings:([0-9]+):.*/\1/')
+if [ -z "$TARGET_PARTITION" ]; then
+  echo "Could not determine target partition from offset diff -- aborting."
+  exit 1
+fi
+echo "Target partition for meter $METER_ID: $TARGET_PARTITION"
+
+banner "Current leader/replicas for partition $TARGET_PARTITION"
+describe_topic
+LEADER=$(describe_topic | grep "Partition: $TARGET_PARTITION" | grep -oE 'Leader: [0-9]+' | grep -oE '[0-9]+')
+REPLICAS=$(describe_topic | grep "Partition: $TARGET_PARTITION" | grep -oE 'Replicas: [0-9,]+' | grep -oE '[0-9,]+')
+echo "Leader broker id: $LEADER, replicas: $REPLICAS"
+
+declare -A BROKER_SVC=( [1]="kafka-1" [2]="kafka-2" [3]="kafka-3" )
+LEADER_SVC=${BROKER_SVC[$LEADER]}
+FOLLOWER_SVCS=""
+for b in ${REPLICAS//,/ }; do
+  if [ "$b" != "$LEADER" ]; then
+    FOLLOWER_SVCS="$FOLLOWER_SVCS ${BROKER_SVC[$b]}"
+  fi
+done
+echo "Leader service: $LEADER_SVC, follower services:$FOLLOWER_SVCS"
+
+banner "Stopping followers ($FOLLOWER_SVCS) -- ISR for partition $TARGET_PARTITION should shrink to leader-only"
+docker compose stop $FOLLOWER_SVCS
+sleep 5
+describe_topic
+
+banner "Sending the marked reading (value=999.999) while followers are down"
+SEND_START=$(python3 -c "import time; print(int(time.time()*1000))")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 15 -X POST http://localhost/api/v1/readings \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:01Z","value":999.999}')
+SEND_END=$(python3 -c "import time; print(int(time.time()*1000))")
+SEND_MS=$(( SEND_END - SEND_START ))
+echo "HTTP $HTTP_CODE in ${SEND_MS}ms"
+if [ "$HTTP_CODE" != "201" ] || [ "$SEND_MS" -gt 2000 ]; then
+  echo "NOTE: this didn't return a fast 201 -- with the current acks setting, that's unexpected"
+  echo "unless it's already been changed to acks=all (in which case THIS is the expected new"
+  echo "behavior: NotEnoughReplicasException/blocking until min.insync.replicas=2 can't be met)."
+fi
+
+banner "Immediately stopping the leader ($LEADER_SVC) too -- followers never received the write"
+docker compose stop "$LEADER_SVC"
+sleep 3
+
+banner "Restarting followers ONLY (leader still down) -- does the partition get a leader without the write?"
+docker compose start $FOLLOWER_SVCS
+sleep 15
+describe_topic
+
+banner "Checking whether the marked reading (999.999) is visible yet (it shouldn't be if the"
+echo "partition is correctly leaderless/unavailable without the original leader's data)"
+docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+  "SELECT COUNT(*) FROM readings WHERE meter_id = '$METER_ID' AND value = 999.999;"
+
+banner "Restarting the original leader ($LEADER_SVC) -- it still has the record on its own disk"
+RECOVERY_START=$(date +%s%3N)
+docker compose start "$LEADER_SVC"
+for i in $(seq 1 30); do
+  CURRENT_LEADER=$(describe_topic | grep "Partition: $TARGET_PARTITION" | grep -oE 'Leader: [0-9]+' | grep -oE '[0-9]+')
+  if [ "$CURRENT_LEADER" == "$LEADER" ]; then
+    RECOVERY_END=$(date +%s%3N)
+    echo "Partition $TARGET_PARTITION has a leader again ($CURRENT_LEADER) after $(( (RECOVERY_END - RECOVERY_START) ))ms"
+    break
+  fi
+  sleep 1
+done
+describe_topic
+
+banner "Final check: is 999.999 present now that the original leader is back?"
+sleep 10
+docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+  "SELECT COUNT(*) FROM readings WHERE meter_id = '$METER_ID' AND value = 999.999;"
+
+banner "Done. Interpretation:"
+echo "If the count above is 1: the write survived (temporary availability gap, not permanent loss --"
+echo "  Kafka's unclean.leader.election.enable=false default protected it by refusing to elect a"
+echo "  stale replica; recovered once the true leader's disk came back)."
+echo "If the count is 0: genuine permanent loss occurred despite the leader coming back -- worth"
+echo "  investigating further before assuming the fix below closes the gap."
