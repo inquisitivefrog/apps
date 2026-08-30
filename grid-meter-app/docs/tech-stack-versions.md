@@ -15,6 +15,8 @@ updated.
 | Apache Kafka | 4.3.x | KRaft-only line — no ZooKeeper. |
 | PostgreSQL | 18.4 | v19 is still in beta — do not use for this project. |
 | Redis | 8.10 | Open source again under AGPLv3 as of the 8.0 line, after the 2024 RSAL/SSPL relicensing. |
+| Consul | 1.20.1 | Confirmed current stable via [HashiCorp's own install page](https://developer.hashicorp.com/consul/docs/fundamentals/install#precompiled-binaries). Patroni's consensus-store backend for the Postgres HA pass (`docs/postgres-ha-scope.md`) — chosen over etcd per `docs/ha-scope.md`'s existing decision (reuses prior Consul-with-Docker experience). 3-server-agent cluster, same "3, not 2" quorum reasoning as Kafka's controllers. |
+| Patroni | 4.1.5 | Confirmed current stable via [Patroni's own release notes](https://patroni.readthedocs.io/en/latest/releases.html#releases) (released 2026-08-12). No official Docker Hub image exists that also preserves this project's pinned `postgres:18.4` -- installed via `pip install patroni[consul]` in a custom Dockerfile on top of the `postgres:18.4` base, not a pre-built community image (which would silently pin its own Postgres version). Patroni's own compatibility list cites PostgreSQL 18.6 specifically, not 18.4 -- compatibility is understood to be at the major-version (18.x) level, not minor, but flagged here rather than silently assumed. |
 | Grafana | 13.0.2 | |
 | Loki | 3.7.6 | |
 | Alloy | v1.18.1 | Replaces Promtail (removed upstream as of Loki 3.7.3). Unified agent for logs/metrics/traces; config in River language, not YAML. |

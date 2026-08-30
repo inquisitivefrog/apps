@@ -70,9 +70,11 @@ surfacing during testing.
 
 ## Topology
 
-- 1 Postgres primary + at least 1 streaming replica
+- **1 Postgres primary + 2 streaming replicas** (confirmed 2026-08-29,
+  same reasoning as Redis's resolved topology question — see below).
 - Patroni running alongside each Postgres instance, coordinating via
-  Consul
+  Consul — see "Patroni deployment model" below for what this actually
+  means concretely (not a separate sidecar container; see that section).
 - Consul itself needs its own quorum — **3 Consul server agents**,
   applying the exact same "3, not 2" reasoning `ha-scope.md` already
   established for Kafka's controller quorum. Do not deploy 2 Consul
@@ -80,12 +82,103 @@ surfacing during testing.
   failover" gap `ha-scope.md` already explained is structurally
   insufficient.
 
-**Topology question needing explicit decision, same as the Redis
-doc's equivalent question**: 1 replica or 2? A single replica means zero
-margin — if it's down when the primary fails, there is nothing to
-promote, an outcome worse than "no HA" in one respect (false confidence).
-Recommend deciding intended fault tolerance explicitly before building,
-not defaulting to 1 by assumption.
+**Topology decision confirmed (2026-08-29): 2 replicas, not 1.** Same
+reasoning as Redis's resolved equivalent question: 1 replica gives zero
+margin — if it's promoted on a first failure, there is nothing left to
+promote from on a second, independent failure landing before the
+cluster's back to full strength. 2 replicas leaves one full spare even
+immediately after a promotion has already consumed one. This is
+consistent with (not merely analogous to) the "3, not 2" quorum
+reasoning `ha-scope.md` established for the Consul/controller layer,
+applied here to the data-node count instead.
+
+**A decision nested inside the replica count, not automatically resolved
+by picking "2"**: with 2 replicas, `synchronous_standby_names` needs an
+explicit mode, not just a bare setting. Postgres supports naming a
+specific standby, a priority list (first available takes precedence), or
+(version-dependent) quorum-based `ANY n (...)` syntax requiring any N of
+a named set to acknowledge. **This mode is not yet decided** — treat it
+as part of Stage 1's config work, not something the replica-count
+decision already settled by implication.
+
+## Patroni deployment model
+
+Three sub-decisions bundled inside "how should Patroni be deployed,"
+worth pulling apart explicitly rather than assuming one default covers
+all of them:
+
+**1. Process topology — Patroni supervises Postgres; it is not a
+separate sidecar process the way Sentinel is separate from Redis.**
+Patroni is the **entrypoint** of each Postgres container: it calls
+`initdb`, and directly starts/stops/restarts/promotes/demotes the local
+`postgres` process, managing `postgresql.conf` and `pg_hba.conf` itself.
+The deployment unit is **1 container = 1 Patroni process (PID 1)
+supervising 1 local Postgres process**, one such container per node.
+There is no independent "how many Patroni instances" question — it is
+always 1:1 with the Postgres node count (primary + 2 replicas = 3
+Patroni-supervised containers, per the topology above).
+
+**2. Image choice — a real decision, not obvious, worth deciding before
+Stage 2 starts building.** Two common paths:
+- **Zalando's Spilo** (`registry.opensource.zalan.do/acid/spilo`) — the
+  most widely-used production Patroni image, but bundles WAL-E/S3 backup
+  tooling, a fixed extension set, and Kubernetes-operator-oriented
+  assumptions this project doesn't need.
+- **A purpose-built image**: `pip install patroni[consul]` on top of the
+  official `postgres:18.4` image (matching this project's own pinned
+  version). Lighter, and consistent with this project's demonstrated
+  pattern of not adopting tools "because they're common" when they carry
+  unneeded baggage — the same reasoning that already ruled out Helm for
+  the app's own k8s manifests and HAProxy for the edge tier.
+
+**Recommended: the purpose-built image**, for the same minimal-scope
+reasons already applied elsewhere in this project. Confirm before Stage
+2's `docker-compose.yml` work begins, not decided implicitly by whichever
+image the first working example online happens to use.
+
+**3. Node discovery — solved cleanly, worth stating why explicitly.**
+This directly closes the IP chicken-and-egg problem discussed earlier in
+this project's planning (nodes needing to know peers' addresses before
+peers have addresses): each Patroni instance registers itself with
+Consul under a shared `scope` (cluster name) at startup. Nodes discover
+each other dynamically via Consul — no static IP list needed in advance,
+the same pattern this project's Kafka brokers already use via Docker
+Compose service-name DNS rather than hardcoded IPs.
+
+**4. Client write-routing — the real open design question, needing
+verification before Stage 2, not an assumption.** Only the current
+primary accepts writes, and which node that is changes over time after a
+failover — something has to route client traffic to whichever node is
+*currently* primary. Patroni's REST API exposes `/primary` and `/replica`
+endpoints specifically for this.
+
+Given this project's committed "Traefik is the single edge tool" stance
+(already used to rule out HAProxy for exactly this class of routing
+need), reusing **Traefik's Consul Catalog provider with a TCP router**
+is the architecturally consistent choice. **Confirmed via direct
+documentation check (2026-08-29)**: Traefik's Consul Catalog provider
+does support TCP routing via tags (`traefik.tcp.routers.*`), but its
+**default behavior load-balances across every healthy instance of a
+Consul service** — it does not automatically pick "the primary" out of a
+group of otherwise-identical service instances. Making this work
+correctly requires one of:
+- Patroni updating its own Consul service tags by role (primary vs.
+  replica) as failovers happen, with Traefik's router rule filtering on
+  that tag, or
+- Relying on Patroni's REST API health check itself (`/primary` returns
+  `200` only from the actual primary, `503` from replicas) as the Consul
+  health check backing a primary-only service definition, so only the
+  current primary ever reports "passing" for that service.
+
+**This is unverified, real risk, not a settled mechanism** — exactly the
+kind of assumption ("Consul Catalog plus Traefik will just route
+correctly") that has burned this project before (the Traefik/aggregate-
+health-check interaction from the Kafka resilience work is the closest
+precedent). **Action**: verify Patroni's Consul integration actually
+exposes primary/replica role distinctly enough for one of the two
+approaches above to work, as part of Stage 1 or an early Stage 2 spike —
+before assuming client write-routing "just works" once Consul Catalog is
+wired up.
 
 ## Durability equivalent of `acks=all` / `min-replicas-to-write`: synchronous replication
 
@@ -163,7 +256,56 @@ expect this pass to need more stages, not fewer, and expect findings from
 Redis's pass to change some of the specifics below before this actually
 starts.
 
-### Stage 0 — Confirm Consul quorum works in isolation, before Postgres/Patroni touch it at all
+## Stage 0 results (2026-08-29): PASS, 3/3 clean — with three real bugs found and fixed on day one
+
+Consul's own quorum behavior (leader-loss recovery, and correctly
+refusing writes on real quorum loss) confirmed working — but getting a
+trustworthy result required finding and fixing three real bugs first,
+all the same lesson *categories* already established during Kafka/Redis
+testing, now showing up immediately in brand-new infrastructure rather
+than being specific to those two technologies:
+
+1. **Readiness check confused "alive" (gossip layer) with "voting
+   member" (raft layer).** Consul's autopilot stabilization delay meant
+   one run's effective quorum was smaller than the script believed.
+   Fixed by checking for the actual voting-member count, not mere
+   liveness. **Verified with certainty, not assumed**: all 3 counted
+   clean passes (saved transcripts `20260829-225940`, `20260829-231119`,
+   `20260829-231303`) explicitly show "3/3 alive, 3/3 voters, leader=X"
+   *after* the fix — the one run that predates the fix already failed
+   and was correctly excluded from the tally, not a hidden
+   coincidentally-clean pre-fix result.
+2. **Missing abort-guard on the setup loop** — when cluster formation
+   genuinely raced, the script silently continued into a broken baseline
+   instead of failing cleanly. Fixed.
+3. **`timeout`/`gtimeout` don't exist in this environment** — a
+   write-refusal check was silently a no-op (fails open, not just
+   imprecise — a distinct and arguably worse failure mode than a bad
+   timing assumption, since it can mask total absence of verification).
+   **Fixed by removing the dependency entirely**, not by adding a
+   portability guard: Consul fails fast with a real `500` on quorum loss
+   (confirmed empirically), so no external timeout wrapper is needed at
+   all. Audited the rest of `load-tests/` and `scripts/` for the same
+   pattern — no other real instances found (remaining grep hits were
+   false positives: Kafka's own `--timeout` producer flag, comments,
+   config-parameter names like `failover-timeout`).
+
+**Resource budget re-measured** (not carried forward from the original
+estimate): ~3.42 GiB real baseline, ~4.33 GiB headroom, now that Redis's
+pass is closed and its real (lighter-than-estimated) footprint is known.
+The original "~8.2–8.9 GiB, exceeds the VM ceiling" estimate looks overly
+pessimistic in light of this — but **the VM-ceiling concern stays
+explicitly open, not resolved**, per this doc's own instruction: confirm
+with real `docker stats` numbers again once Stage 2 actually stands up
+the full Postgres+Patroni+Consul topology, the same discipline already
+applied to Kafka and Redis, before concluding whether raising the VM
+allocation is actually necessary.
+
+Also pinned **Consul 1.20.1** in `docs/tech-stack-versions.md`.
+
+Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
+
+### Stage 0 — Confirm Consul quorum works in isolation, before Postgres/Patroni touch it at all — **done, see results above**
 
 Stand up the 3-agent Consul cluster alone. Kill 1 agent, confirm the
 remaining 2 still form a majority and the cluster stays healthy. Kill 2,
@@ -173,7 +315,46 @@ known-good baseline *before* Patroni's behavior on top of it becomes a
 variable too — don't let a Consul-layer problem get misdiagnosed as a
 Patroni or Postgres problem later.
 
-### Stage 1 — Config audit
+## Stage 1 results (2026-08-29): confirmed — 7th instance of the undeclared-durability-default pattern
+
+Live-verified via `psql SHOW`, not just repo grep — same discipline as
+every prior stage across this whole HA effort:
+
+| Setting | Live value | Declared anywhere? |
+|---|---|---|
+| `synchronous_standby_names` | empty/undeclared | No |
+| `synchronous_commit` | `on` | No — Postgres default, meaningless with no standby list configured |
+| `wal_level` | `replica` | No — already at the minimum required for streaming replication |
+| `max_wal_senders` | `10` | No — default already generous enough at this project's scale |
+| `max_replication_slots` | `10` | No — same, default is fine |
+
+**The one real gap, exactly matching this doc's prediction**:
+`synchronous_standby_names` is empty — Postgres is running fully
+asynchronous replication. Direct structural twin of Kafka's undeclared
+`acks=1` and Redis's `min-replicas-to-write=0`: a committed transaction
+can be acknowledged to the client before any replica has received it,
+and if the primary dies immediately after, that write is gone even with
+a healthy replica present. **This is the 7th confirmed instance of the
+undeclared-durability-default pattern across this project's whole HA
+effort** (see `CLAUDE.md`'s standing note on this).
+
+**The other three settings are undeclared too, but correctly NOT treated
+as failures** — their defaults already happen to be adequate at this
+project's scale. Undeclared-but-adequate and undeclared-and-dangerous are
+different findings even though both start from the same grep; conflating
+them would have manufactured false findings out of settings that don't
+actually need fixing.
+
+**HikariCP's `connection-timeout` (5s) stays as-is per this doc's own
+earlier note** — re-examine once real Patroni failover RTO is measurable
+in Stage 4, not now.
+
+**Next**: declare `synchronous_standby_names` explicitly, resolving the
+still-open mode question from the Topology section above (named standby
+vs. priority list vs. quorum `ANY n (...)`) as part of this fix, not
+deferred past it.
+
+### Stage 1 — Config audit — **done, see results above**
 
 Grep the current Postgres config
 (`docker-compose.yml`, `application.yml`'s `spring.datasource.*`, any
@@ -264,17 +445,25 @@ system fails safe rather than allowing any ambiguous promotion decision.
 - **Do not begin this doc's work before `docs/redis-ha-scope.md` is
   closed out**, per the explicit instruction to proceed in steps.
 
-## Resource budget — needs real re-measurement, not the earlier estimate
+## Resource budget — re-measured (2026-08-29), original estimate revised, still not fully resolved
 
-`ha-scope.md` estimated a full 3× expansion of all three data-tier layers
-(including Postgres+Patroni+Consul) at ~8.2–8.9 GiB total, **exceeding**
-the current 7.748 GiB Docker Desktop VM ceiling — meaning this pass, more
-than Kafka or Redis, will likely require raising the VM allocation (e.g.
-to 12–16 GiB) before Stage 2 can even be attempted. Confirm actual
-measured usage after Redis's pass closes out (not before), since Redis's
-real footprint will be known by then rather than estimated, and this
-doc's own resource math should be revised with that real number before
-committing to a Postgres implementation start date.
+`ha-scope.md`'s original estimate (full 3× expansion of all three
+data-tier layers at ~8.2–8.9 GiB, exceeding the 7.748 GiB Docker Desktop
+VM ceiling) has been **revised, not confirmed**, now that Redis's pass
+closed out with a real, lighter-than-estimated footprint: current
+baseline is ~3.42 GiB, with ~4.33 GiB of headroom under the VM ceiling.
+The original "exceeds the ceiling, will need a VM bump" conclusion now
+looks overly pessimistic in light of this.
+
+**This is not yet a resolved question.** Per this doc's own standing
+discipline, re-confirm with real `docker stats` numbers once Stage 2
+actually stands up the full Postgres+Patroni+Consul topology (3 Consul
+agents + 3 Patroni-supervised Postgres containers) — Consul's and
+Patroni's own real combined footprint could still surprise in either
+direction once actually running together, the same way Redis's estimate
+turned out meaningfully lighter than `ha-scope.md`'s original guess. Do
+not treat the VM-ceiling concern as closed until that Stage 2 number
+exists.
 
 ## Deliverables expected from this pass
 

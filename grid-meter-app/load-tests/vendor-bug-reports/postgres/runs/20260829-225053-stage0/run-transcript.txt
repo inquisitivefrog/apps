@@ -1,0 +1,84 @@
+Saving this run's output to load-tests/vendor-bug-reports/postgres/runs/20260829-225053-stage0/run-transcript.txt
+
+================================================================
+Resetting to a clean 3-agent cluster
+================================================================
+ Container grid-meter-app-consul-1-1 Recreate 
+ Container grid-meter-app-consul-2-1 Recreate 
+ Container grid-meter-app-consul-3-1 Recreate 
+ Container grid-meter-app-consul-3-1 Recreated 
+ Container grid-meter-app-consul-2-1 Recreated 
+ Container grid-meter-app-consul-1-1 Recreated 
+ Container grid-meter-app-consul-2-1 Starting 
+ Container grid-meter-app-consul-1-1 Starting 
+ Container grid-meter-app-consul-3-1 Starting 
+ Container grid-meter-app-consul-3-1 Started 
+ Container grid-meter-app-consul-2-1 Started 
+ Container grid-meter-app-consul-1-1 Started 
+Waiting for all 3 to report alive and a leader to be elected
+3/3 alive, leader=consul-1, at t+1s
+--- baseline raft peers ---
+Node      ID                                    Address           State     Voter  RaftProtocol  Commit Index  Trails Leader By
+consul-1  06b6846b-11bc-0182-dc6e-308c529e83fc  172.18.0.21:8300  leader    true   3             50            -
+consul-3  28a24065-fc34-4291-60c1-89c1b176e452  172.18.0.19:8300  follower  true   3             50            0 commits
+consul-2  9357f0ce-b992-1190-97c7-8018333f2665  172.18.0.20:8300  follower  false  3             50            0 commits
+Current leader: consul-1
+
+================================================================
+SUB-TEST A: killing the current leader (consul-1) -- 2 of 3 remain
+================================================================
+ Container grid-meter-app-consul-1-1 Stopping 
+ Container grid-meter-app-consul-1-1 Stopped 
+
+================================================================
+Polling for the remaining 2 to elect a new leader
+================================================================
+No new leader elected within 30s -- real finding, not a script bug.
+
+================================================================
+Confirming the 2-of-3 cluster is still fully functional (real KV write/read)
+================================================================
+KV put result: Error! Failed writing data: Unexpected response code: 500 (No cluster leader)
+KV get result: Error querying Consul agent: Unexpected response code: 500 (No cluster leader)
+
+================================================================
+SUB-TEST B: killing a SECOND agent -- only 1 of 3 left, quorum should be LOST
+================================================================
+Stopping consul-2 (leaving only 1 of 3 alive)
+ Container grid-meter-app-consul-2-1 Stopping 
+ Container grid-meter-app-consul-2-1 Stopped 
+Sole survivor: consul-3
+
+================================================================
+Confirming quorum loss is detected (no leader) within 30s
+================================================================
+No leader reported at t+1s -- quorum correctly lost
+consul-3's own raft view:
+Error getting peers: Failed to retrieve raft configuration: Unexpected response code: 500 (No cluster leader)
+
+================================================================
+Confirming writes requiring consensus are correctly REFUSED, not silently accepted
+================================================================
+KV put attempt with no quorum: exit=127, output: ./load-tests/consul-quorum-loss.sh: line 141: timeout: command not found
+
+================================================================
+Restoring the full 3-agent cluster
+================================================================
+ Container grid-meter-app-consul-2-1 Starting 
+ Container grid-meter-app-consul-1-1 Starting 
+ Container grid-meter-app-consul-2-1 Started 
+ Container grid-meter-app-consul-1-1 Started 
+All 3 alive again at t+1s
+Node      ID                                    Address           State     Voter  RaftProtocol  Commit Index  Trails Leader By
+consul-1  06b6846b-11bc-0182-dc6e-308c529e83fc  172.18.0.21:8300  follower  true   3             56            0 commits
+consul-3  28a24065-fc34-4291-60c1-89c1b176e452  172.18.0.19:8300  leader    true   3             56            -
+consul-2  9357f0ce-b992-1190-97c7-8018333f2665  172.18.0.20:8300  follower  false  3             56            0 commits
+
+================================================================
+VERDICT SUMMARY
+================================================================
+Sub-test A: killed leader (consul-1), new leader elected among survivors: NONE
+  2-of-3 cluster functional (KV write/read): put=Error! Failed writing data: Unexpected response code: 500 (No cluster leader)
+Sub-test B: killed a second agent (consul-2), quorum loss detected: yes
+  Write attempted with no quorum: exit=127 (non-zero/timeout expected -- refused, not silently accepted)
+FAIL or UNEXPECTED -- review the transcript above; this is a real finding, not a script bug.

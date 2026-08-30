@@ -1,0 +1,31 @@
+# Shared bootstrap config for all 3 Patroni nodes -- everything node-specific (name, connect
+# addresses, credentials, which Consul agent) is supplied via PATRONI_* env vars in
+# docker-compose.yml, which override values here. This file exists only because the `bootstrap`
+# section (how a brand-new cluster gets initialized) has no environment-variable equivalent at
+# all -- confirmed directly against Patroni's own ENVIRONMENT.rst rather than assumed, after a
+# first attempt sat indefinitely logging "waiting for leader to bootstrap" with no config telling
+# it self-initialization was even an option.
+#
+# synchronous_mode: true closes the exact gap found in docs/postgres-ha-scope.md's Stage 1 config
+# audit (synchronous_standby_names was undeclared, running fully async) -- the correct,
+# Patroni-native fix, since Patroni owns and dynamically manages synchronous_standby_names itself
+# once this is set, rather than a static postgresql.conf value that wouldn't track topology
+# changes (a new replica joining, one leaving) the way Patroni's own management does.
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    postgresql:
+      use_pg_rewind: true
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  # Dev-only, no real security posture -- matches this project's existing hardcoded
+  # gridmeter/gridmeter convention for the app's own `postgres` service. 0.0.0.0/0 is appropriate
+  # for a local Docker Compose investigation, not a production stance.
+  pg_hba:
+    - host replication replicator 0.0.0.0/0 md5
+    - host all all 0.0.0.0/0 md5

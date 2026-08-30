@@ -314,3 +314,21 @@ doc's "Deliverables expected from this pass," a results narrative
 account — Findings A and B, both root-caused, fixed, and re-verified, plus
 Stage 5's clean pass — is the remaining item, most naturally owned by
 `docs/redis-ha-scope.md` itself rather than duplicated here.
+
+## Minor follow-up found post-hoc (2026-08-30, not yet fixed)
+
+`load-tests/redis-quorum-loss.sh`'s restore step (`docker compose start
+"$CURRENT_MASTER" sentinel-2 sentinel-3`) uses `start`, not
+`--force-recreate` — found crashed (`FATAL CONFIG FILE ERROR ... Duplicate
+master name`) after a real run: `docker compose start` reuses the
+Sentinel container's existing `/tmp/sentinel.conf` (already containing a
+persisted `sentinel monitor mymaster ...` line from before the stop), and
+the container's own command-line `--sentinel monitor ...` flag gets
+re-applied on top of it, declaring the same directive twice. Earlier
+Redis scripts never hit this because their reset step always
+`--force-recreate`s first, wiping the ephemeral conf file. Restored via
+manual `--force-recreate` this time; the script itself should do the same
+in its restore step rather than a plain `start`. Low priority — doesn't
+affect any of the reported Stage 5 findings, since it only manifests on
+container restart, after the measurements that matter were already
+taken.

@@ -156,6 +156,156 @@ services:
     networks:
       - grid-meter
 
+  # Consul (Stage 0 of docs/postgres-ha-scope.md) -- Patroni's consensus-store backend, standing
+  # this up ALONE first, before Postgres/Patroni touch it at all, per that doc's explicit
+  # instruction: verify Consul's own quorum behavior as a known-good baseline first, so a
+  # Consul-layer problem never gets misdiagnosed as a Patroni/Postgres problem later. 3 server
+  # agents -- same "3, not 2" quorum reasoning already established for Kafka's controllers
+  # (docs/ha-scope.md) and Redis's Sentinels: tolerates exactly one agent loss while keeping a
+  # working 2-of-3 majority. -bootstrap-expect=3 tells each agent to wait for all 3 before forming
+  # the cluster; -retry-join uses Docker's own DNS (service names), same pattern as Kafka's
+  # KAFKA_CONTROLLER_QUORUM_VOTERS and Redis's Sentinel --sentinel monitor.
+  consul-1:
+    image: hashicorp/consul:1.20.1
+    command: agent -server -bootstrap-expect=3 -node=consul-1 -client=0.0.0.0 -datacenter=dc1 -retry-join=consul-2 -retry-join=consul-3 -ui
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  consul-2:
+    image: hashicorp/consul:1.20.1
+    command: agent -server -bootstrap-expect=3 -node=consul-2 -client=0.0.0.0 -datacenter=dc1 -retry-join=consul-1 -retry-join=consul-3 -ui
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  consul-3:
+    image: hashicorp/consul:1.20.1
+    command: agent -server -bootstrap-expect=3 -node=consul-3 -client=0.0.0.0 -datacenter=dc1 -retry-join=consul-1 -retry-join=consul-2 -ui
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    networks:
+      - grid-meter
+
+  # Postgres HA (Patroni + Consul), Stage 2 of docs/postgres-ha-scope.md. A SEPARATE, isolated
+  # 3-node cluster for this investigation -- deliberately NOT touching the app's real `postgres`
+  # service or its data, since Postgres is this app's actual system of record (unlike Redis, which
+  # is just a cache per architecture.md); this is an investigation into whether Patroni+Consul
+  # works correctly, not yet a decision to cut the real app over to it.
+  #
+  # Each node points at a DIFFERENT Consul server agent (patroni-1->consul-1, etc.), not all 3 at
+  # the same one -- a real design tradeoff worth stating: this project doesn't run a per-node local
+  # Consul client-agent tier (the standard production pattern for DCS resilience), so pointing
+  # every Patroni node at the same single Consul agent would mean that one agent's failure breaks
+  # ALL 3 Patroni nodes' DCS connectivity, confounding Stage 5's actual intent (testing behavior
+  # under genuine Consul quorum loss, not "one specific agent happens to be down"). Spreading nodes
+  # across different agents means an individual agent hiccup only affects 1 of 3 Patroni nodes,
+  # while a real 2-of-3 Consul quorum loss still affects all 3 equally, matching what Stage 5
+  # actually needs to test.
+  #
+  # No named volume -- ephemeral data dir inside each container's own writable layer, matching
+  # this whole HA investigation's established pattern (Kafka brokers, Redis/Sentinel, Consul
+  # agents) of resetting cleanly via --force-recreate between test runs, not persisting state.
+  #
+  # Dev-only hardcoded credentials, same convention as the app's own `postgres` service.
+  patroni-1:
+    build:
+      context: ./patroni
+    environment:
+      PATRONI_NAME: patroni-1
+      PATRONI_SCOPE: gridmeter-postgres-ha
+      PATRONI_CONSUL_HOST: consul-1:8500
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni-1:8008
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni-1:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/patroni-data
+      PATRONI_POSTGRESQL_PGPASS: /tmp/pgpass
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: gridmeter
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: gridmeter
+    volumes:
+      - ./patroni/patroni.yml:/etc/patroni.yml:ro
+    logging: *default-logging
+    depends_on:
+      - consul-1
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - grid-meter
+
+  patroni-2:
+    build:
+      context: ./patroni
+    environment:
+      PATRONI_NAME: patroni-2
+      PATRONI_SCOPE: gridmeter-postgres-ha
+      PATRONI_CONSUL_HOST: consul-2:8500
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni-2:8008
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni-2:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/patroni-data
+      PATRONI_POSTGRESQL_PGPASS: /tmp/pgpass
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: gridmeter
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: gridmeter
+    volumes:
+      - ./patroni/patroni.yml:/etc/patroni.yml:ro
+    logging: *default-logging
+    depends_on:
+      - consul-2
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - grid-meter
+
+  patroni-3:
+    build:
+      context: ./patroni
+    environment:
+      PATRONI_NAME: patroni-3
+      PATRONI_SCOPE: gridmeter-postgres-ha
+      PATRONI_CONSUL_HOST: consul-3:8500
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_RESTAPI_CONNECT_ADDRESS: patroni-3:8008
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: patroni-3:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/patroni-data
+      PATRONI_POSTGRESQL_PGPASS: /tmp/pgpass
+      PATRONI_SUPERUSER_USERNAME: postgres
+      PATRONI_SUPERUSER_PASSWORD: gridmeter
+      PATRONI_REPLICATION_USERNAME: replicator
+      PATRONI_REPLICATION_PASSWORD: gridmeter
+    volumes:
+      - ./patroni/patroni.yml:/etc/patroni.yml:ro
+    logging: *default-logging
+    depends_on:
+      - consul-3
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    networks:
+      - grid-meter
+
   # Redis HA (Sentinel) -- see docs/redis-ha-scope.md for the full scope/staging plan. Stage 1's
   # config audit found min-replicas-to-write=0 live on this instance (confirmed via `redis-cli
   # CONFIG GET`, not just a repo grep) -- the direct structural twin of Kafka's undeclared acks=1
