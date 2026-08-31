@@ -205,6 +205,69 @@ risk, since the script already treats `S1_FAIL` skeptically rather than
 asserting a blind pass on it). Both reviewed and closed as part of this
 same pass, not left as open questions.
 
+## Test-infrastructure lesson: GNU-vs-BSD tooling assumptions in local chaos scripts
+
+**A third named, recurring category of test-script bug for this project
+(2026-08-31), distinct from the two above.** Development happens on
+macOS, whose bundled command-line tools are BSD-derived and differ from
+the GNU/Linux tools these scripts are usually written against by habit —
+and unlike a missing command (a loud, obvious failure), a GNU-only flag
+silently accepted by a differently-behaving BSD tool can fail quietly,
+producing wrong output instead of an error. Two confirmed instances so
+far, same root cause, different specific shape:
+
+- **`timeout`/`gtimeout` don't exist on this Mac at all**
+  (`docs/postgres-ha-scope.md`'s Stage 0) — a write-refusal check silently
+  became a no-op (fails open, the worst variant: it can mask a total
+  absence of verification, not just add imprecision). Fixed by removing
+  the dependency entirely once it was confirmed unnecessary (Consul fails
+  fast with a real `500` on quorum loss). A repo-wide audit at the time
+  found no other real instances (remaining `timeout` grep hits were
+  false positives — config-parameter names like `failover-timeout`).
+- **`date +%3N` silently misparses** (found 2026-08-31 building
+  `docs/postgres-ha-scope.md`'s Stage 3 script) — this Mac's `date`
+  supports bare `%N` (real nanosecond precision) but not GNU's
+  field-width digit-prefix modifier; `%3N` produces the literal
+  characters `3N` appended to the seconds value instead of milliseconds.
+  The consequence was worse than a wrong number: the resulting bash
+  arithmetic error, occurring inside a `for` loop's `then` branch,
+  silently terminated the loop after its first iteration while the
+  script's own post-loop summary line still printed "5/5 succeeded" —
+  a **false positive on the exact behavior the test existed to verify**
+  (whether repeated writes succeed during an outage), not merely a
+  cosmetic timing glitch. The identical broken idiom was found already
+  committed in `load-tests/kafka-acks-gap-repro.sh` (a secondary
+  diagnostic print there, not the separately-reported and unaffected
+  3.7s Kafka RTO figure) and in cosmetic-only form (no arithmetic, just
+  a garbled printed timestamp) in `scripts/capture-connection-reset.sh`
+  — all three fixed the same way: bare `%N`, with any needed unit
+  conversion done explicitly via division rather than a width-modifier
+  flag. A repo-wide audit for other GNU-only flags (`sed -i` without a
+  BSD-style extension argument, `date -d`, `stat --format`/`-c`,
+  `grep -P`, `md5sum`, `base64 -w`, `readlink -f`) found no further
+  instances.
+
+**The general lesson**: assuming a script's target execution environment
+shares a Linux/GNU toolchain's exact flag semantics — rather than the
+BSD-derived tools actually bundled with macOS — is a real, standing risk
+for any local (not containerized) shell script in this project, and the
+failure mode ranges from a loud missing-command error (easy to notice)
+to a silently-wrong result (hard to notice, and in the `date +%3N` case,
+actively misleading about the very thing being tested). Two independent
+hits from the same root cause is enough to treat this as a standing
+category, the same way the undeclared-default and fixed-sleep patterns
+were promoted after repeating.
+
+**Standing guidance**: any new local shell script that shells out to
+`date`, `sed`, `stat`, `grep`, `timeout`, or similar coreutils-family
+tools should be checked against this Mac's actual (BSD-derived) tool
+behavior before being trusted, not assumed to match GNU/Linux semantics
+from habit or from an online example. Prefer flags confirmed portable
+across both (bare `date +%N`, `sed -i ''` with an explicit empty
+extension argument, avoiding `-P`/`-d`/`--format` entirely) over
+GNU-specific shorthand, even when a GNU-only form would be more
+convenient to write.
+
 ## CI wiring (GitHub Actions)
 
 All three jobs below run on every push/PR touching `grid-meter-app/**`

@@ -107,6 +107,25 @@ upstream as of Loki 3.7.3.
   config. See `docs/testing-strategy.md`'s "Test-infrastructure lesson"
   section for the full account and the standing guidance for new test
   scripts.
+- **Never assume a local (non-containerized) shell script's target
+  environment shares Linux/GNU tool semantics — this Mac's bundled tools
+  are BSD-derived and differ, sometimes silently.** Confirmed twice: the
+  `timeout`/`gtimeout` commands don't exist on this Mac at all (found in
+  Postgres HA Stage 0 — a write-refusal check silently became a no-op),
+  and `date +%3N` silently misparses into literal garbage instead of
+  raising an error (found 2026-08-31 building Postgres HA Stage 3's test
+  script) — this Mac's `date` supports bare `%N` but not GNU's
+  field-width digit-prefix modifier. The second instance was worse than
+  a wrong number: the resulting arithmetic error silently truncated a
+  write-verification loop after one iteration while the script's own
+  summary line still reported full success — a false positive on the
+  exact thing the test existed to check, not a cosmetic glitch. Treat
+  any new script that shells out to `date`, `sed`, `stat`, `grep`, or
+  similar coreutils-family tools as suspect until checked against this
+  Mac's actual tool behavior, and prefer flags confirmed portable across
+  both (bare `date +%N`, `sed -i ''`) over GNU-only shorthand. See
+  `docs/testing-strategy.md`'s "GNU-vs-BSD tooling assumptions" section
+  for the full account.
 
 ## Dev workflow
 

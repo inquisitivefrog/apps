@@ -20,16 +20,16 @@ TCPDUMP_PID=$!
 sleep 2
 
 echo
-echo "[$(date +%H:%M:%S.%3N)] === Running WORKING probe (raw Apache HttpClient, expect-continue=false) ==="
+echo "[$(date +%H:%M:%S)] === Running WORKING probe (raw Apache HttpClient, expect-continue=false) ==="
 ./probe-apache-http-client.sh "$LOGIN_URL" false "$LOGIN_BODY" || true
-echo "[$(date +%H:%M:%S.%3N)] working probe done"
+echo "[$(date +%H:%M:%S)] working probe done"
 
 sleep 2
 
 echo
-echo "[$(date +%H:%M:%S.%3N)] === Running FAILING probe (bare REST Assured) ==="
+echo "[$(date +%H:%M:%S)] === Running FAILING probe (bare REST Assured) ==="
 ./probe-restassured-minimal.sh "$LOGIN_URL" "$LOGIN_BODY" || true
-echo "[$(date +%H:%M:%S.%3N)] failing probe done"
+echo "[$(date +%H:%M:%S)] failing probe done"
 
 sleep 2
 sudo kill "$TCPDUMP_PID" 2>/dev/null || true

@@ -121,13 +121,19 @@ docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
   "SELECT COUNT(*) FROM readings WHERE meter_id = '$METER_ID' AND value = 999.999;"
 
 banner "Restarting the original leader ($LEADER_SVC) -- it still has the record on its own disk"
-RECOVERY_START=$(date +%s%3N)
+# date +%N (bare, no width modifier) is the portable form -- %3N silently produces the literal
+# characters "3N" appended on this project's dev Mac (confirmed: its date binary supports bare
+# %N but not GNU's field-width digit prefix), which broke bash arithmetic below and, under set -e,
+# silently truncated this exact loop after its first true condition without ever printing the
+# recovery-time line or executing `break` -- found and fixed 2026-08-31 while building
+# docs/postgres-ha-scope.md's Stage 3 script, which had copied the same broken idiom.
+RECOVERY_START=$(date +%s%N)
 docker compose start "$LEADER_SVC"
 for i in $(seq 1 30); do
   CURRENT_LEADER=$(describe_topic | grep "Partition: $TARGET_PARTITION" | grep -oE 'Leader: [0-9]+' | grep -oE '[0-9]+')
   if [ "$CURRENT_LEADER" == "$LEADER" ]; then
-    RECOVERY_END=$(date +%s%3N)
-    echo "Partition $TARGET_PARTITION has a leader again ($CURRENT_LEADER) after $(( (RECOVERY_END - RECOVERY_START) ))ms"
+    RECOVERY_END=$(date +%s%N)
+    echo "Partition $TARGET_PARTITION has a leader again ($CURRENT_LEADER) after $(( (RECOVERY_END - RECOVERY_START) / 1000000 ))ms"
     break
   fi
   sleep 1

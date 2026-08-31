@@ -94,6 +94,41 @@ library's own defaults (not just the environment) are a real suspect —
 found here via a `tcpdump` packet capture comparing a working probe
 against the failing one.
 
+## Shell scripting and OS-tooling pitfalls
+
+**A script's own tooling assumptions can silently misbehave on macOS
+instead of erroring loudly — and the real danger is when the script
+doesn't notice.** Found twice independently in this project, in two
+different chaos/test scripts, both the same underlying mistake: assuming
+GNU coreutils behavior is universal when the dev machine runs macOS's
+BSD userland instead.
+
+- `timeout`/`gtimeout` don't exist on this machine at all by default — a
+  write-refusal check silently no-op'd (`exit 127`) instead of running,
+  and nothing downstream noticed, because the calling code treated "the
+  check ran and passed" and "the check never ran" identically.
+- `date +%s%3N` (millisecond timestamps) silently drops the `%3N` width
+  modifier under macOS's BSD `date` — GNU-only syntax, not an error, just
+  wrong output. That fed straight into bash arithmetic, which then
+  failed and silently truncated a marker-write loop after its first
+  iteration — while the script's own summary line still printed "5/5
+  succeeded."
+
+**The general lesson, in two parts.** First: verify a script's actual
+tool/flag *behavior* with a real invocation on the machine it will
+actually run on, not just a `command -v` existence check — a command
+existing and a command behaving the way its GNU documentation describes
+are two different questions on macOS, and the gap between them doesn't
+announce itself. Second, and more important: any script whose "did this
+actually work" logic depends on a shell built-in or coreutils command
+producing a specific format needs its own sanity check on that output,
+not a downstream success/failure branch that just trusts whatever the
+tool happened to return. A script silently doing less than it claims
+while still reporting success is a worse failure than an outright error,
+because nothing signals that anything went wrong — this is the same
+"fails open instead of loud" shape as the `timeout`/`gtimeout` case
+above, not a coincidence that it happened twice.
+
 ## Kubernetes and infrastructure-as-code pitfalls
 
 **A config language's comment syntax isn't universal — verify it per
