@@ -348,6 +348,17 @@ actually shows a real, non-negligible gap. Unmitigated risk is accepted
 only conditionally, pending that measurement — not accepted outright by
 this decision alone.
 
+**Conditional acceptance confirmed (2026-08-31): see "Stage 4 results"
+below.** Self-demotion measured at a consistent ~310–345ms across 3
+independent runs, each killing a different node, with zero observed
+split-brain — no write ever landed on a node that still believed it was
+primary. The accepted risk stands as accepted, not because it was never
+tested, but because it was tested and came back narrow. The one caveat
+carried forward from that section: this confirms no split-brain window
+at the ~300ms measurement granularity available, not an absolute,
+below-any-resolution guarantee of zero — stated precisely rather than
+overclaimed.
+
 - **Action before failover testing begins**: ~~explicitly decide and
   document what fencing mechanism (if any) will be used for this
   pass~~ — **done, see decision above.** Testing failover *without*
@@ -356,8 +367,7 @@ this decision alone.
   scenario would repeat exactly the kind of unverified-durability-
   guarantee gap the Kafka and Redis investigations both found — except
   the consequence here is worse (concurrent writes, not just a
-  wrong-but-singular leader). This is exactly what Stage 4 is now
-  designed to check, not skip past.
+  wrong-but-singular leader). **Done — see "Stage 4 results" below.**
 
 ## Testing strategy — staged, mirroring the Redis doc's structure
 
@@ -724,7 +734,72 @@ both settings and the resulting decision (leave `synchronous_mode_strict`
 unset). No longer an untested gap, just not folded into the Stage 3–6
 numbering.
 
-### Stage 4 — Primary failure, the real test
+## Stage 4 results (2026-08-31): PASS, 3/3 clean — the fencing decision's conditional acceptance is now confirmed, with an honest caveat on measurement granularity
+
+Ran against real write load using the same marker-write methodology as
+Kafka and Redis, with the client-observed failover path (Traefik +
+Consul Catalog, per §4 of "Patroni deployment model") verified as part
+of every run, not just Patroni's internal state. Per this project's
+3-iteration bar for a correctness finding, and per this stage's own
+explicit instruction not to trust a first clean run, 3 runs were
+required and run — and each run happened to kill a different node, so
+this ended up more comprehensive than the minimum bar: every node has
+now been tested as "the primary that dies," not just one repeated case.
+
+| Run | Old primary | New primary | RTO | Write survived | Client routing followed | Old-primary self-demotion | Split-brain |
+|---|---|---|---|---|---|---|---|
+| 1 | `patroni-3` | `patroni-1` | 1676ms | Yes | Yes (~11s) | 310ms | No |
+| 2 | `patroni-1` | `patroni-2` | 1793ms | Yes | Yes (~10s) | 345ms | No |
+| 3 | `patroni-2` | `patroni-3` | 1972ms | Yes | Yes (~15s) | 315ms | No |
+
+**This directly answers the fencing decision's conditional risk
+acceptance** (see "Fencing decision" above): Patroni's self-demotion
+window measured at a consistent, narrow ~310–345ms across all 3 runs —
+in every case, by the time the restarted node was even reachable for a
+query at all, it already correctly reported itself as a replica; no
+write ever succeeded while it still claimed to be primary. **This
+measurement supports the earlier decision** (rely on self-demotion, no
+bespoke Docker-socket-based fencing) rather than calling for the
+targeted fix that was left as the fallback option.
+
+**An honest caveat, stated precisely rather than claiming a
+millisecond-exact zero**: the measurement probe polls roughly every
+~300ms (each iteration is two sequential `docker compose exec` calls).
+This confirms no *observable* split-brain window at that granularity —
+it does not rule out something narrower than ~150ms that a coarser
+check could miss between polls. The conditional acceptance is closed
+at the resolution this project's tooling can actually measure, not
+at an absolute guarantee of zero.
+
+**Client-observed failover confirmed real, not inferred**: the
+Traefik + Consul Catalog routing path (verified as a standalone spike
+earlier) correctly followed every failover across all 3 runs — the
+~10–15s delay each time is Consul's health-check interval plus
+Traefik's provider-propagation delay, not a bug, and matches the
+timing already established when that spike was first verified.
+
+**Two real script bugs found and fixed along the way**: a CIDR-notation
+string-comparison bug, and a `set -e`/command-substitution crash. The
+second was initially flagged as a possible fourth standing pattern
+(alongside undeclared-defaults, fixed-sleeps, and GNU-vs-BSD), but
+tracing it precisely against this morning's disk-headroom-guard crash
+showed the two are related but not the same mechanism: this morning's
+was a genuinely platform-specific pipeline failure (`df -g` failing on
+Linux, fine on macOS) — the same *shape* of lesson as GNU-vs-BSD.
+Today's Stage 4 crash was a plain, platform-agnostic unguarded command
+substitution (an adjacent write-check left unguarded while its sibling
+read-check on the line above it was correctly guarded) — an asymmetric
+oversight, not a fact about differing tool behavior. **Conclusion: does
+not earn a fourth named pattern.** Recorded instead as a line in
+`docs/cross-project-lessons.md`'s existing "Build tooling" section — a
+general `set -e` discipline note (every command substitution needs its
+own explicit guard; correctly guarding one line doesn't guarantee its
+neighbor got the same treatment), not a new standing category.
+
+**Stage 4: done.** Cluster restored to full health (3/3 nodes correct
+roles) after the third run.
+
+### Stage 4 — Primary failure, the real test — **done, see results above**
 
 Kill the primary while under real write load, using the same
 marker-write methodology as Kafka and Redis (send a distinguishable,
@@ -772,16 +847,16 @@ system fails safe rather than allowing any ambiguous promotion decision.
 - **Do not skip Stage 0.** Testing Patroni's behavior against a
   not-yet-verified Consul cluster risks misattributing a Consul-layer
   problem to Patroni or Postgres.
-- **Do not skip Stage 4's split-brain measurement** to save time, even
-  though a fencing mechanism has now been decided (see "Fencing
-  decision" above). The decision was to measure Patroni's self-demotion
-  window empirically, not to assume it's safe by default — skipping the
-  measurement itself would silently convert a conditional, evidence-
-  gated acceptance of risk into an unconditional one nobody actually
-  signed off on. This is the one failure mode in this entire multi-pass
-  HA effort (Kafka, Redis, Postgres) with a genuinely worse consequence
-  than data loss or temporary unavailability — concurrent writers
-  producing irreconcilable data.
+- ~~Do not skip Stage 4's split-brain measurement~~ **— done, see "Stage
+  4 results" above**: 3/3 clean runs, ~310–345ms self-demotion, zero
+  observed split-brain, with the measurement-granularity caveat stated
+  explicitly rather than overclaimed. The conditional, evidence-gated
+  acceptance from "Fencing decision" above is now backed by the evidence
+  it was conditioned on, not left as an assumption. This remains the one
+  failure mode in this entire multi-pass HA effort (Kafka, Redis,
+  Postgres) with a genuinely worse consequence than data loss or
+  temporary unavailability — concurrent writers producing irreconcilable
+  data — which is exactly why it wasn't skipped.
 - **Do not reconsider ZooKeeper** as the consensus store "since it's
   already familiar from prior Cassandra/Spark work." `ha-scope.md`
   already ruled this out explicitly; re-litigating it here would undo
@@ -818,16 +893,17 @@ exists.
 
 ## Deliverables expected from this pass
 
-1. Stage 0, Stage 1, and Stage 2 findings, reported before proceeding
-   further — **done**, see the results sections above for all three
+1. Stage 0 through Stage 4 findings, reported before proceeding
+   further — **done**, see the results sections above for all five
 2. Explicit topology and fencing-mechanism decisions, documented here
    before Stage 2 begins — topology and Patroni deployment model done;
    the synchronous-standby mode is resolved (quorum `ANY 1 (*)`, see
-   "Sync mode decision" above); the fencing approach is now resolved too
-   (rely on Patroni's built-in self-demotion, measure the real window in
-   Stage 4 — see "Fencing decision" above) — nothing left undecided
-   ahead of Stage 4 on this front
+   "Sync mode decision" above); the fencing approach is resolved and its
+   conditional acceptance confirmed by real measurement (see "Fencing
+   decision" and "Stage 4 results" above) — nothing left undecided on
+   this front
 3. A results doc analogous to `docs/testing-strategy-ha-supplement.md`,
-   capturing what Stages 3–6 actually find — expect this to require at
-   least one significant revision pass, the same way the Kafka doc did,
-   given this layer's added complexity
+   capturing what Stages 4–6 actually find — Stage 4 is in; expect this
+   to require at least one significant revision pass, the same way the
+   Kafka doc did, given this layer's added complexity. Stages 5 and 6
+   remain

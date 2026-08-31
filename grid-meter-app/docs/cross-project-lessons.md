@@ -218,6 +218,29 @@ inconsistent across similar calls (GET fails, POST works) with no obvious
 reason in your own code, check `mvn dependency:tree` for a transitive
 version your direct dependency wasn't built against.
 
+**Correctly guarding one command substitution under `set -e` doesn't
+mean its neighbor got the same treatment — check every one
+individually.** A Postgres HA chaos script guarded a read check
+(`RECOVERY=$(... 2>/dev/null || echo "unreachable")`) but left its
+almost-identical sibling write check completely unguarded
+(`WRITE_OUTPUT=$(... 2>&1)`, no `||`/`if` fallback). The failure
+surfaced during a real Stage 4 run: a just-restarted node became
+reachable enough to answer the guarded read query before it could
+accept the unguarded write, and `set -e` killed the script on that
+single unguarded line — silently, before the next line's diagnostic
+`echo` ever printed, making the log look like nothing happened between
+"not yet reachable" and the crash. **Distinct from the GNU-vs-BSD
+tooling-assumption lessons above, worth being precise about the
+difference**: those are genuinely platform-specific (a command or flag
+behaves differently, or doesn't exist, depending on the OS). This one
+is platform-agnostic — it would fail identically on Linux or macOS —
+and is really an asymmetric-oversight bug: one of two nearly-identical
+adjacent lines got a guard, the other didn't. The general rule: under
+`set -e`, every command substitution that can plausibly fail needs its
+own explicit guard, and writing a correct guard on one line is no
+evidence the very next, structurally-similar line has one too — check
+each command substitution on its own, don't infer safety by proximity.
+
 ## CI and process
 
 **When promoting a CI job to a required branch-protection check, verify
