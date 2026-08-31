@@ -27,9 +27,21 @@ services:
       # metric never sees it (not as a success, not as a failure) -- Traefik itself is what
       # generates the resulting 502, so it's the only place this failure class is visible.
       - --metrics.prometheus=true
+      # Postgres HA client-write-routing spike (docs/postgres-ha-scope.md's "Patroni deployment
+      # model" §4) -- a separate TCP entrypoint + Consul Catalog provider, deliberately not
+      # wired into the app itself (the real `postgres` service is untouched). Routes to whichever
+      # Patroni node is currently reported healthy for the `postgres-primary` Consul service
+      # registered by load-tests/postgres-traefik-routing-register.sh (health check hits each
+      # node's own :8008/primary -- 200 only from the actual current primary, 503 otherwise --
+      # confirmed live before wiring this, not assumed from Patroni's docs).
+      - --entrypoints.pgprimary.address=:55432
+      - --providers.consulcatalog=true
+      - --providers.consulcatalog.endpoint.address=consul-1:8500
+      - --providers.consulcatalog.exposedbydefault=false
     ports:
       - "80:80"
       - "8080:8080" # Traefik dashboard
+      - "55432:55432" # Postgres HA routing spike -- routes to whichever Patroni node is primary
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
