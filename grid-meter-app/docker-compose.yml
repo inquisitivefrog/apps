@@ -238,6 +238,15 @@ services:
       PATRONI_NAME: patroni-1
       PATRONI_SCOPE: gridmeter-postgres-ha
       PATRONI_CONSUL_HOST: consul-1:8500
+      # Declared explicitly per docs/postgres-ha-scope.md's Stage 6 finding: undeclared, this
+      # governs whether Patroni's own cluster-state reads from Consul can return stale data from a
+      # lagging/minority-partition agent during a real quorum-loss event -- exactly the scenario
+      # Stage 6 tests. Live-verified via DEBUG logs (consistent=1 in Patroni's own Consul KV
+      # requests) to already be "consistent" as an undeclared default; declaring it explicitly
+      # locks in the behavior already verified safe across all 3 Stage 6 runs, rather than leaving
+      # it exposed to silently changing on a future Patroni upgrade. The 9th confirmed instance of
+      # this project's undeclared-durability/quorum-default pattern (see CLAUDE.md).
+      PATRONI_CONSUL_CONSISTENCY: consistent
       PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
       PATRONI_RESTAPI_CONNECT_ADDRESS: patroni-1:8008
       PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
@@ -267,6 +276,8 @@ services:
       PATRONI_NAME: patroni-2
       PATRONI_SCOPE: gridmeter-postgres-ha
       PATRONI_CONSUL_HOST: consul-2:8500
+      # See patroni-1's identical setting above for the full reasoning.
+      PATRONI_CONSUL_CONSISTENCY: consistent
       PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
       PATRONI_RESTAPI_CONNECT_ADDRESS: patroni-2:8008
       PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
@@ -296,6 +307,8 @@ services:
       PATRONI_NAME: patroni-3
       PATRONI_SCOPE: gridmeter-postgres-ha
       PATRONI_CONSUL_HOST: consul-3:8500
+      # See patroni-1's identical setting above for the full reasoning.
+      PATRONI_CONSUL_CONSISTENCY: consistent
       PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
       PATRONI_RESTAPI_CONNECT_ADDRESS: patroni-3:8008
       PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
