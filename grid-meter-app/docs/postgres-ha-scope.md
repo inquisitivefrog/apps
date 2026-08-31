@@ -348,16 +348,24 @@ actually shows a real, non-negligible gap. Unmitigated risk is accepted
 only conditionally, pending that measurement — not accepted outright by
 this decision alone.
 
-**Conditional acceptance confirmed (2026-08-31): see "Stage 4 results"
-below.** Self-demotion measured at a consistent ~310–345ms across 3
-independent runs, each killing a different node, with zero observed
-split-brain — no write ever landed on a node that still believed it was
-primary. The accepted risk stands as accepted, not because it was never
-tested, but because it was tested and came back narrow. The one caveat
-carried forward from that section: this confirms no split-brain window
-at the ~300ms measurement granularity available, not an absolute,
-below-any-resolution guarantee of zero — stated precisely rather than
-overclaimed.
+**Conditional acceptance confirmed, in two parts.** Stage 4
+(2026-08-31, see "Stage 4 results" below) measured the restart-based
+case: self-demotion at a consistent ~310–345ms across 3 independent
+runs, each killing a different node, zero observed split-brain. But
+Stage 4 alone did not test the actual scenario this decision names as
+the sharpest risk — a primary that's genuinely never dead, merely
+partitioned from Consul. **Stage 5's Sub-scenario A (2026-09-01, see
+"Stage 5 results" below) tested exactly that case**: 3/3 clean on
+split-brain, but self-demotion took 15–20s there (TTL-driven, not a
+fast restart check) with a real ~8–21s availability gap before a new
+primary took over. The accepted risk stands as accepted — no split-brain
+in either the restart case or the harder live-partition case — but it
+should now be understood specifically as an acceptance of that
+availability-gap magnitude for the live-partition scenario, not the
+sub-second number Stage 4 alone would have suggested. The measurement-
+granularity caveat from Stage 4 (no split-brain window observable at
+~300ms resolution) still applies to that stage's own number; Stage 5's
+15–20s numbers are well above any such resolution concern.
 
 - **Action before failover testing begins**: ~~explicitly decide and
   document what fencing mechanism (if any) will be used for this
@@ -378,6 +386,24 @@ replication's block-on-unavailable behavior, real split-brain risk),
 expect this pass to need more stages, not fewer, and expect findings from
 Redis's pass to change some of the specifics below before this actually
 starts.
+
+**Known gap, found 2026-09-01, not yet closed**: every "Full evidence"
+pointer below cites `load-tests/vendor-bug-reports/postgres/NOTES.md`,
+but that file currently only covers Stage 0 — it stops at "Next: Stage 1
+(config audit)" and was never updated for Stages 1 through 5, including
+the work in this session. The pointers themselves are correct (that is
+the right file, per `docs/vendor-bug-report-process.md`'s convention);
+what's missing is that the file hasn't been kept current against this
+doc's own narrative. This is testing-evidence bookkeeping — indexing
+runs and linking back to this doc — done as part of executing each
+stage's actual test runs, distinct from this doc's own narrative
+write-ups. Flagging explicitly rather than leaving four dead-end
+pointers implicit, per this project's own standing habit of naming known
+gaps instead of letting a citation silently go stale. **Backfilling
+Stages 1–5 into `NOTES.md`, then keeping it current from Stage 6
+onward, is the open action item** — this doc's own results sections
+remain accurate regardless, but a reader who follows a "Full evidence"
+link expecting the underlying data won't find it yet.
 
 ## Stage 0 results (2026-08-29): PASS, 3/3 clean — with three real bugs found and fixed on day one
 
@@ -828,7 +854,88 @@ acknowledged write immediately before killing the primary).
   a single clean run cannot, on its own, close out the fencing decision's
   conditional acceptance.
 
-### Stage 5 — Consensus-store degradation while Postgres is otherwise healthy — expanded (2026-09-01) into two explicit sub-scenarios
+## Stage 5 results (2026-09-01): both sub-scenarios PASS on split-brain — but Sub-scenario A found a real, material availability gap Stage 4 could not have found
+
+Reported separately per this section's own instruction — a clean result
+in one sub-scenario says nothing about the other.
+
+### Sub-scenario A (partition the primary from Consul, Postgres itself never touched) — 3/3 clean on split-brain, but a real ~8–21s availability gap found
+
+| Run | Partitioned primary | Self-demoted at | New leader elected at | Gap | Split-brain |
+|---|---|---|---|---|---|
+| 1 | `patroni-2` | 15423ms | 36511ms | +21088ms | No |
+| 2 | `patroni-3` | 19362ms | 28659ms | +9297ms | No |
+| 3 | `patroni-1` | 19534ms | 27544ms | +8010ms | No |
+
+**Zero split-brain across all 3 runs** — the old primary always
+self-demoted before a new leader took over; the ordering the split-brain
+check cared about held every time. But the more important finding is
+the **magnitude**, exactly as this section's own reframing predicted
+before the test ran: self-demotion here took **15–20 seconds** — driven
+by Patroni's retry/timeout logic actually failing to confirm its lock,
+not a fast local restart check — a materially larger number than Stage
+4's ~310–345ms. Between the old primary stepping down and a new one
+being elected, there's a real **~8–21 second window where nobody accepts
+writes at all**. This is not split-brain (the opposite failure — an
+availability gap, not a data-safety one), but it's a real, previously
+unmeasured cost of relying on TTL-based self-demotion for the
+genuinely-alive-but-partitioned case, distinct from and larger than
+anything Stage 4 could have surfaced.
+
+**A real methodology bug found and fixed along the way, worth flagging
+prominently**: the first attempt used only an `/etc/hosts` blackhole and
+left the primary alone for 60s with zero reaction — which looked like,
+but was not, a complete absence of self-protection. Root cause:
+Patroni's Consul client was reusing an already-open, pooled connection
+that the blackhole never touched — only *new* connection attempts were
+blocked, and Patroni was confirmed (via direct log inspection) to still
+be successfully renewing its Consul session the entire time. Fixed by
+also restarting the target Consul agent immediately after applying the
+blackhole, forcing the existing connection closed. **This is exactly
+the "verify, don't trust a surprising result" discipline this whole
+project has been built around** — a first result suggesting a serious
+safety gap turned out to be a test artifact, not a real finding, and was
+caught before being reported as one. Worth flagging as a portable
+chaos-testing lesson beyond this project: a DNS/hosts-file-level fault
+injection only blocks *new* connections, not ones a target process
+already holds open — if the thing under test might reuse a long-lived
+connection, the injection needs to force that connection closed too, not
+just block future ones.
+
+### Sub-scenario B (kill a non-leader, non-primary-paired Consul agent) — confirmed non-event, as predicted
+
+Primary (`patroni-3`) completely unaffected throughout — kept accepting
+writes, `pg_is_in_recovery()` never changed. **One minor, real nuance,
+worth recording precisely rather than glossing over**: the replica
+paired with the killed agent (`patroni-1`) temporarily disappeared from
+`patronictl list`'s Consul-derived view. Confirmed via direct query that
+its actual replication state was never affected — this was a Consul-
+*reporting* gap for that specific node, not a functional one. Visibility
+restored within 3s of the agent coming back. This is the same underlying
+caution as Stage 0's "alive vs. voting member" confusion: a monitoring
+signal derived from Consul is not the same thing as the state of the
+component Consul is reporting on, and the two can diverge without the
+underlying thing actually being wrong.
+
+### What this means for the fencing decision
+
+**The conditional acceptance from "Fencing decision" above holds — no
+split-brain was found even in the harder, genuinely-alive-but-
+partitioned case this stage was specifically designed to test.** But
+the acceptance should now be understood precisely: it's an acceptance of
+a **~8–21 second availability gap** during this specific failure mode,
+not merely "unmitigated risk" in the abstract. If that gap's length ever
+becomes operationally unacceptable, the lever to pull is tuning
+`ttl`/`loop_wait`/`retry_timeout` down — not building the bespoke Docker-
+socket fencing that was declined — though shortening those values
+trades against a real risk of false-positive failovers under normal
+transient network jitter, and hasn't been tested here. Not a decision to
+make now; recorded so a future session doesn't have to rediscover the
+tradeoff from scratch.
+
+Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
+
+### Stage 5 — Consensus-store degradation while Postgres is otherwise healthy — expanded (2026-09-01) into two explicit sub-scenarios; **both sub-scenarios done, see results above**
 
 **Reframing before this stage runs: this is likely the real test of this
 doc's named worst case, not a lesser follow-on to Stage 4.** Stage 4
@@ -942,12 +1049,14 @@ system fails safe rather than allowing any ambiguous promotion decision.
   Postgres) with a genuinely worse consequence than data loss or
   temporary unavailability — concurrent writers producing irreconcilable
   data — which is exactly why it wasn't skipped.
-- **Do not treat Stage 4's clean split-brain result as already covering
-  Stage 5's Sub-scenario A.** They test different mechanisms (a
-  restarted node's local self-demotion vs. a live, never-dead primary's
-  TTL-bounded exposure) with potentially very different window sizes —
-  see Stage 5's own reframing above. A clean Stage 4 does not predict a
-  clean Stage 5.
+- ~~Do not treat Stage 4's clean split-brain result as already covering
+  Stage 5's Sub-scenario A.~~ **Confirmed correct to have flagged this,
+  not just a precaution**: the two stages found genuinely different
+  numbers — Stage 4's ~310–345ms restart-based self-demotion vs. Stage
+  5's 15–20s TTL-based self-demotion with a real ~8–21s availability
+  gap. Both clean on split-brain, but at very different magnitudes — a
+  reader relying on Stage 4 alone would have materially understated the
+  real cost of this failure mode. See "Stage 5 results" above.
 - **Do not reconsider ZooKeeper** as the consensus store "since it's
   already familiar from prior Cassandra/Spark work." `ha-scope.md`
   already ruled this out explicitly; re-litigating it here would undo
@@ -984,17 +1093,18 @@ exists.
 
 ## Deliverables expected from this pass
 
-1. Stage 0 through Stage 4 findings, reported before proceeding
-   further — **done**, see the results sections above for all five
+1. Stage 0 through Stage 5 findings, reported before proceeding
+   further — **done**, see the results sections above for all six
 2. Explicit topology and fencing-mechanism decisions, documented here
    before Stage 2 begins — topology and Patroni deployment model done;
    the synchronous-standby mode is resolved (quorum `ANY 1 (*)`, see
    "Sync mode decision" above); the fencing approach is resolved and its
-   conditional acceptance confirmed by real measurement (see "Fencing
-   decision" and "Stage 4 results" above) — nothing left undecided on
-   this front
+   conditional acceptance confirmed by real measurement in both the
+   restart case and the harder live-partition case (see "Fencing
+   decision," "Stage 4 results," and "Stage 5 results" above) — nothing
+   left undecided on this front
 3. A results doc analogous to `docs/testing-strategy-ha-supplement.md`,
-   capturing what Stages 4–6 actually find — Stage 4 is in; expect this
-   to require at least one significant revision pass, the same way the
-   Kafka doc did, given this layer's added complexity. Stages 5 and 6
-   remain
+   capturing what Stages 4–6 actually find — Stages 4 and 5 are in;
+   expect this to require at least one significant revision pass, the
+   same way the Kafka doc did, given this layer's added complexity.
+   Stage 6 remains
