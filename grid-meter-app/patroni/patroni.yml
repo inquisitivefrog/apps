@@ -6,18 +6,39 @@
 # first attempt sat indefinitely logging "waiting for leader to bootstrap" with no config telling
 # it self-initialization was even an option.
 #
-# synchronous_mode: true closes the exact gap found in docs/postgres-ha-scope.md's Stage 1 config
-# audit (synchronous_standby_names was undeclared, running fully async) -- the correct,
-# Patroni-native fix, since Patroni owns and dynamically manages synchronous_standby_names itself
-# once this is set, rather than a static postgresql.conf value that wouldn't track topology
-# changes (a new replica joining, one leaving) the way Patroni's own management does.
+# synchronous_mode: quorum + synchronous_node_count: 1 closes the exact gap found in
+# docs/postgres-ha-scope.md's Stage 1 config audit (synchronous_standby_names was undeclared,
+# running fully async) -- the correct, Patroni-native fix, since Patroni owns and dynamically
+# manages synchronous_standby_names itself once this is set, rather than a static postgresql.conf
+# value that wouldn't track topology changes (a new replica joining, one leaving) the way Patroni's
+# own management does.
+#
+# quorum (not the simpler `true`, which defaults to single named-standby mode) was a real,
+# explicitly-confirmed decision, not the obvious choice: Patroni's own bare `synchronous_mode: true`
+# default pins durability to whichever one replica happens to register first, an asymmetry that
+# contradicts this project's own reason for running 2 replicas ("always a spare") -- see
+# docs/postgres-ha-scope.md's "Open decision" section for the full account, including how this
+# exact setting briefly went live as the *undecided* default during Stage 2 before being caught and
+# fixed. This value must stay declared here, in the bootstrap file, not only pushed live via
+# `patronictl edit-config` -- this cluster deliberately has no persistent volume (resets cleanly via
+# --force-recreate between test runs), so a fresh bootstrap reads this file again from scratch, and
+# a live-only DCS change wouldn't survive that.
+#
+# log.level: DEBUG -- enabled ahead of any Stage 3+ failure testing, same hard-learned lesson from
+# the Kafka investigation's Run 1 gap (no TRACE-level evidence captured because the debug overlay
+# wasn't in place before the first real failure was introduced). This is a top-level key (Patroni's
+# own process logging), not part of `bootstrap` (which only affects brand-new-cluster init).
+log:
+  level: DEBUG
+
 bootstrap:
   dcs:
     ttl: 30
     loop_wait: 10
     retry_timeout: 10
     maximum_lag_on_failover: 1048576
-    synchronous_mode: true
+    synchronous_mode: quorum
+    synchronous_node_count: 1
     postgresql:
       use_pg_rewind: true
   initdb:

@@ -97,9 +97,12 @@ by picking "2"**: with 2 replicas, `synchronous_standby_names` needs an
 explicit mode, not just a bare setting. Postgres supports naming a
 specific standby, a priority list (first available takes precedence), or
 (version-dependent) quorum-based `ANY n (...)` syntax requiring any N of
-a named set to acknowledge. **This mode is not yet decided** — treat it
-as part of Stage 1's config work, not something the replica-count
-decision already settled by implication.
+a named set to acknowledge. **Resolved 2026-08-31: quorum `ANY 1(*)`** —
+see "Stage 2 results" below for the full account of how this mode got
+silently decided by Patroni's own default before anyone actually chose
+(a sharper instance of this project's standing undeclared-default
+pattern), and "Open decision" below (now closed) for why quorum was
+picked over keeping the default.
 
 ## Patroni deployment model
 
@@ -179,6 +182,20 @@ exposes primary/replica role distinctly enough for one of the two
 approaches above to work, as part of Stage 1 or an early Stage 2 spike —
 before assuming client write-routing "just works" once Consul Catalog is
 wired up.
+
+**Status (2026-08-30): still unaddressed, now overdue against this
+section's own stated timing.** Stage 2 is complete and this spike still
+hasn't been run — Stage 2's own verification went entirely through
+`docker compose exec`/`psql` against whichever node Patroni currently
+reports as primary, never through the app or Traefik. That substitution
+was fine for Stage 2's own checklist (which only needs Patroni's
+internal state, not the client path), but it can't carry Stage 4, which
+is explicitly about verifying failover from the client's point of view —
+Patroni promoting correctly internally says nothing about whether
+Traefik ever routes a client to the new primary. **Hard requirement**:
+this spike lands before Stage 4 is called done, either in parallel with
+Stage 3 or immediately after it — not deferred until Stage 4 testing is
+already underway and needs it.
 
 ## Durability equivalent of `acks=all` / `min-replicas-to-write`: synchronous replication
 
@@ -370,7 +387,88 @@ Grep the current Postgres config
 
 **Report findings before moving to Stage 2**, same as the Redis doc.
 
-### Stage 2 — Stand up the full topology, no chaos testing yet
+## Stage 2 results (2026-08-30): PASS — topology verified, plus the 8th instance of the undeclared-durability-default pattern, in a new shape
+
+All three of Stage 2's own checklist items verified clean, using the
+same "direct query, not inferred from a status field" discipline as
+every prior stage:
+
+- `patronictl list` shows the expected topology: `patroni-1` Leader,
+  `patroni-2` Sync Standby, `patroni-3` Replica, both replicas streaming
+  with 0 lag.
+- A committed write on the leader confirmed present on **both**
+  replicas via direct `SELECT`, not inferred from `pg_stat_replication`
+  lag numbers.
+- Verbose logging enabled on all 3 nodes **before** any failure testing
+  (the Kafka Run-1 lesson, deliberately repeated here) — Postgres GUCs
+  (`log_min_messages=info`, `log_connections`, `log_disconnections`,
+  `log_checkpoints`, `log_replication_commands`) pushed live via
+  `patronictl edit-config` (propagates through Consul's DCS to all 3
+  nodes, no restart needed), and Patroni's own log level set to `DEBUG`
+  via a live reload — confirmed actual `DEBUG` lines appearing in
+  container logs, not just the config accepted.
+
+No container was restarted or recreated to get any of this — the fresh
+3-node cluster's state was never put at risk to verify it.
+
+**A real finding, worth recording precisely as its own instance of the
+project's standing pattern**: this doc's own Topology section flagged
+`synchronous_standby_names`'s specific mode (named standby vs. priority
+list vs. quorum `ANY n (...)`) as "not yet decided" back at Stage 1.
+Setting `synchronous_mode: true` in `patroni.yml` — with no further
+tuning — silently resolved that open question via Patroni's own default:
+live-confirmed as `synchronous_standby_names = "patroni-2"`, single
+named-standby mode. **This is the 8th confirmed instance of the
+undeclared-durability-default pattern across this project's whole HA
+effort, but a distinct sub-shape from the first seven**: instances 1–7
+were all "nobody configured it, so a vendor default silently applied."
+This one is "this project's *own documented open decision* got silently
+closed by someone else's default before anyone actually chose" — a
+sharper version of the same underlying lesson, since the gap was already
+named in writing and still got skipped rather than merely unnoticed.
+
+**Resolved 2026-08-31: switched to quorum `ANY 1 (*)`.** Named-standby
+mode's pinning of synchronous duty to one specific node (`patroni-2`) was
+the opposite of this doc's own stated reason for provisioning 2 replicas
+in the first place ("2 replicas leaves one full spare," Topology section
+above) — under named-standby, the "spare" (`patroni-3`) carried zero
+durability weight at all, while `patroni-2` alone was load-bearing.
+Applied via `patronictl edit-config -s synchronous_mode=quorum -s
+synchronous_node_count=1`, live-confirmed via `SHOW
+synchronous_standby_names` → `ANY 1 ("patroni-2","patroni-3")`, and both
+replicas now report role `Quorum Standby` in `patronictl list` (previously
+asymmetric: one `Sync Standby`, one plain `Replica`). A write immediately
+after the switch was re-confirmed to succeed, not just assumed from a
+clean config diff. `synchronous_mode_strict` (whether Postgres should
+block writes entirely rather than fall back to async once zero
+sync-eligible replicas remain) was deliberately left unset/default — a
+related but separate decision, not bundled into this one; needs its own
+explicit call before Stage 4 has to interpret a double-replica-loss
+result.
+
+**Resource budget**: not re-measured this session — no fresh `docker
+stats` numbers were captured against the full Postgres+Patroni+Consul
+topology now that it's actually up. The VM-ceiling concern named in
+Stage 0's results therefore stays open per this doc's own standing
+instruction; don't treat it as resolved just because the topology
+itself is now running cleanly.
+
+Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
+
+## Open decision: named-standby vs. quorum `ANY 1 (*)` mode — RESOLVED 2026-08-31
+
+**Decision: quorum `ANY 1 (*)`.** Confirmed with the user (a real
+architecture pin, per this project's own check-in-before-structural-
+decisions convention) rather than made unilaterally, given Stage 2 had
+already shown a vendor default silently closing this exact question once
+before. Either replica now satisfies the sync requirement — no single
+node is specially load-bearing, and losing either one has the identical
+effect on write durability, matching this doc's own stated reason for
+provisioning 2 replicas ("2 replicas leaves one full spare") rather than
+pinning that spare-ness to one specific named node. See "Stage 2 results"
+above for the live verification.
+
+### Stage 2 — Stand up the full topology, no chaos testing yet — **done, see results above**
 
 Primary + replica + Patroni + the (already-verified, per Stage 0) Consul
 cluster. At rest, with no failures introduced, confirm:
@@ -384,14 +482,41 @@ cluster. At rest, with no failures introduced, confirm:
   gap, repeated here deliberately because it's cheap insurance and was
   expensive to skip the first time.
 
-### Stage 3 — Single replica failure, expected-safe case
+### Stage 3 — Single replica failure, expected-safe case — two sub-tests, kept even under quorum mode
 
-Kill the replica only. Confirm the primary keeps serving, Patroni
-correctly reports the degraded-but-functional state, and (if
-`synchronous_standby_names` is configured) confirm whether writes now
-block as expected — this is the moment to verify that documented
-block-on-unavailable behavior actually happens, rather than assuming the
-config does what its name implies.
+**Originally restructured (2026-08-30) around named-standby's known
+asymmetry; that mode is now resolved to quorum `ANY 1 (*)` (see "Open
+decision" above), which changes the *reason* for two sub-tests without
+eliminating the need for them.** Under quorum mode, killing either
+replica *should* have an identical, non-blocking effect — but "the config
+says it's symmetric" is exactly the kind of claim this project's whole
+testing discipline exists to verify rather than trust (the same "don't
+assume symmetric" principle Redis's own Stage 3 already applied, and the
+same "verify live, don't infer from what a setting implies" principle
+that found the named-standby default in the first place). Collapsing to
+one generic "kill a replica" run would mean never actually confirming
+that `patroni-2` and `patroni-3` really do behave identically — an
+unverified assumption of the same shape this whole doc exists to catch,
+just relocated from config to test coverage. Run both sub-tests
+explicitly.
+
+- **Sub-test A — kill `patroni-3`.** Expected: no effect on write
+  acceptance — 1 of 2 quorum standbys remains, satisfying `ANY 1 (*)`.
+- **Sub-test B — kill `patroni-2`.** Expected: **identical** outcome to
+  Sub-test A — no effect on write acceptance, for the same reason (1 of 2
+  remains). Under the previous named-standby default this would have
+  instead been the sub-test that blocks writes; under quorum mode it
+  should not. **A real divergence between A and B's outcomes would itself
+  be the finding** — evidence that Patroni's quorum-standby selection
+  isn't behaving as symmetrically as `ANY 1 (*)` implies — not something
+  to explain away as "well, symmetric behavior is what quorum promises."
+
+Both sub-tests: confirm the primary keeps serving throughout, Patroni
+correctly reports the degraded-but-functional 1-of-2-quorum-standbys
+state, `synchronous_standby_names` live-updates to drop the dead node
+from its set (worth checking directly, not assumed), and the killed
+replica rejoins and catches back up cleanly once restarted, with
+`synchronous_standby_names` returning to naming both nodes again.
 
 ### Stage 4 — Primary failure, the real test
 
@@ -444,6 +569,10 @@ system fails safe rather than allowing any ambiguous promotion decision.
   settled reasoning without new information.
 - **Do not begin this doc's work before `docs/redis-ha-scope.md` is
   closed out**, per the explicit instruction to proceed in steps.
+- **Do not run Stage 3 as a single generic "kill a replica" test**, even
+  now that quorum mode is resolved and the two replicas are *expected* to
+  behave identically. That expectation is itself unverified until both
+  are actually tested independently — see the Stage 3 plan above.
 
 ## Resource budget — re-measured (2026-08-29), original estimate revised, still not fully resolved
 
@@ -467,10 +596,15 @@ exists.
 
 ## Deliverables expected from this pass
 
-1. Stage 0 and Stage 1 findings, reported before proceeding further
+1. Stage 0, Stage 1, and Stage 2 findings, reported before proceeding
+   further — **done**, see the results sections above for all three
 2. Explicit topology and fencing-mechanism decisions, documented here
-   before Stage 2 begins
+   before Stage 2 begins — topology, Patroni deployment model, and the
+   synchronous-standby mode (resolved 2026-08-31: quorum `ANY 1 (*)`,
+   see "Open decision" above) are done; the fencing mechanism (see "The
+   failure mode..." section above) remains undecided and needs resolving
+   before Stage 4
 3. A results doc analogous to `docs/testing-strategy-ha-supplement.md`,
-   capturing what Stages 2–6 actually found — expect this to require at
+   capturing what Stages 3–6 actually find — expect this to require at
    least one significant revision pass, the same way the Kafka doc did,
    given this layer's added complexity

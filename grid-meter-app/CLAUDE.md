@@ -68,17 +68,28 @@ upstream as of Loki 3.7.3.
   `V3__create_users_table.sql`) rather than mocking the security layer.
 - **Assume any durability/quorum-relevant setting is an undeclared
   default until verified live against the running system.** This project
-  has now found six separate instances of this same gap across its HA
+  has now found eight separate instances of this same gap across its HA
   work — the HikariCP `connection-timeout`, Kafka's `max.block.ms`,
-  `delivery.timeout.ms`, `acks`, `unclean.leader.election.enable`, and
-  Redis's `min-replicas-to-write` — every one silently defaulting to "no
-  real guarantee" until someone checked the live config (not just a repo
-  grep) and declared it explicitly. Treat this as the standing prior for
-  any remaining or future HA work (Postgres/Patroni, and any new service
-  added later), not a coincidence specific to Kafka. See
-  `docs/ha-scope.md`, `docs/testing-strategy-ha-supplement.md`,
-  `docs/redis-ha-scope.md`, and `docs/postgres-ha-scope.md` for the full
-  investigation trail.
+  `delivery.timeout.ms`, `acks`, `unclean.leader.election.enable`,
+  Redis's `min-replicas-to-write`, and Postgres's `synchronous_standby_names`
+  — every one silently defaulting to "no real guarantee" until someone
+  checked the live config (not just a repo grep) and declared it
+  explicitly. The 8th instance (Postgres's `synchronous_standby_names`
+  *mode* — named standby vs. priority list vs. quorum) is a sharper
+  variant worth distinguishing from the other seven: it wasn't merely
+  unconfigured, it was a decision `docs/postgres-ha-scope.md` had
+  *explicitly flagged in writing as not yet decided*, and Patroni's own
+  default (single named-standby, pinned to whichever replica registered
+  first) silently closed that exact open question before anyone actually
+  chose — resolved to quorum `ANY 1 (*)` only after the gap was noticed
+  and the decision deliberately made. Treat this as the standing prior
+  for any remaining or future HA work (any new service added later), not
+  a coincidence specific to Kafka — and treat an explicitly-flagged
+  "not yet decided" note in a doc as no safer than total silence; both
+  get silently resolved by someone else's default the moment work
+  proceeds without an explicit choice. See `docs/ha-scope.md`,
+  `docs/testing-strategy-ha-supplement.md`, `docs/redis-ha-scope.md`, and
+  `docs/postgres-ha-scope.md` for the full investigation trail.
 - **In chaos/failover test scripts, poll for the actual readiness
   condition — never assume a fixed `sleep N` reflects real convergence
   time.** The same HA testing effort found this exact bug shape three
