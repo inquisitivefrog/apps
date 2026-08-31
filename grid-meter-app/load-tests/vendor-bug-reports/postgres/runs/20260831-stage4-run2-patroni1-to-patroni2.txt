@@ -1,0 +1,49 @@
+Stage 4, Run 2: kill patroni-1 (leader)
+Script: load-tests/postgres-primary-failure-test.sh
+Captured verbatim from the actual run.
+
+=== Identifying current leader ===
+| patroni-1 | patroni-1 | Leader         | running   |  7 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  7 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  7 |
+Current leader: patroni-1
+Witness node: patroni-2
+
+=== Marker table + last acknowledged write ===
+ id  |            note             |          written_at
+-----+-----------------------------+-------------------------------
+ 100 | stage4-1788210738969112000 | 2026-08-31 21:12:19.050606+00
+(1 row)
+
+=== Killing patroni-1 ===
+ Container grid-meter-app-patroni-1-1  Stopping
+ Container grid-meter-app-patroni-1-1  Stopped
+
+=== Polling for a new leader ===
+  New leader: patroni-2 -- RTO: 1793ms
+
+=== Confirming the promoted primary (patroni-2) has the last acknowledged write ===
+ id  |            note             |          written_at
+-----+-----------------------------+-------------------------------
+ 100 | stage4-1788210738969112000 | 2026-08-31 21:12:19.050606+00
+(1 row)
+
+=== Client-observed failover check ===
+  [0s]..[8s] attempt: connection refused (server closing) x5
+  [10s] attempt: 172.18.0.19/32
+  -> MATCH: 172.18.0.19 == new leader's real IP
+
+=== Restoring patroni-1, probing for split-brain ===
+  [6ms] not yet reachable
+  [345ms] pg_is_in_recovery=t write=write-rejected
+  -> patroni-1 correctly reports itself as a replica after 345ms
+
+=== RESULT SUMMARY ===
+Old leader: patroni-1 -> New leader: patroni-2
+Old leader self-demoted at: 345ms
+SPLIT-BRAIN DETECTED: no
+
+=== Final cluster state ===
+| patroni-1 | patroni-1 | Replica        | streaming |  8 |
+| patroni-2 | patroni-2 | Leader         | running   |  8 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  8 |

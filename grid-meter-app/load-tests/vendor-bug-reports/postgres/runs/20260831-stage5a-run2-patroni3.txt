@@ -1,0 +1,38 @@
+Stage 5, Sub-scenario A, Run 2: partition patroni-3 from consul-3
+Script: load-tests/postgres-consul-partition-test.sh
+Captured verbatim from the actual run.
+
+=== Identifying current leader ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 11 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 11 |
+| patroni-3 | patroni-3 | Leader         | running   | 11 |
+Current leader: patroni-3 (paired with consul-3), witness: patroni-1
+
+=== Applying the blackhole + restarting consul-3 ===
+10.255.255.1 consul-3
+ Container grid-meter-app-consul-3-1  Restarting
+ Container grid-meter-app-consul-3-1  Started
+
+=== Monitoring both timers (up to 60s) ===
+  [5ms]     patroni-3 (partitioned): pg_is_in_recovery=f write=yes
+  [1512ms]..[17876ms] patroni-3 (partitioned): pg_is_in_recovery=f write=yes (12 polls)
+  [19362ms] patroni-3 (partitioned): pg_is_in_recovery=unknown write=no
+  -> patroni-3 stopped accepting writes / reports non-primary at 19362ms
+  -> Witness observes NEW leader (patroni-1) at 28659ms
+  Both timers resolved -- stopping monitoring loop.
+
+=== Removing the blackhole from patroni-3 ===
+(confirmed removed)
+
+=== Waiting for full cluster recovery ===
+| patroni-1 | patroni-1 | Leader         | running   | 12 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 12 |
+| patroni-3 | patroni-3 | Replica        | streaming | 12 |
+Fully recovered after 13s
+
+=== RESULT SUMMARY ===
+Partitioned primary: patroni-3 (paired with consul-3)
+Old primary self-demoted at: 19362 ms
+New leader (patroni-1) observed at: 28659 ms
+Gap: +9297ms (positive)
+SPLIT-BRAIN DETECTED: no

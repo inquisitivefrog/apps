@@ -1,0 +1,75 @@
+Stage 3, Sub-test B: kill patroni-2 (a Quorum Standby under quorum ANY 1(*))
+Script: load-tests/postgres-replica-failure-test.sh patroni-2
+Captured verbatim from the actual run.
+
+=== Baseline: cluster state ===
++ Cluster: gridmeter-postgres-ha (7679714027490770973) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader         | running   |  6 |             |     |            |     |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  6 |   0/50D24E0 |   0 |  0/50D24E0 |   0 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  6 |   0/50D24E0 |   0 |  0/50D24E0 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+
+=== Baseline: synchronous_standby_names ===
+ANY 1 ("patroni-2","patroni-3")
+
+=== Stopping patroni-2 ===
+ Container grid-meter-app-patroni-2-1  Stopping
+ Container grid-meter-app-patroni-2-1  Stopped
+
+=== Polling for synchronous_standby_names to drop patroni-2 (up to 60s) ===
+  [1s] ANY 1 ("patroni-3")
+  -> dropped from the quorum set after 1s
+
+=== Cluster state with patroni-2 down ===
+| patroni-1 | patroni-1 | Leader         | running   |  6 |
+| patroni-2 | patroni-2 | Replica        | streaming |  6 |  nosync: true, sync_priority: 0
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  6 |
+
+=== Write-acceptance check: 5 writes on the primary while patroni-2 is down ===
+  write 1: OK (93ms)
+  write 2: OK (91ms)
+  write 3: OK (92ms)
+  write 4: OK (94ms)
+  write 5: OK (94ms)
+  5/5 succeeded
+
+=== Restoring patroni-2 ===
+ Container grid-meter-app-patroni-2-1  Starting
+ Container grid-meter-app-patroni-2-1  Started
+
+=== Polling for patroni-2 to catch up ===
+  [1s] patroni-2 -> <not connected yet>
+  [6s]..[88s] patroni-2 -> streaming:true (stable)
+
+=== Final cluster state ===
++ Cluster: gridmeter-postgres-ha (7679714027490770973) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader         | running   |  6 |             |     |            |     |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  6 |   0/50D2EC8 |   0 |  0/50D2EC8 |   0 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  6 |   0/50D2EC8 |   0 |  0/50D2EC8 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+
+=== Final synchronous_standby_names ===
+ANY 1 ("patroni-2","patroni-3")
+
+=== Marker rows from this run (primary's view) ===
+ id |                 note                 |          written_at
+----+--------------------------------------+-------------------------------
+  9 | stage3-patroni-2-1788202944-baseline | 2026-08-31 19:02:24.722683+00
+ 10 | stage3-patroni-2-1788202944-outage-1 | 2026-08-31 19:02:28.351102+00
+ 11 | stage3-patroni-2-1788202944-outage-2 | 2026-08-31 19:02:28.445807+00
+ 12 | stage3-patroni-2-1788202944-outage-3 | 2026-08-31 19:02:28.538814+00
+ 13 | stage3-patroni-2-1788202944-outage-4 | 2026-08-31 19:02:28.635342+00
+ 14 | stage3-patroni-2-1788202944-outage-5 | 2026-08-31 19:02:28.731881+00
+(6 rows)
+
+=== Confirming those rows landed on patroni-2 too, via direct query ===
+(identical 6 rows confirmed present)
+
+Result: identical outcome to Sub-test A (kill patroni-3) -- the actual
+finding this stage was designed to produce: quorum ANY 1(*) behaves
+symmetrically, confirmed empirically rather than assumed from the
+config's name.

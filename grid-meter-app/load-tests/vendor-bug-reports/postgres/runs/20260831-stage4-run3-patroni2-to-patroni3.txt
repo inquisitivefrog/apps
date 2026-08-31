@@ -1,0 +1,55 @@
+Stage 4, Run 3: kill patroni-2 (leader)
+Script: load-tests/postgres-primary-failure-test.sh
+Captured verbatim from the actual run.
+
+=== Identifying current leader ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming |  8 |
+| patroni-2 | patroni-2 | Leader         | running   |  8 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  8 |
+Current leader: patroni-2
+Witness node: patroni-1
+
+=== Marker table + last acknowledged write ===
+ id  |            note             |          written_at
+-----+-----------------------------+-------------------------------
+ 133 | stage4-1788210763696790000 | 2026-08-31 21:12:43.777806+00
+(1 row)
+
+=== Killing patroni-2 ===
+ Container grid-meter-app-patroni-2-1  Stopping
+ Container grid-meter-app-patroni-2-1  Stopped
+
+=== Polling for a new leader ===
+  New leader: patroni-3 -- RTO: 1972ms
+
+=== Confirming the promoted primary (patroni-3) has the last acknowledged write ===
+ id  |            note             |          written_at
+-----+-----------------------------+-------------------------------
+ 133 | stage4-1788210763696790000 | 2026-08-31 21:12:43.777806+00
+(1 row)
+
+=== Client-observed failover check ===
+  [1s]..[13s] attempt: connection refused (server closing) x7
+  [15s] attempt: 172.18.0.21/32
+  -> MATCH: 172.18.0.21 == new leader's real IP
+
+=== Restoring patroni-2, probing for split-brain ===
+  [4ms] not yet reachable
+  [315ms] pg_is_in_recovery=t write=write-rejected
+  -> patroni-2 correctly reports itself as a replica after 315ms
+
+=== RESULT SUMMARY ===
+Old leader: patroni-2 -> New leader: patroni-3
+Old leader self-demoted at: 315ms
+SPLIT-BRAIN DETECTED: no
+
+=== Final cluster state ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming |  9 |
+| patroni-2 | patroni-2 | Replica        | streaming |  9 |
+| patroni-3 | patroni-3 | Leader         | running   |  9 |
+
+=== Aggregate across all 3 Stage 4 runs ===
+RTO range: 1676-1972ms
+Self-demotion range: 310-345ms
+Split-brain: 0/3 runs
+Every node tested as the failing primary exactly once.

@@ -1,0 +1,49 @@
+Stage 5, Sub-scenario A, Run 1 (corrected script): partition patroni-2 from consul-2
+Script: load-tests/postgres-consul-partition-test.sh
+Captured verbatim from the actual run.
+
+=== Confirming live ttl/loop_wait/retry_timeout ===
+loop_wait: 10
+retry_timeout: 10
+ttl: 30
+
+=== Identifying current leader and its paired Consul agent ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 10 |
+| patroni-2 | patroni-2 | Leader         | running   | 10 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming | 10 |
+Current leader: patroni-2 (paired with consul-2), witness: patroni-1
+
+=== Applying the blackhole: patroni-2 can no longer resolve consul-2 ===
+10.255.255.1 consul-2
+
+=== Restarting consul-2 to force patroni-2's existing pooled connection closed ===
+ Container grid-meter-app-consul-2-1  Restarting
+ Container grid-meter-app-consul-2-1  Started
+
+=== Monitoring both timers for up to 60s (ttl=30s expected ceiling) ===
+  [5ms]     patroni-2 (partitioned): pg_is_in_recovery=f write=yes
+  [7995ms]  patroni-2 (partitioned): pg_is_in_recovery=f write=yes
+  [9480ms]  patroni-2 (partitioned): pg_is_in_recovery=f write=yes
+  [10957ms] patroni-2 (partitioned): pg_is_in_recovery=f write=yes
+  [12444ms] patroni-2 (partitioned): pg_is_in_recovery=f write=yes
+  [13929ms] patroni-2 (partitioned): pg_is_in_recovery=f write=yes
+  [15423ms] patroni-2 (partitioned): pg_is_in_recovery=f write=no
+  -> patroni-2 stopped accepting writes / reports non-primary at 15423ms
+  -> Witness observes NEW leader (patroni-3) at 36511ms
+  Both timers resolved -- stopping monitoring loop.
+
+=== Removing the blackhole from patroni-2 ===
+(confirmed removed, /etc/hosts clean)
+
+=== Waiting for full cluster recovery ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 11 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 11 |
+| patroni-3 | patroni-3 | Leader         | running   | 11 |
+Fully recovered after 13s
+
+=== RESULT SUMMARY ===
+Partitioned primary: patroni-2 (paired with consul-2)
+Old primary self-demoted at: 15423 ms
+New leader (patroni-3) observed at: 36511 ms
+Gap: +21088ms (positive = old primary demoted BEFORE new leader elected)
+SPLIT-BRAIN DETECTED: no

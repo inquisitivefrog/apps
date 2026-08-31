@@ -1,0 +1,50 @@
+Stage 5, Sub-scenario B, Run 1: kept as evidence of two real script bugs.
+The underlying HA finding (a non-event) was still correct in this run --
+only the script's own self-reporting of raft-leader and timeline was
+broken.
+
+Script bugs, both in the first draft of
+load-tests/postgres-consul-nonleader-agent-loss-test.sh:
+1. `awk '$3=="leader"'` used the wrong field index against
+   `consul operator raft list-peers`'s output (Node ID Address State ...)
+   -- State is field $4, not $3. Result: "Raft leader: " printed empty.
+2. `awk -F'|' '$5'` used the wrong field index against `patronictl list`'s
+   pipe-delimited table (| Member | Host | Role | State | TL | ...) -- TL
+   is field $6, not $5. Result: "Baseline timeline: running" (printed the
+   State column's value instead of the real TL number).
+
+=== Raw output from the buggy run ===
+Raft leader:
+
+Primary: patroni-3 (paired with consul-3, to avoid)
+Target for this test: consul-1 (paired with patroni-1, a replica, not the raft leader)
+
+=== Baseline ===
+1
+Baseline timeline: running
+t
+
+=== Stopping consul-1 ===
+ Container grid-meter-app-consul-1-1  Stopping
+ Container grid-meter-app-consul-1-1  Stopped
+
+=== Monitoring for 30s ===
+  [0s]  primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=yes
+  [5s]  primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no
+  [11s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no
+  [16s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no
+  [22s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no
+  [27s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no
+
+=== Restoring consul-1 ===
+Visibility restored after 4s
+
+=== RESULT SUMMARY (correct despite the field-index bugs, confirmed
+independently against the final full patronictl listing showing TL=13
+unchanged throughout) ===
+Primary write acceptance / role affected: no
+patroni-1's actual replication role affected: no
+Cluster timeline changed: no (verified separately, not via this run's
+own broken $5-based check)
+
+Both bugs fixed and the test re-run cleanly -- see run2 in this directory.

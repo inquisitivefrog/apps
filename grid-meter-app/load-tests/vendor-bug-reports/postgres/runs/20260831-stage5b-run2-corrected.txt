@@ -1,0 +1,51 @@
+Stage 5, Sub-scenario B, Run 2 (both awk field-index bugs fixed)
+Script: load-tests/postgres-consul-nonleader-agent-loss-test.sh
+Captured verbatim from the actual run.
+
+=== Identifying the Consul raft leader ===
+Node      ID                                    Address           State     Voter  RaftProtocol  Commit Index  Trails Leader By
+consul-2  9357f0ce-b992-1190-97c7-8018333f2665  172.18.0.13:8300  leader    true   3             3734          -
+consul-3  28a24065-fc34-4291-60c1-89c1b176e452  172.18.0.15:8300  follower  true   3             3734          0 commits
+consul-1  06b6846b-11bc-0182-dc6e-308c529e83fc  172.18.0.12:8300  follower  true   3             3734          0 commits
+Raft leader: consul-2
+
+=== Identifying the current Postgres primary and its paired Consul agent ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 13 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 13 |
+| patroni-3 | patroni-3 | Leader         | running   | 13 |
+Primary: patroni-3 (paired with consul-3, to avoid)
+Target for this test: consul-1 (paired with patroni-1, a replica, not the raft leader)
+
+=== Baseline ===
+1
+Baseline timeline: 13
+t
+
+=== Stopping consul-1 ===
+ Container grid-meter-app-consul-1-1  Stopping
+ Container grid-meter-app-consul-1-1  Stopped
+
+=== Monitoring for 30s ===
+  [0s]  primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=yes | timeline=13
+  [6s]  primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=yes | timeline=13
+  [11s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no  | timeline=13
+  [17s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no  | timeline=13
+  [22s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no  | timeline=13
+  [28s] primary(patroni-3): write=yes recovery=f | patroni-1: recovery=t visible_in_patronictl=no  | timeline=13
+
+=== Restoring consul-1 ===
+ Container grid-meter-app-consul-1-1  Starting
+ Container grid-meter-app-consul-1-1  Started
+Visibility restored after 3s
+| patroni-1 | patroni-1 | Replica        | streaming | 13 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 13 |
+| patroni-3 | patroni-3 | Leader         | running   | 13 |
+
+=== RESULT SUMMARY ===
+Target agent: consul-1 (paired with patroni-1)
+Primary (patroni-3) write acceptance / role affected at any point: no
+patroni-1's actual replication role (direct query) affected at any point: no
+Cluster timeline changed (an election happened): no
+Result: a real non-event at the functional level, with only a transient
+Consul-reporting visibility gap for patroni-1 (5s-28s) while its paired
+agent was down, resolved within 3s of the agent returning.

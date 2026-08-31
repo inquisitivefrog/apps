@@ -1,0 +1,60 @@
+Stage 4, Run 1: kill patroni-3 (leader), measure RTO/write-durability/split-brain
+Script: load-tests/postgres-primary-failure-test.sh
+Captured verbatim from the actual run (second attempt -- the first attempt
+crashed mid-script on a set -e/command-substitution bug in the split-brain
+probe loop before completing; see the cross-project-lessons.md entry for
+that bug's own mechanism. This run is with the script fully fixed.)
+
+=== Identifying current leader ===
+| patroni-1 | patroni-1 | Quorum Standby | streaming |  6 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  6 |
+| patroni-3 | patroni-3 | Leader         | running   |  6 |
+Current leader: patroni-3
+Witness node for patronictl: patroni-1
+
+=== Marker table + the last acknowledged write, sent immediately before killing patroni-3 ===
+CREATE TABLE
+ id |            note            |          written_at
+----+-----------------------------+-------------------------------
+ 67 | stage4-1788210708906285000 | 2026-08-31 21:11:48.986977+00
+(1 row)
+INSERT 0 1
+
+=== Killing patroni-3 ===
+ Container grid-meter-app-patroni-3-1  Stopping
+ Container grid-meter-app-patroni-3-1  Stopped
+
+=== Polling for a new leader (up to 60s) ===
+  New leader: patroni-1 -- RTO: 1676ms
+
+=== Confirming the promoted primary (patroni-1) has the last acknowledged write ===
+ id |            note            |          written_at
+----+-----------------------------+-------------------------------
+ 67 | stage4-1788210708906285000 | 2026-08-31 21:11:48.986977+00
+(1 row)
+
+=== Client-observed failover check (Traefik :55432, Consul Catalog) ===
+  [0s]..[9s] attempt: psql: error: connection to server at "traefik" (172.18.0.6),
+      port 55432 failed: server closed the connection unexpectedly (x5, at 0/3/5/7/9s)
+  [11s] attempt: 172.18.0.22/32
+  Traefik routed the client to: 172.18.0.22
+  New leader's real IP:         172.18.0.22
+  -> MATCH: the real client-facing routing path correctly follows the failover
+
+=== Restoring patroni-3 and probing for a split-brain window ===
+ Container grid-meter-app-patroni-3-1  Starting
+ Container grid-meter-app-patroni-3-1  Started
+Probing patroni-3 directly (bypassing Traefik/routing entirely) every ~200ms...
+  [4ms] not yet reachable
+  [310ms] pg_is_in_recovery=t write=write-rejected
+  -> patroni-3 correctly reports itself as a replica after 310ms
+
+=== RESULT SUMMARY ===
+Old leader: patroni-3 -> New leader: patroni-1
+Old leader correctly demoted (pg_is_in_recovery=true) at: 310ms after restart
+SPLIT-BRAIN DETECTED: no
+
+=== Final cluster state ===
+| patroni-1 | patroni-1 | Leader         | running   |  7 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  7 |
+| patroni-3 | patroni-3 | Replica        | streaming |  7 |

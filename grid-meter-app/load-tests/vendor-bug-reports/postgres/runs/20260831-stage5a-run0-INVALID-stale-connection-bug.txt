@@ -1,0 +1,43 @@
+Stage 5, Sub-scenario A: FIRST ATTEMPT, INVALID -- kept as evidence of a real
+methodology bug, not a real HA finding. Do not cite this as "no self-protection."
+
+Mechanism used: /etc/hosts blackhole on patroni-3 (redirect consul-3 to an
+unroutable IP) -- WITHOUT also restarting the target Consul agent. This
+was later found to have no effect on Patroni's already-open, pooled
+connection to Consul.
+
+=== Monitoring for 60s (ttl=30s expected ceiling) ===
+  [4ms]     patroni-3 (partitioned): pg_is_in_recovery=f write=yes
+  [1479ms]  patroni-3 (partitioned): pg_is_in_recovery=f write=yes
+  [2982ms]  patroni-3 (partitioned): pg_is_in_recovery=f write=yes
+  ... (identical pattern every ~1.5s) ...
+  [59773ms] patroni-3 (partitioned): pg_is_in_recovery=f write=yes
+
+RESULT (invalid): old primary never self-demoted, new leader never
+promoted, zero split-brain -- looked like a complete absence of
+self-protection over the full 60s window.
+
+ROOT CAUSE CONFIRMED (via direct docker compose logs patroni-3 inspection,
+after restarting consul-3 manually to test the hypothesis):
+
+2026-08-31 22:09:36,354 DEBUG: Converted retries value: 0 -> Retry(...)
+2026-08-31 22:09:36,355 DEBUG: http://consul-3:8500 "GET /v1/kv/service/gridmeter-postgres-ha/?recurse=1 HTTP/1.1" 200 None
+2026-08-31 22:09:36,357 DEBUG: Converted retries value: 0 -> Retry(...)
+2026-08-31 22:09:36,358 DEBUG: http://consul-3:8500 "PUT /v1/session/renew/0d9d98a9-8443-2e6b-16b3-a2481db92a1e HTTP/1.1" 200 235
+
+^ Patroni was still successfully renewing its Consul session at 22:09:36,
+well after the blackhole was applied -- confirming it was talking to
+Consul over an existing pooled connection the /etc/hosts change never
+touched. Only after consul-3 was restarted (forcibly closing that
+connection) did the next request fail:
+
+2026-08-31 22:09:46,355 DEBUG: Resetting dropped connection: consul-3
+[... a few seconds later, real Postgres-level demotion activity, "waiting
+for WAL to become available", /primary returning 503 ...]
+2026-08-31 22:10:12,642 DEBUG: Retry got exception: HTTPConnectionPool(host='consul-3', port=8500):
+    Max retries exceeded ... ConnectTimeoutError ... 'Connection to consul-3 timed out.'
+
+This confirmed the fix needed: the script now restarts the target Consul
+agent immediately after applying the blackhole. See the 3 corrected runs
+(run1/run2/run3 files in this directory) for the valid, trustworthy
+measurements.
