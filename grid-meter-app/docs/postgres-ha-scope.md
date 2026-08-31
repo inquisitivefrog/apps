@@ -828,14 +828,99 @@ acknowledged write immediately before killing the primary).
   a single clean run cannot, on its own, close out the fencing decision's
   conditional acceptance.
 
-### Stage 5 — Consensus-store degradation while Postgres is otherwise healthy
+### Stage 5 — Consensus-store degradation while Postgres is otherwise healthy — expanded (2026-09-01) into two explicit sub-scenarios
 
-A scenario Kafka and Redis don't really have: degrade or partition
-Consul (not Postgres or Patroni directly) while the primary/replica are
-both healthy. Confirm Patroni fails safe — refusing to make a failover
-decision it can't safely make, per Stage 0's Consul-quorum baseline —
-rather than doing something to Postgres based on stale or
-partially-available consensus-store state.
+**Reframing before this stage runs: this is likely the real test of this
+doc's named worst case, not a lesser follow-on to Stage 4.** Stage 4
+tested a node that was genuinely killed and restarted — its self-
+demotion measurement (~310–345ms, see "Stage 4 results" above) answers
+"how fast does a node that just came back from being dead figure out
+it's a replica." It does **not** answer the scenario "The failure
+mode..." section above actually names as the sharpest risk: a primary
+that becomes unreachable to Consul but is **never dead at all** — still
+running, still serving client connections the entire time. That
+scenario's safety net is Patroni's leader-lock **TTL expiry**, not the
+fast local self-demotion Stage 4 measured, and the exposure window is
+however long `ttl` is actually configured for — Patroni's own shipped
+default is 30 seconds, roughly two orders of magnitude wider than what
+Stage 4 found. Treat this stage's finding as potentially requiring a
+revisit of the "Fencing decision" conditional acceptance above, not as
+a foregone confirmation of it.
+
+**Prerequisite, before designing the actual test**: check
+`ttl`/`loop_wait`/`retry_timeout` live (`patronictl show-config` or
+equivalent), not by grep. Given this project's 8-for-8 record on
+undeclared durability defaults, the working assumption going in should
+be that these are still at Patroni's shipped defaults until verified —
+and the actual `ttl` value is the number that determines how dangerous
+this stage's finding will be, so it needs to be known before the test
+is designed, not discovered as a side effect of running it.
+
+**Two genuinely different scenarios bundled under "degrade or
+partition" — don't conflate them, run and report both separately.**
+
+#### Sub-scenario A (the one that matters most): partition the current primary from Consul specifically, while Postgres itself keeps running uninterrupted
+
+Sever connectivity between the primary's own Patroni process and Consul
+specifically — a surgical block (e.g. blocking Consul's port from
+inside the primary's container, or a targeted network-level disconnect
+scoped to just the Consul-facing path) rather than killing or restarting
+anything. Postgres itself must keep running and keep accepting client
+connections for the entire duration — that's the point of this
+sub-scenario, and if the mechanism used ends up stopping Postgres too,
+it isn't testing this case.
+
+**Explicitly check, not assume:**
+- Does the primary actually keep believing it's primary (and keep
+  accepting writes) for the live duration of the partition, up to
+  roughly the confirmed `ttl` value — or does something demote it
+  sooner than that number would predict?
+- Does the primary correctly self-demote once its lock renewal fails
+  and TTL expires, measured precisely (not inferred from a status
+  message) — and does this happen without a manual restart, purely from
+  the TTL mechanism itself?
+- **The real split-brain check**: does the rest of the cluster (which
+  still has healthy Consul quorum) promote a replica *before* the
+  partitioned primary's TTL expires? If so, there is a real window,
+  potentially seconds wide rather than Stage 4's sub-second window,
+  where two nodes could both believe they're primary and both accept
+  writes. Measure this window's actual duration if it exists — don't
+  just note that it exists or doesn't.
+- Does the client-facing routing path (Traefik + Consul Catalog)
+  correctly continue routing to whichever node Consul currently reports
+  as passing throughout, the same verification standard applied in
+  Stage 4?
+- **Run at least 3 times**, matching this project's correctness-finding
+  bar — arguably more warranted here than in Stage 4, given this
+  sub-scenario is the one most likely to actually move the fencing
+  decision's risk assessment rather than confirm it.
+
+#### Sub-scenario B (a lighter baseline, not a substitute for A): kill one non-leader Consul agent, cluster keeps quorum
+
+Kill 1 of the 3 Consul agents (not the current Consul raft leader) while
+Postgres primary/replicas are both healthy and untouched. Consul's own
+quorum survival here was already established in Stage 0 — this
+sub-scenario isn't re-testing that. Its only purpose is confirming
+Patroni doesn't notice or react at all.
+
+**Explicitly check, not assume:**
+- Postgres primary/replica roles are completely unaffected throughout —
+  no promotion attempt, no self-demotion, no logged concern from
+  Patroni.
+- Any brief Consul client reconnection Patroni performs (if the agent
+  it happened to be talking to was the one killed) resolves
+  transparently, with no observable effect on Postgres.
+- This sub-scenario should be close to a non-event. If it isn't — if
+  Patroni reacts in any way — that's a more surprising and higher-
+  priority finding than a clean pass, since it would mean sub-quorum
+  Consul agent loss (a routine, expected event) has a real effect on
+  the data tier, which nothing in this doc's design intends.
+
+**Do not report these two sub-scenarios as a single "Stage 5: PASS."**
+Given how different their risk profiles are, report each with its own
+verdict — a clean Sub-scenario B result says nothing about Sub-scenario
+A, and only Sub-scenario A's result should inform whether the fencing
+decision's conditional acceptance needs revisiting.
 
 ### Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents while Postgres is under real load
 
@@ -857,6 +942,12 @@ system fails safe rather than allowing any ambiguous promotion decision.
   Postgres) with a genuinely worse consequence than data loss or
   temporary unavailability — concurrent writers producing irreconcilable
   data — which is exactly why it wasn't skipped.
+- **Do not treat Stage 4's clean split-brain result as already covering
+  Stage 5's Sub-scenario A.** They test different mechanisms (a
+  restarted node's local self-demotion vs. a live, never-dead primary's
+  TTL-bounded exposure) with potentially very different window sizes —
+  see Stage 5's own reframing above. A clean Stage 4 does not predict a
+  clean Stage 5.
 - **Do not reconsider ZooKeeper** as the consensus store "since it's
   already familiar from prior Cassandra/Spark work." `ha-scope.md`
   already ruled this out explicitly; re-litigating it here would undo
