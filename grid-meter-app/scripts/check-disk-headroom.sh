@@ -26,7 +26,19 @@
 WARN_GB="${DISK_HEADROOM_WARN_GB:-30}"
 STOP_GB="${DISK_HEADROOM_STOP_GB:-15}"
 
-AVAIL_GB=$(df -g /System/Volumes/Data 2>/dev/null | awk 'NR==2 {print $4}')
+# macOS (BSD df, this project's dev machine): -g gives gigabyte blocks directly.
+# /System/Volumes/Data is macOS-specific and doesn't exist on Linux, so this pipeline fails
+# outright there (not just an empty AVAIL_GB) -- the `|| true` on each attempt is required, not
+# decorative: this script is *sourced*, inheriting the caller's `set -e`, and a failing pipeline
+# would otherwise abort the whole calling script (run.sh, etc.) right here, before the graceful
+# "couldn't read disk space, don't block" fallback below ever gets a chance to run. Found via a
+# real nightly CI failure (GitHub Actions' Linux runners) that produced zero output and a bare
+# exit 1 -- the exact shape this script exists to prevent for load tests, self-inflicted here.
+AVAIL_GB=$(df -g /System/Volumes/Data 2>/dev/null | awk 'NR==2 {print $4}') || true
+if [ -z "$AVAIL_GB" ]; then
+  # Linux (GNU df, e.g. CI runners): -BG sets 1G block size and suffixes values with "G".
+  AVAIL_GB=$(df -BG / 2>/dev/null | awk 'NR==2 {gsub(/G/,"",$4); print $4}') || true
+fi
 if [ -z "$AVAIL_GB" ]; then
   echo "check-disk-headroom.sh: could not read free disk space -- not blocking, but this check is not working." >&2
   return 0 2>/dev/null || exit 0
