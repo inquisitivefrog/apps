@@ -1076,22 +1076,113 @@ plainly rather than smoothed over:**
    state via a pipe like `| head` — if the reader side closes early, the
    writer can be killed mid-mutation before any trap/cleanup handler
    fires, regardless of how carefully that handler was written.
-2. **An unexplained loop bug, honestly reported as mitigated rather than
-   root-caused**: an early version of the monitoring loop's condition
-   used `date +%s%N`-based nanosecond arithmetic and exited after only
-   ~2.5s instead of running the full 60s — isolated repro attempts of
-   the identical pattern didn't reproduce it, so the actual mechanism
-   remains unknown. Rather than keep chasing an unreproduced timing
-   anomaly against live infrastructure, the loop was redesigned around
-   bash's `SECONDS` builtin (already proven reliable elsewhere in this
-   project's scripts) for loop control, decoupling correctness from
-   millisecond arithmetic entirely. This trades sub-second timing
-   precision for robustness — an honest, stated tradeoff, not a claimed
-   fix for a bug whose cause was never actually found.
+2. **An unexplained loop bug, initially reported as mitigated rather than
+   root-caused — later likely explained, see the Stage 6 addendum
+   below.** An early version of the monitoring loop's condition used
+   `date +%s%N`-based nanosecond arithmetic and exited after only ~2.5s
+   instead of running the full 60s — isolated repro attempts of the
+   identical pattern didn't reproduce it at the time, so the loop was
+   redesigned around bash's `SECONDS` builtin (already proven reliable
+   elsewhere in this project's scripts) as a robustness fix, decoupling
+   correctness from millisecond arithmetic entirely, without a confirmed
+   root cause. **The Stage 6 addendum's third bug (below) makes it
+   likely this fix treated a symptom, not the actual cause** — the same
+   early-exit shape recurred even after this fix, and was traced that
+   time to a foreground→background tool-execution migration, not
+   date/arithmetic at all. Left here as originally written, with the
+   correction below rather than edited away, matching this project's
+   standing practice of recording a reversal rather than quietly fixing
+   the record.
 
 Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
 
-**All 6 stages of this doc's plan are now complete.**
+## Stage 6 addendum (2026-09-02): the two flagged gaps closed — Traefik behavior isolated, recovery transition directly watched; core verdict reconfirmed
+
+Re-run 3 more times specifically to close two items the original Stage
+6 pass left open: whether Traefik's client-routing behavior during
+quorum loss was actually observed (it wasn't, in the original 3 runs),
+and whether the recovery transition (restoring 2-of-3, quorum regained)
+was watched directly rather than inferred from "cluster healthy
+afterward."
+
+**Core safety verdict: still clean.** Consul correctly refused writes
+without quorum in all 3 additional runs, no unsafe self-promotion, and
+the original leader self-demoted every time (~10–12s) — consistent with
+the 3–15s range already established across the first Stage 6 pass and
+its paired-agent nuance. This re-run adds confirming data points; it
+doesn't change the verdict.
+
+**Traefik finding (new, correctly isolated as its own observation, not
+folded into the Postgres/Patroni safety verdict)**: during quorum loss,
+Traefik froze completely — it kept routing to the same stale "last
+known primary" for the full ~59s outage in all 3 runs, with no error,
+because Consul can't push any routing update without quorum. **Worth
+being precise about why this isn't dangerous, given what Stage 6 already
+established**: since the original primary always correctly self-demotes
+(~10–12s) and no replacement is ever elected during a genuine quorum
+loss, a client routed to that stale "last known primary" reaches a node
+that will itself correctly reject any write (it's in recovery, not
+primary) — the failure a client actually observes is a Postgres-level
+read-only-transaction rejection, not a Traefik-level connection
+failure. That's a meaningfully different failure signature than
+"connection refused," worth knowing precisely since it determines what
+a real client's retry/error-handling logic needs to expect from this
+specific scenario. The general lesson, stated once for future reference
+rather than only for this stack: a service-discovery-backed router
+isn't merely slow to catch up during a quorum-loss outage — it is
+**stuck**, serving its last-known state unconditionally, until quorum
+returns and can push an update.
+
+**Recovery-transition finding (closes the gap flagged after the
+original Stage 6 write-up)**: watched directly by restoring the 2
+killed agents one at a time, rather than restoring all at once and
+checking health only afterward. Result: **exactly one node cleanly
+elected every time, no ambiguous double-promotion in any of the 3
+runs.** Time-to-election varied substantially with no clear pattern
+(7s, 37s, 7s) — reported honestly as unexplained variance rather than
+forcing an explanation that isn't supported by the data, the same
+standard already applied to this stage's earlier unresolved timing
+anomaly. The correctness property (never ambiguous) held regardless of
+how long any individual election took.
+
+**A third real test-tooling bug found and root-caused — and, on
+inspection, most likely the real explanation for the earlier "unexplained
+timing anomaly" above, not a separate mystery.** During the
+staggered-restore recovery check, one run's 2-of-3 recovery loop
+silently stopped after a single iteration with no error — the same
+symptom shape as the original ~2.5s early-exit anomaly, even though this
+loop already used the `SECONDS` builtin fix applied after that first
+occurrence. **Mechanism, this time actually identified**: the underlying
+shell command had exceeded the tool environment's foreground-execution
+window and been force-migrated to run in the background mid-script, and
+that migration itself disrupts the running script's loop execution.
+Confirmed by re-running the identical scenario launched as a background
+command from the very start (no mid-run migration) — it completed
+cleanly with a normal result (7000ms).
+
+**This means the `SECONDS`-builtin fix applied earlier likely treated a
+symptom, not the cause** — the original anomaly's real trigger was
+plausibly this same foreground→background migration, not the
+millisecond-arithmetic issue it was blamed on at the time. Worth stating
+plainly rather than quietly correcting: an earlier explanation looked
+reasonable, was acted on, and turned out to be incomplete once more
+evidence came in — the same discipline already applied to this
+project's two retracted Kafka JIRA misattributions.
+
+**The underlying cluster had, in fact, converged correctly on its own
+during the failed observation** (checked directly afterward) — this
+bug cost *visibility* into a real, safe outcome, it never masked an
+unsafe one. Same important distinction already drawn for Kafka's
+Scenario 3 sleep bug: a correct result observed for the wrong reason
+(or, here, observed incompletely) is a different finding than a wrong
+result.
+
+**Portable lesson, recorded in `docs/cross-project-lessons.md`**: launch
+any script expected to run long enough to risk a foreground timeout as
+a background command from the start, rather than letting it be migrated
+mid-execution.
+
+**All 6 stages, plus this closing addendum, are now complete.**
 
 ### Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents while Postgres is under real load — expanded (2026-09-01); **done, see results above**
 

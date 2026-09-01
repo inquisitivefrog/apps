@@ -241,6 +241,22 @@ own explicit guard, and writing a correct guard on one line is no
 evidence the very next, structurally-similar line has one too — check
 each command substitution on its own, don't infer safety by proximity.
 
+**Never pipe the output of a script that mutates real infrastructure
+state through something that can close its read side early (`| head
+-N`, `| less`, etc.).** A Postgres HA chaos script's live output was
+piped through `head -30` for a quick look, which triggered a `SIGPIPE`
+once `head` stopped reading — killing the script outright before its
+own cleanup/restore logic ever ran, leaving 2 Consul agents stopped
+mid-test. Caught and manually restored immediately, but the general
+risk is not specific to this one script: any pipe reader that can exit
+before the writer finishes (`head`, `grep -m1`, a terminal pager) can
+signal the writer to die at an arbitrary point, and a script performing
+real mutations (starting/stopping infrastructure, writing data) needs
+that mutation-and-cleanup sequence to complete regardless of whether
+anyone is still watching its output. Redirect to a file and `tail`/`cat`
+it separately instead of piping directly when the thing on the left is
+mutating anything real.
+
 ## CI and process
 
 **When promoting a CI job to a required branch-protection check, verify
@@ -266,3 +282,31 @@ then run the script — not a raw compound one-liner.** Easier for a
 teammate (or a future session) to review, rerun, and diff; also matches
 more cleanly against permission-allowlist patterns than an ad hoc chain of
 `&&`-joined commands with inline flags that change slightly each time.
+
+**A long-running shell command that gets force-migrated from foreground
+to background mid-run (after exceeding the tool environment's
+foreground-execution window) can corrupt that script's own loop
+execution — launch it as a background command from the start instead of
+letting a timeout migrate it mid-way.** Found in a Postgres HA recovery
+test: a monitoring loop silently stopped after a single iteration with
+no error, initially misdiagnosed (in an earlier, similar-looking
+incident) as a `date`/nanosecond-arithmetic bug and worked around by
+switching to bash's `SECONDS` builtin for loop timing. The same failure
+shape recurred later in a different loop that already used that fix,
+which is what exposed the real mechanism: the underlying command had
+been running long enough to hit the tool environment's own
+foreground-timeout and got migrated to background execution partway
+through, and that migration itself — not the loop's own timing logic —
+disrupted execution. Confirmed by re-running the identical scenario
+launched as a background command from the very start (no mid-run
+migration): it completed cleanly. **Worth stating plainly**: the
+original `SECONDS`-builtin fix likely treated a symptom of this same
+migration, not its actual cause — an earlier explanation looked
+reasonable at the time and turned out to be incomplete once more
+evidence came in. Both times, the underlying operation had actually
+completed correctly; the bug cost visibility into the result, not
+correctness of the result itself. General rule: for any test or chaos
+script expected to run long enough to risk hitting a tool's foreground
+timeout, launch it as a background process from the start rather than
+letting an automatic mid-run migration risk disrupting its internal
+loop state.
