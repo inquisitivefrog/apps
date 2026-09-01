@@ -315,7 +315,7 @@ account — Findings A and B, both root-caused, fixed, and re-verified, plus
 Stage 5's clean pass — is the remaining item, most naturally owned by
 `docs/redis-ha-scope.md` itself rather than duplicated here.
 
-## Minor follow-up found post-hoc (2026-08-30, not yet fixed)
+## Minor follow-up found post-hoc (2026-08-30) — FIXED at the root (2026-09-01)
 
 `load-tests/redis-quorum-loss.sh`'s restore step (`docker compose start
 "$CURRENT_MASTER" sentinel-2 sentinel-3`) uses `start`, not
@@ -327,8 +327,46 @@ the container's own command-line `--sentinel monitor ...` flag gets
 re-applied on top of it, declaring the same directive twice. Earlier
 Redis scripts never hit this because their reset step always
 `--force-recreate`s first, wiping the ephemeral conf file. Restored via
-manual `--force-recreate` this time; the script itself should do the same
-in its restore step rather than a plain `start`. Low priority — doesn't
-affect any of the reported Stage 5 findings, since it only manifests on
-container restart, after the measurements that matter were already
-taken.
+manual `--force-recreate` this time; left as a low-priority, not-yet-fixed
+loose end.
+
+**Actually tripped for real during Stage 6** (see below): cutting the app
+over to a Sentinel-aware client meant adding `sentinel-1`/`sentinel-2`/
+`sentinel-3` to api's `depends_on`, which brought up existing-but-stopped
+Sentinel containers via plain `start` and crashed them with this exact
+error — no longer a theoretical low-priority risk once something in
+normal compose startup actually depends on the Sentinels being up.
+**Fixed at the root** in `docker-compose.yml`: all 3 Sentinel commands
+now run `rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec
+redis-server ...`, so every start gets a clean config file regardless of
+whether the container was freshly created or merely restarted. The
+`redis-quorum-loss.sh` script itself still uses `start` in its restore
+step, but the underlying crash condition it could hit is now closed
+structurally rather than needing every call site individually fixed.
+
+## Stage 6 — Application-level cutover and validation (complete, 3/3 clean)
+
+Full writeup: `docs/redis-ha-scope.md`'s "Stage 6 results" section.
+Summary: cut the app's Redis client over from a fixed
+`spring.data.redis.host`/`port` to Sentinel-aware
+`spring.data.redis.sentinel.master`/`.nodes` (verified the exact
+property names against the real `spring-boot-data-redis-4.1.0.jar`,
+which Spring Boot 4.x renamed from `RedisProperties` to
+`DataRedisProperties`). Re-ran Stage 4's primary-kill scenario 3/3 clean
+through the app's real `POST /api/v1/readings` endpoint:
+
+| Run | Old → new master | Infra RTO | Requests | HTTP failures | Cache caught up |
+|---|---|---|---|---|---|
+| 1 | redis → redis-replica-2 | 7158ms | 87 | 0 | Yes |
+| 2 | redis → redis-replica-2 | 6333ms | 86 | 0 | Yes |
+| 3 | redis → redis-replica-1 | 6731ms | 83 | 0 | Yes |
+
+Zero HTTP-level impact in every run -- architecturally expected, since
+this app's write path persists to Postgres and publishes to Kafka
+entirely independently of Redis; the cache write happens later in an
+async Kafka consumer. Confirmed via direct log inspection that Lettuce's
+`ConnectionWatchdog` does not immediately re-resolve the master via
+Sentinel -- it first retries the same dead address for several seconds
+-- yet the async cache write still caught up with zero lost updates in
+every run, most plausibly because Spring Kafka's default consumer retry
+covers the gap until Lettuce reconnects.

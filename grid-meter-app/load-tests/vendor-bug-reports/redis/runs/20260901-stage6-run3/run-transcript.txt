@@ -1,0 +1,73 @@
+=== Resetting to canonical topology (redis=primary) before this run ===
+ Container grid-meter-app-redis-1 Recreate 
+ Container grid-meter-app-redis-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreate 
+ Container grid-meter-app-redis-replica-2-1 Recreate 
+ Container grid-meter-app-sentinel-1-1 Recreate 
+ Container grid-meter-app-sentinel-2-1 Recreate 
+ Container grid-meter-app-sentinel-3-1 Recreated 
+ Container grid-meter-app-sentinel-1-1 Recreated 
+ Container grid-meter-app-sentinel-2-1 Recreated 
+ Container grid-meter-app-redis-replica-2-1 Recreated 
+ Container grid-meter-app-redis-replica-1-1 Recreated 
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+ Container grid-meter-app-sentinel-2-1 Starting 
+ Container grid-meter-app-sentinel-3-1 Starting 
+ Container grid-meter-app-sentinel-1-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Started 
+ Container grid-meter-app-sentinel-1-1 Started 
+ Container grid-meter-app-sentinel-2-1 Started 
+ Container grid-meter-app-sentinel-3-1 Started 
+ Container grid-meter-app-redis-replica-2-1 Started 
+
+=== Waiting for Sentinel to discover both replicas ===
+Both replicas discovered at t+11s
+
+=== Waiting for the primary to consider both replicas 'good' for min-replicas-to-write ===
+Primary considers replicas good at t+1s
+Current master: redis
+
+=== Restarting api against the freshly reset topology ===
+ Container grid-meter-app-api-1 Restarting 
+ Container grid-meter-app-api-1 Started 
+api is healthy
+
+=== Logging in ===
+=== Creating a test meter for this run ===
+Meter: ef7ebd2a-84ac-4622-af05-6e4b59a61b0c
+
+=== Starting continuous app-level write traffic (background, ~3.3 req/s) ===
+
+=== Killing redis ===
+ Container grid-meter-app-redis-1 Stopping 
+ Container grid-meter-app-redis-1 Stopped 
+
+=== Polling up to 30s for a surviving replica to become master (infra-level) ===
+New master: redis-replica-1 -- infra-level RTO: 6731ms
+
+=== Continuing app traffic for 20s past infra-level promotion ===
+
+=== Stopping traffic and restoring redis ===
+ Container grid-meter-app-redis-1 Starting 
+ Container grid-meter-app-redis-1 Started 
+
+=== Waiting up to 20s for the LAST request's async cache write to land on redis-replica-1 ===
+
+=== Checking api logs for Redis-specific exceptions during the outage window (Kafka consumer health) ===
+
+=== RESULT SUMMARY ===
+Old master: redis -> New master: redis-replica-1
+Total requests during run: 83 (success: 83, failed/timed-out: 0)
+HTTP status code breakdown:
+  83 201
+Async cache write for the LAST request caught up on new master (redis-replica-1): yes (~0ms after promotion+20s window started)
+Lines mentioning Redis in api logs during outage window: 6
+
+=== Cleanup: deleting the test meter's readings via direct SQL (readings are immutable, no DELETE endpoint) ===
+DELETE 83
+DELETE 1
+1

@@ -36,11 +36,12 @@ optional follow-up polish:
   cluster and re-ran the primary-kill scenario 3/3 clean through the
   app's real endpoints; HikariCP self-heals via
   `PrimaryFailoverSQLExceptionOverride` with no restart needed.
-- **Redis**: `docs/redis-ha-scope.md`'s new final stage (added
-  2026-09-02) — confirm the app's actual Redis client (whatever
-  Spring Data Redis config it uses) is pointed at and correctly recovers
-  through Sentinel-driven failover, not just that `redis-cli`/Sentinel
-  themselves behave correctly.
+- **Redis**: **done (2026-09-01)** — `docs/redis-ha-scope.md`'s Stage 6
+  cut the app over to a Sentinel-aware client
+  (`spring.data.redis.sentinel.*`) and re-ran the primary-kill scenario
+  3/3 clean through the app's real ingest endpoint; zero HTTP-level
+  impact in any run, since this app's write path never touches Redis
+  synchronously, and the async cache write survived every failover.
 - **Kafka**: **confirmed clean, no remediation needed (2026-09-02)** —
   checked `kafka-ha-demo.sh` directly rather than assuming either way;
   every scenario logs in for a real JWT and sends readings via

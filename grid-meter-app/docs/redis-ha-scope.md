@@ -1,13 +1,15 @@
 # grid-meter-app — High-availability scope: Redis (Sentinel)
 
-**Status (2026-09-02): Stages 1–5 complete, infrastructure validated
-clean throughout — but Stage 6 (application-level cutover and
-validation) has not been started.** Whether the app's actual Redis
-client is even Sentinel-aware hasn't been confirmed live. See "Stage 6 —
-Application-level cutover and validation" below before treating Stages
-1–5's clean results as meaning the app's caching layer is currently
-protected. Same gap found (and detailed) in the Postgres pass; see
-`docs/ha-scope.md`'s new standing lesson.
+**Status (2026-09-01): all 6 stages complete, including application-level
+cutover and validation.** The app's Redis client is now Sentinel-aware
+(`spring.data.redis.sentinel.master`/`.nodes`, not a fixed host:port),
+confirmed via 3 clean primary-failure runs driving real traffic through
+the app's actual ingest endpoint — zero HTTP-level impact in any run,
+and the async Redis cache write survived every failover. See "Stage 6
+results" below for the full findings, including a previously-known,
+unfixed Sentinel bug that got tripped by this cutover and fixed at the
+root. Same app-vs-infrastructure gap found (and detailed) in the
+Postgres pass; see `docs/ha-scope.md`'s standing lesson.
 
 ## Why this doc exists
 
@@ -510,7 +512,7 @@ specific to Postgres.
 
 ### Stage 6 — Application-level cutover and validation: confirm the app's real Redis client survives a Sentinel-driven failover
 
-**Not yet started.**
+**Done (2026-09-01). See "Stage 6 results" below.**
 
 **Step 1 — Check the live config first, don't assume.** Confirm exactly
 how the app currently connects to Redis — likely
@@ -567,6 +569,116 @@ Stage 5 above.
 stage in this doc**: real numbers, explicit confirmed-not-assumed
 checks, and honest reporting of anything unexpected.
 
+## Stage 6 results (2026-09-01): cutover confirmed clean, 3/3 runs, zero HTTP-level impact — plus a real bug hit and fixed along the way
+
+**Step 1 (check the live config) — confirmed exactly as suspected, not
+assumed.** `docker compose exec api env | grep -i redis` (and
+`application.yml`) showed `spring.data.redis.host=redis` /
+`port=6379` — a fixed connection to the original primary container by
+name, with zero Sentinel awareness. If Sentinel ever promoted a
+replica, the app would have kept talking to whatever `redis` currently
+resolved to, oblivious to the failover.
+
+**Step 2 (cutover) — done.** Switched to
+`spring.data.redis.sentinel.master`/`.nodes`
+(`sentinel-1:26379,sentinel-2:26379,sentinel-3:26379`). Spring Boot 4.x
+renamed `RedisProperties` to `DataRedisProperties` — the exact property
+names were verified directly against the real
+`spring-boot-data-redis-4.1.0.jar` (via `javap`) rather than assumed
+from memory or an older Spring Boot version's docs. Architecturally
+simpler than the Postgres cutover: no separate routing/proxy layer is
+needed here, since Lettuce itself asks the Sentinels who the current
+master is and subscribes to their `+switch-master` pubsub events.
+
+**A real, previously-known-but-unfixed bug hit immediately, not a
+cutover design problem.** Adding `sentinel-1`/`sentinel-2`/`sentinel-3`
+to api's `depends_on` brought up existing-but-stopped Sentinel
+containers via a plain `start` rather than a fresh recreate. Their
+command (`touch /tmp/sentinel.conf && exec redis-server
+/tmp/sentinel.conf --sentinel monitor mymaster ...`) crashed with
+`*** FATAL CONFIG FILE ERROR *** ... Duplicate master name` — a stale
+`/tmp/sentinel.conf` from a much earlier session had persisted in the
+container's writable layer (only wiped on a full recreate, not a
+`stop`/`start`), and already contained a `sentinel monitor` line that
+conflicted with the same directive re-applied via command-line args.
+This is exactly the "`docker compose start` instead of
+`--force-recreate` can crash Sentinels" issue flagged as a known,
+low-priority, unfixed loose end after the original Stage 3-5 pass — now
+actually tripped by ordinary use rather than a chaos test. **Fixed at
+the root**: `rm -f /tmp/sentinel.conf` before `touch`, so every start
+gets a clean config file regardless of whether the container was freshly
+created or merely restarted.
+
+**Step 3 (functional check) — confirmed working, real login through
+real reading ingest.** A submitted reading correctly landed in Postgres
+and its `reading:latest:{meterId}` cache entry was confirmed directly
+against whichever node Sentinel currently reported as master. **One
+honest scope note**: the doc's Step 3 asked to confirm "both the write
+and read path" — there is currently no app-level GET endpoint that
+reads this cache key back (architecture.md describes the dashboard
+reading Redis-backed state, but no controller wires that up yet), so
+only the write path could be exercised through the app; the read side
+was verified via direct `redis-cli GET` instead. Not a gap introduced by
+this stage — a pre-existing scope gap in the app itself, noted rather
+than silently worked around.
+
+**Step 4 (re-run Stage 4's primary-kill through the app) — done, 3/3
+clean.** Built `load-tests/redis-app-primary-failure-test.sh`: resets to
+canonical topology, restarts api fresh against it, generates continuous
+real `POST /api/v1/readings` traffic while killing the primary, and
+checks both the HTTP-level and Redis-cache-level outcome.
+
+| Run | Old → new master | Infra RTO | Requests | HTTP failures | Cache caught up |
+|---|---|---|---|---|---|
+| 1 | redis → redis-replica-2 | 7158ms | 87 | 0 | Yes, ~0ms into the 20s window |
+| 2 | redis → redis-replica-2 | 6333ms | 86 | 0 | Yes, ~0ms into the 20s window |
+| 3 | redis → redis-replica-1 | 6731ms | 83 | 0 | Yes, ~0ms into the 20s window |
+
+**Zero HTTP-level impact in all 3 runs — architecturally expected, not
+a coincidence, and worth stating precisely why.** Unlike Postgres,
+where the write path synchronously touches the database, this app's
+`POST /api/v1/readings` persists to Postgres and publishes to Kafka
+entirely independently of Redis — the cache write
+(`ReadingEventConsumer.onReadingEvent` →
+`redisTemplate.opsForValue().set(...)`) happens later, in an async Kafka
+consumer, fully decoupled from the HTTP request/response. A Redis
+outage was never going to make the ingest endpoint fail; the real
+question this stage existed to answer was whether the *async* cache
+write survives the failover or is silently lost, which it did in every
+run.
+
+**A genuinely informative mechanism, confirmed by direct log
+inspection, not inferred**: Lettuce's `ConnectionWatchdog` does **not**
+immediately re-resolve the master via Sentinel on connection loss — it
+first keeps retrying the *same, now-dead* address (`Cannot reconnect to
+[redis/<unresolved>:6379]`) for several seconds before eventually
+reconnecting to the real new master. Despite that, every run's cache
+still caught up with zero user-visible failures — most plausibly because
+Spring Kafka's default consumer error handling retries a failed listener
+invocation, and by the time of a later retry Lettuce had already
+reconnected correctly. Stated as the most plausible mechanism based on
+direct evidence, not asserted with more certainty than the evidence
+supports — distinguishing "Lettuce alone recovered gracefully" from
+"Kafka's own retry papered over a slower Lettuce recovery" would need a
+deeper trace than this stage's scope, but either way the end-to-end
+outcome (no lost cache updates) held in all 3 runs.
+
+**A real script bug found and fixed while building the test, worth
+recording since it's a new root cause, not a repeat of a known one**:
+the first version used `set -euo pipefail`, copied from
+`postgres-app-primary-failure-test.sh`'s pattern without checking it
+against logic borrowed from `redis-primary-failover-rto.sh`, which
+deliberately uses `set -uo pipefail` (no `-e`). The script died silently
+with zero output at its very first readiness-poll: `grep -c "^ip$"`
+exits `1` whenever it finds zero matches (even though it still correctly
+prints `"0"`), and under `pipefail` that non-zero pipeline exit fed
+straight into `-e`, killing the script before its own `if` check ever
+ran. Fixed by dropping `-e` to match the proven, considered choice
+already made in the script this logic was borrowed from, rather than
+auditing every command substitution for this specific gotcha.
+
+Full evidence: `load-tests/vendor-bug-reports/redis/NOTES.md`.
+
 ## What NOT to do in this pass
 
 - **Do not build Redis Cluster (sharding).** That's a capacity mechanism
@@ -613,7 +725,9 @@ the same discipline that caught this correction.
    section appended here — capturing what Stages 3–5 actually found,
    including any surprises, using the same "state what was tested, what
    was found, what's confirmed vs. inferred" discipline as the Kafka doc
-4. Stage 6 (application-level cutover and validation) — **not started**.
-   Added 2026-09-02 after the same gap was found in the Postgres pass;
-   see Stage 6's own section above and `docs/ha-scope.md`'s new standing
-   lesson. Outranks any remaining housekeeping in this doc.
+4. Stage 6 (application-level cutover and validation) — **done**. Added
+   2026-09-02 after the same gap was found in the Postgres pass; see
+   Stage 6's own results section above. The app's Redis client is now
+   Sentinel-aware, confirmed by 3 clean primary-failure runs driving
+   real traffic through the app's real endpoints, with zero HTTP-level
+   impact in any run.
