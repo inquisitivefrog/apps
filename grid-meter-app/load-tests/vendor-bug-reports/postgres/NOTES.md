@@ -479,3 +479,45 @@ discarded and re-run after restoring the guard.
 
 Full writeup: `docs/postgres-ha-scope.md`'s "Stage 7 results" section.
 This closes all 7 stages of the staged Postgres/Patroni/Consul HA pass.
+
+## Post-Stage-7 follow-up: the bootstrap.users/post_bootstrap hook was verified -- and was wrong
+
+Stage 7 declared `patroni.yml`'s `bootstrap.users`/`post_bootstrap`
+config as the fix for the missing `gridmeter` role/database, but
+explicitly flagged it as never exercised against a real from-scratch
+bootstrap. Verified directly per explicit request, since an unfired hook
+is exactly the kind of unverified claim this project doesn't let stand.
+
+Testing it required tearing down more than expected: each Patroni
+node's Postgres data actually lives on a Docker-managed anonymous
+volume (inherited from the `postgres:18.4` base image), not purely in
+the container's writable layer as `patroni.yml`'s own comment claimed --
+a second unverified assumption, caught while verifying the first.
+Consul's KV tree for the cluster also had to be cleared explicitly, or
+Patroni would see an "already initialized" cluster and try to rejoin
+the empty node as a replica rather than bootstrap fresh.
+
+With both genuinely wiped, the fresh bootstrap **failed**:
+`bootstrap.users` is dead configuration in Patroni 4.1.5 -- confirmed
+directly against Patroni's own `bootstrap.py` source, which explicitly
+checks for a `users` key and does nothing but log an error saying user
+creation via that key stopped being supported in v4.0.0. The role was
+never created, so `post_bootstrap`'s `CREATE DATABASE ... OWNER
+gridmeter` failed, and Patroni treats a failing `post_bootstrap` as
+fatal -- it renamed the fresh data directory to `.failed` and aborted
+the whole bootstrap.
+
+Fixed per Patroni's own error message: both the role and database are
+now created inside `post_bootstrap` itself, using `psql`'s multiple `-c`
+flag support (Patroni execs the command via `shlex.split()` with no
+shell, so a `&&`-joined string would never have worked either --
+confirmed against the same source read, not assumed). Re-verified
+against a second genuine from-scratch bootstrap: clean. `patroni-1`
+self-bootstrapped as Leader at t+2s with the role and database already
+present; both replicas joined and streamed; a real end-to-end app
+request (login + create meter) succeeded against the fresh cluster.
+
+New script: `load-tests/postgres-patroni-fresh-bootstrap-test.sh`.
+Transcripts for both the failing run (confirming the bug was real) and
+the passing run (confirming the fix) are in `runs/`. Full account:
+`docs/postgres-ha-scope.md`'s Stage 7 results section.

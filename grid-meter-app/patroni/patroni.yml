@@ -54,15 +54,30 @@ bootstrap:
   # section): the bootstrap section above only ever created the postgres superuser -- unlike the
   # standalone `postgres` service, which gets its `gridmeter` role/database for free from the
   # official image's POSTGRES_USER/POSTGRES_DB env vars, this cluster never had an equivalent.
-  # `users` creates the role on bootstrap; `post_bootstrap` then creates the database it owns,
-  # matching SPRING_DATASOURCE_USERNAME/PASSWORD below. Fixed live on the already-running cluster
-  # via direct psql (CREATE ROLE/CREATE DATABASE) first, since this cluster has no persistent
-  # volume to force-recreate without cost -- this declares the same fix for the next fresh
-  # bootstrap, but the post_bootstrap hook itself has not yet been exercised against an actual
-  # from-scratch bootstrap in this project; treat it as unverified until it has been.
-  users:
-    gridmeter:
-      password: gridmeter
-      options:
-        - createdb
-  post_bootstrap: psql -U postgres -c "CREATE DATABASE gridmeter OWNER gridmeter;"
+  #
+  # A `bootstrap.users` key was tried first and looked plausible, but is dead in this Patroni
+  # version -- confirmed directly against Patroni 4.1.5's own bootstrap.py, not assumed from
+  # older docs/memory: `post_bootstrap()` explicitly checks `config.get('users')` and only
+  # `logger.error('User creation is not be supported starting from v4.0.0. Please use
+  # "bootstrap.post_bootstrap" script to create users.')` -- it silently does nothing beyond that
+  # log line. This was only discovered by actually exercising a from-scratch bootstrap (this
+  # project's own standing "an unfired hook is an unverified claim" discipline): the role never
+  # got created, so `post_bootstrap`'s own `CREATE DATABASE ... OWNER gridmeter` failed with
+  # `role "gridmeter" does not exist`, and Patroni treats a failing post_bootstrap script as fatal
+  # -- it renames the just-initialized data directory to `.failed` and aborts the whole bootstrap,
+  # not just the one statement. Fixed per Patroni's own error message: both the role and the
+  # database are now created inside `post_bootstrap` itself, in the one script Patroni actually
+  # still supports for this. Re-verified against a genuine from-scratch bootstrap (full
+  # teardown of the Postgres data volumes AND the Consul DCS state for this cluster, so Patroni
+  # couldn't mistake it for an existing cluster to rejoin) -- see
+  # load-tests/postgres-patroni-fresh-bootstrap-test.sh and
+  # load-tests/vendor-bug-reports/postgres/NOTES.md for the full account.
+  # Patroni does NOT run this through a shell -- confirmed directly against bootstrap.py's
+  # call_post_bootstrap(), which tokenizes the string with shlex.split() and execs the result
+  # directly, so a shell-style `&&`-joined two-command string would never work here (it would just
+  # get passed to psql as garbage extra arguments, not interpreted as two commands). psql's own
+  # support for multiple -c flags in one invocation is the correct way to run two statements here.
+  post_bootstrap: >-
+    psql -U postgres
+    -c "CREATE ROLE gridmeter WITH LOGIN CREATEDB PASSWORD 'gridmeter';"
+    -c "CREATE DATABASE gridmeter OWNER gridmeter;"

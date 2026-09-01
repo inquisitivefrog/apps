@@ -1519,9 +1519,59 @@ missing:
   `CREATE ROLE`/`CREATE DATABASE` (no persistent volume to force-recreate
   without cost, so a live fix was the lower-risk path), and declared in
   `patroni/patroni.yml`'s `bootstrap.users`/`post_bootstrap` for the next
-  fresh bootstrap — **that hook itself has not yet been exercised against
-  an actual from-scratch bootstrap and should be treated as unverified
-  until it has been**, stated plainly rather than implied fixed.
+  fresh bootstrap — **that hook itself was left explicitly unverified
+  against an actual from-scratch bootstrap at the time.**
+  **Update (2026-09-01): verified, and the declared hook was wrong —
+  fixed properly.** Explicitly requested (relayed via Claude Chat)
+  specifically because a hook that has never fired is exactly the kind
+  of unverified claim this project doesn't let stand. Testing it for
+  real required tearing down more than expected: each Patroni node's
+  data actually lives on a Docker-managed **anonymous volume** (inherited
+  from the `postgres:18.4` base image's own `VOLUME` declaration), not
+  purely in the container's writable layer as this file's own comment in
+  `patroni.yml` claimed ("this cluster deliberately has no persistent
+  volume") — a second unverified assumption, caught while trying to
+  verify the first one. `docker compose rm -f -v` didn't actually delete
+  the old volumes (they became dangling, not removed — a minor, separate
+  loose end), but Docker does create a genuinely fresh, empty volume for
+  a recreated container regardless, so the test was still valid.
+  Consul's own KV tree for the cluster (`initialize`, `leader`,
+  `members`, `history`) also had to be cleared explicitly — left in
+  place, Patroni would see an "already initialized" cluster and try to
+  *rejoin* the empty node as a replica rather than bootstrap it fresh,
+  never exercising the hook at all. With both wiped, the fresh bootstrap
+  **failed**: `bootstrap.users` turned out to be **dead configuration in
+  Patroni 4.1.5** — confirmed directly against Patroni's own
+  `bootstrap.py` source rather than assumed from older docs, its
+  `post_bootstrap()` method explicitly checks for a `users` key and does
+  nothing but log `'User creation is not be supported starting from
+  v4.0.0. Please use "bootstrap.post_bootstrap" script to create
+  users.'`. The role was never created, so `post_bootstrap`'s own
+  `CREATE DATABASE ... OWNER gridmeter` failed with `role "gridmeter"
+  does not exist`, and Patroni treats a failing `post_bootstrap` as
+  fatal — it renamed the freshly-initialized data directory to
+  `.failed` and aborted the entire bootstrap, not just that one
+  statement. **Fixed per Patroni's own error message**: both the role
+  and the database are now created inside `post_bootstrap` itself, using
+  `psql`'s support for multiple `-c` flags in one invocation rather than
+  a shell `&&` (confirmed via the same source read that Patroni execs
+  `shlex.split(cmd)` directly, with no shell interpreting the string, so
+  `&&` would have just been passed to `psql` as garbage arguments).
+  **Re-verified against a second genuine from-scratch bootstrap with the
+  fix in place: clean.** `patroni-1` self-bootstrapped as Leader at t+2s,
+  and the `gridmeter` role and database both existed immediately,
+  confirmed directly, before `patroni-2`/`patroni-3` even joined or any
+  manual intervention occurred. Both replicas subsequently joined and
+  streamed cleanly, and a real end-to-end app request (login + create
+  meter) succeeded against the fresh cluster. Held to source-level root
+  cause plus one full failing run and one full passing run bracketing
+  the fix, rather than this project's usual 3-run bar for
+  probabilistic/race-dependent findings — this is a deterministic
+  code-path check (the same YAML either parses and execs correctly or it
+  doesn't), and root-causing it against Patroni's actual source is
+  stronger evidence than additional black-box repetitions would add.
+  Full transcripts (both the failing and the passing run):
+  `load-tests/vendor-bug-reports/postgres/runs/`.
 - **The registration mechanism the routing spike depended on was
   explicitly flagged in this doc as "not yet durable"** (manual
   re-registration required after any fresh Consul bootstrap) — closed

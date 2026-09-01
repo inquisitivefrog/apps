@@ -1,0 +1,121 @@
+Saving this run's output to load-tests/vendor-bug-reports/postgres/runs/20260901-122701-fresh-bootstrap/run-transcript.txt
+
+================================================================
+Pre-teardown: confirming the current (about-to-be-destroyed) cluster is healthy
+================================================================
+service "patroni-1" is not running
+
+================================================================
+Step 1: stopping and removing all 3 Patroni containers WITH their anonymous volumes (-v)
+================================================================
+Anonymous volumes before removal:  /  / 
+No stopped containers
+Confirming those specific volume IDs are actually gone, not just detached:
+
+================================================================
+Step 2: clearing Consul's KV tree for this cluster scope, so it looks genuinely new
+================================================================
+Success! Deleted keys with prefix: service/gridmeter-postgres-ha/
+--- confirming empty ---
+
+================================================================
+Step 3: bringing up patroni-1 alone first (matching the original Stage 2 bootstrap order)
+================================================================
+ Container grid-meter-app-consul-1-1 Running 
+ Container grid-meter-app-patroni-1-1 Creating 
+ Container grid-meter-app-patroni-1-1 Created 
+ Container grid-meter-app-patroni-1-1 Starting 
+ Container grid-meter-app-patroni-1-1 Started 
+Waiting up to 60s for patroni-1 to report itself as a running Leader...
+patroni-1 self-bootstrapped as Leader at t+2s
++ Cluster: gridmeter-postgres-ha (7680650597495504932) -------+-----+------------+-----+
+| Member    | Host      | Role   | State   | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+--------+---------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader | running |  1 |             |     |            |     |
++-----------+-----------+--------+---------+----+-------------+-----+------------+-----+
+
+================================================================
+Step 4: checking whether the gridmeter role/database exist YET -- this is the actual test
+================================================================
+(if the hook works, these should already exist purely from patroni-1's own bootstrap, before
+patroni-2/patroni-3 even join, and before any manual intervention of any kind)
+gridmeter role exists: YES
+gridmeter database exists: YES
+
+================================================================
+Step 5: bringing up patroni-2 and patroni-3, confirming they join as replicas
+================================================================
+ Container grid-meter-app-consul-2-1 Running 
+ Container grid-meter-app-consul-3-1 Running 
+ Container grid-meter-app-patroni-3-1 Creating 
+ Container grid-meter-app-patroni-2-1 Creating 
+ Container grid-meter-app-patroni-3-1 Created 
+ Container grid-meter-app-patroni-2-1 Created 
+ Container grid-meter-app-patroni-3-1 Starting 
+ Container grid-meter-app-patroni-2-1 Starting 
+ Container grid-meter-app-patroni-3-1 Started 
+ Container grid-meter-app-patroni-2-1 Started 
+Waiting up to 60s for both to show up as streaming replicas...
+!!! Replicas did not both join within 60s -- real finding, reporting current state:
++ Cluster: gridmeter-postgres-ha (7680650597495504932) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role    | State            | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+---------+------------------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader  | running          |  1 |             |     |            |     |
+| patroni-2 | patroni-2 | Replica | creating replica |    |     unknown |     |    unknown |     |
+| patroni-3 | patroni-3 | Replica | creating replica |    |     unknown |     |    unknown |     |
++-----------+-----------+---------+------------------+----+-------------+-----+------------+-----+
+
+================================================================
+Step 6: re-registering postgres-primary in Consul (registrar is a one-shot, already exited)
+================================================================
+ Container grid-meter-app-patroni-1-1 Running 
+ Container grid-meter-app-patroni-2-1 Running 
+ Container grid-meter-app-consul-3-1 Running 
+ Container grid-meter-app-consul-1-1 Running 
+ Container grid-meter-app-patroni-3-1 Running 
+ Container grid-meter-app-consul-2-1 Running 
+ Container grid-meter-app-postgres-primary-registrar-1 Recreate 
+ Container grid-meter-app-postgres-primary-registrar-1 Recreated 
+ Container grid-meter-app-postgres-primary-registrar-1 Starting 
+ Container grid-meter-app-postgres-primary-registrar-1 Started 
+postgres-primary-registrar-1  | Waiting for patroni-1:8008 to be reachable...
+postgres-primary-registrar-1  | Waiting for patroni-2:8008 to be reachable...
+postgres-primary-registrar-1  | Waiting for patroni-3:8008 to be reachable...
+postgres-primary-registrar-1  | Registering postgres-primary-patroni-1 via consul-1
+postgres-primary-registrar-1  | 
+postgres-primary-registrar-1  | Registering postgres-primary-patroni-2 via consul-2
+postgres-primary-registrar-1  | 
+postgres-primary-registrar-1  | Registering postgres-primary-patroni-3 via consul-3
+postgres-primary-registrar-1  | 
+postgres-primary-registrar-1  | postgres-primary registration complete.
+
+================================================================
+Step 7: restarting api against the fresh cluster, confirming Flyway + real app traffic work
+================================================================
+ Container grid-meter-app-api-1 Restarting 
+ Container grid-meter-app-api-1 Started 
+Waiting for api health...
+api healthy at t+18s
+Flyway ran all 6 migrations against the fresh database: no
+Real end-to-end check (login + create meter): {"id":"007de56c-1004-4147-ba0d-1ab4b1eb1279","serialNumber":"FRESH-BOOTSTRAP-TEST","location":"Test","status":"ACTIVE","installedAt":"2026-01-01T00:00:00Z","customerId":"11111111-1111-1111-1111-111111111111","createdAt":"2026-09-01T19:28:47.486497134Z","updatedAt":"2026-09-01T19:28:47.486497134Z"}
+
+================================================================
+RESULT SUMMARY
+================================================================
+gridmeter role created purely by the bootstrap.users hook: YES
+gridmeter database created purely by the post_bootstrap hook: YES
+Hook overall verdict: WORKS AS DECLARED -- verified, not assumed
+Both replicas joined cleanly: NO
+Flyway migrations ran clean against the fresh database: no
+Real end-to-end app request (login + create meter) succeeded: yes
+
+================================================================
+Final cluster state
+================================================================
++ Cluster: gridmeter-postgres-ha (7680650597495504932) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader         | running   |  1 |             |     |            |     |
+| patroni-2 | patroni-2 | Replica        | streaming |  1 |   0/5000000 |   0 |  0/5000000 |   0 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  1 |   0/4000000 |   0 |  0/4000000 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+

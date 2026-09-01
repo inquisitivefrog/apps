@@ -1,0 +1,101 @@
+Saving this run's output to load-tests/vendor-bug-reports/postgres/runs/20260901-122205-fresh-bootstrap/run-transcript.txt
+
+================================================================
+Pre-teardown: confirming the current (about-to-be-destroyed) cluster is healthy
+================================================================
++ Cluster: gridmeter-postgres-ha (7679714027490770973) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader         | running   | 26 |             |     |            |     |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 26 |   0/57B2628 |   0 |  0/57B2628 |   0 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming | 26 |   0/57B2628 |   0 |  0/57B2628 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+
+================================================================
+Step 1: stopping and removing all 3 Patroni containers WITH their anonymous volumes (-v)
+================================================================
+Anonymous volumes before removal: baf2b8c605e7adea671e9136bd2b7523879da383f56a6d49a5f20cb3953d0801 / 57a750edbf4a1c8e77883205ddb4b25bb2199e7489300883ac9d76d45a6f5ea2 / dbbd776908644bdc9fcbc812a52a185b22f4fedf44b9a9b5c23fcb978c3cd19c
+ Container grid-meter-app-patroni-1-1 Stopping 
+ Container grid-meter-app-patroni-3-1 Stopping 
+ Container grid-meter-app-patroni-2-1 Stopping 
+ Container grid-meter-app-patroni-1-1 Stopped 
+ Container grid-meter-app-patroni-3-1 Stopped 
+ Container grid-meter-app-patroni-2-1 Stopped 
+Going to remove grid-meter-app-patroni-3-1, grid-meter-app-patroni-2-1, grid-meter-app-patroni-1-1
+ Container grid-meter-app-patroni-1-1 Removing 
+ Container grid-meter-app-patroni-2-1 Removing 
+ Container grid-meter-app-patroni-3-1 Removing 
+ Container grid-meter-app-patroni-1-1 Removed 
+ Container grid-meter-app-patroni-2-1 Removed 
+ Container grid-meter-app-patroni-3-1 Removed 
+Confirming those specific volume IDs are actually gone, not just detached:
+  baf2b8c605e7adea671e9136bd2b7523879da383f56a6d49a5f20cb3953d0801 -- STILL EXISTS (real problem, -v did not remove it)
+  57a750edbf4a1c8e77883205ddb4b25bb2199e7489300883ac9d76d45a6f5ea2 -- STILL EXISTS (real problem, -v did not remove it)
+  dbbd776908644bdc9fcbc812a52a185b22f4fedf44b9a9b5c23fcb978c3cd19c -- STILL EXISTS (real problem, -v did not remove it)
+
+================================================================
+Step 2: clearing Consul's KV tree for this cluster scope, so it looks genuinely new
+================================================================
+Success! Deleted keys with prefix: service/gridmeter-postgres-ha/
+--- confirming empty ---
+
+================================================================
+Step 3: bringing up patroni-1 alone first (matching the original Stage 2 bootstrap order)
+================================================================
+ Container grid-meter-app-consul-1-1 Running 
+ Container grid-meter-app-patroni-1-1 Creating 
+ Container grid-meter-app-patroni-1-1 Created 
+ Container grid-meter-app-patroni-1-1 Starting 
+ Container grid-meter-app-patroni-1-1 Started 
+Waiting up to 60s for patroni-1 to report itself as a running Leader...
+!!! patroni-1 did not bootstrap as Leader within 60s -- real failure, aborting
+patroni-1-1  | 2026-09-01 19:22:10,508 DEBUG: Converted retries value: 0 -> Retry(total=0, connect=None, read=None, redirect=0, status=None)
+patroni-1-1  | 2026-09-01 19:22:10,510 DEBUG: http://consul-1:8500 "DELETE /v1/kv/service/gridmeter-postgres-ha/initialize HTTP/1.1" 200 4
+patroni-1-1  | 2026-09-01 19:22:10.510 UTC [45] LOG:  received immediate shutdown request
+patroni-1-1  | 2026-09-01 19:22:10.513 UTC [45] LOG:  database system is shut down
+patroni-1-1  | 2026-09-01 19:22:11,436 DEBUG: API thread: 172.18.0.15 - - "GET /primary HTTP/1.1" 503 - latency: 0.233 ms
+patroni-1-1  | 2026-09-01 19:22:11,511 INFO: renaming data directory to /var/lib/postgresql/patroni-data.failed
+patroni-1-1  | 2026-09-01 19:22:11,511 DEBUG: Converted retries value: 0 -> Retry(total=0, connect=None, read=None, redirect=0, status=None)
+patroni-1-1  | 2026-09-01 19:22:11,512 DEBUG: http://consul-1:8500 "PUT /v1/session/renew/d1c67f7f-e0d9-13aa-1eb1-4c0129d2247b HTTP/1.1" 200 235
+patroni-1-1  | 2026-09-01 19:22:11,512 DEBUG: Converted retries value: 0 -> Retry(total=0, connect=None, read=None, redirect=0, status=None)
+patroni-1-1  | 2026-09-01 19:22:11,517 DEBUG: http://consul-1:8500 "PUT /v1/kv/service/gridmeter-postgres-ha/members/patroni-1?acquire=d1c67f7f-e0d9-13aa-1eb1-4c0129d2247b HTTP/1.1" 200 4
+patroni-1-1  | 2026-09-01 19:22:11,939 DEBUG: Converted retries value: 0 -> Retry(total=0, connect=None, read=None, redirect=0, status=None)
+patroni-1-1  | 2026-09-01 19:22:11,944 DEBUG: http://consul-1:8500 "PUT /v1/kv/service/gridmeter-postgres-ha/members/patroni-1?acquire=d1c67f7f-e0d9-13aa-1eb1-4c0129d2247b HTTP/1.1" 200 4
+patroni-1-1  | 2026-09-01 19:22:11,944 DEBUG: Converted retries value: 0 -> Retry(total=0, connect=None, read=None, redirect=0, status=None)
+patroni-1-1  | 2026-09-01 19:22:11,946 DEBUG: http://consul-1:8500 "GET /v1/kv/service/gridmeter-postgres-ha/?recurse=1&consistent=1 HTTP/1.1" 200 429
+patroni-1-1  | 2026-09-01 19:22:11,946 DEBUG: Converted retries value: 0 -> Retry(total=0, connect=None, read=None, redirect=0, status=None)
+patroni-1-1  | 2026-09-01 19:22:11,949 DEBUG: http://consul-1:8500 "PUT /v1/kv/service/gridmeter-postgres-ha/members/patroni-1?acquire=d1c67f7f-e0d9-13aa-1eb1-4c0129d2247b HTTP/1.1" 200 4
+patroni-1-1  | Process Process-1:
+patroni-1-1  | Traceback (most recent call last):
+patroni-1-1  |   File "/usr/lib/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+patroni-1-1  |     self.run()
+patroni-1-1  |     ~~~~~~~~^^
+patroni-1-1  |   File "/usr/lib/python3.13/multiprocessing/process.py", line 108, in run
+patroni-1-1  |     self._target(*self._args, **self._kwargs)
+patroni-1-1  |     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/__main__.py", line 264, in patroni_main
+patroni-1-1  |     abstract_main(Patroni, configfile)
+patroni-1-1  |     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/daemon.py", line 242, in abstract_main
+patroni-1-1  |     controller.run()
+patroni-1-1  |     ~~~~~~~~~~~~~~^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/__main__.py", line 218, in run
+patroni-1-1  |     super(Patroni, self).run()
+patroni-1-1  |     ~~~~~~~~~~~~~~~~~~~~~~~~^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/daemon.py", line 186, in run
+patroni-1-1  |     self._run_cycle()
+patroni-1-1  |     ~~~~~~~~~~~~~~~^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/__main__.py", line 229, in _run_cycle
+patroni-1-1  |     logger.info(self.ha.run_cycle())
+patroni-1-1  |                 ~~~~~~~~~~~~~~~~~^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/ha.py", line 2396, in run_cycle
+patroni-1-1  |     info = self._run_cycle()
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/ha.py", line 2216, in _run_cycle
+patroni-1-1  |     return self.post_bootstrap()
+patroni-1-1  |            ~~~~~~~~~~~~~~~~~~~^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/ha.py", line 2092, in post_bootstrap
+patroni-1-1  |     self.cancel_initialization()
+patroni-1-1  |     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+patroni-1-1  |   File "/opt/patroni-venv/lib/python3.13/site-packages/patroni/ha.py", line 2085, in cancel_initialization
+patroni-1-1  |     raise PatroniFatalException('Failed to bootstrap cluster')
+patroni-1-1  | patroni.exceptions.PatroniFatalException: Failed to bootstrap cluster
