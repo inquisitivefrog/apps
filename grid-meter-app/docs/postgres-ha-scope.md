@@ -197,7 +197,7 @@ each backed by an **HTTP health check against that node's own Patroni
 than depending on Patroni to successfully push or maintain any state.
 **Reason for the deviation, found via research before implementation,
 not discovered the hard way**: a documented upstream Patroni issue
-([#2517](https://github.com/zalando/patroni/issues/2517)) describes
+([#2517](https://github.com/patroni/patroni/issues/2517)) describes
 Patroni's own `register_service` mechanism getting its Consul service
 tag stuck stale after a Consul communication hiccup — exactly the kind
 of "config exists but silently stops being enforced" gap this whole HA
@@ -387,23 +387,17 @@ expect this pass to need more stages, not fewer, and expect findings from
 Redis's pass to change some of the specifics below before this actually
 starts.
 
-**Known gap, found 2026-09-01, not yet closed**: every "Full evidence"
-pointer below cites `load-tests/vendor-bug-reports/postgres/NOTES.md`,
-but that file currently only covers Stage 0 — it stops at "Next: Stage 1
-(config audit)" and was never updated for Stages 1 through 5, including
-the work in this session. The pointers themselves are correct (that is
-the right file, per `docs/vendor-bug-report-process.md`'s convention);
-what's missing is that the file hasn't been kept current against this
-doc's own narrative. This is testing-evidence bookkeeping — indexing
-runs and linking back to this doc — done as part of executing each
-stage's actual test runs, distinct from this doc's own narrative
-write-ups. Flagging explicitly rather than leaving four dead-end
-pointers implicit, per this project's own standing habit of naming known
-gaps instead of letting a citation silently go stale. **Backfilling
-Stages 1–5 into `NOTES.md`, then keeping it current from Stage 6
-onward, is the open action item** — this doc's own results sections
-remain accurate regardless, but a reader who follows a "Full evidence"
-link expecting the underlying data won't find it yet.
+**Known gap, found 2026-09-01 — resolved same day.** Every "Full
+evidence" pointer below cites `load-tests/vendor-bug-reports/postgres/NOTES.md`,
+which had only covered Stage 0 (stopping at "Next: Stage 1 (config
+audit)") despite being cited as the evidence source for every stage
+since. Flagged rather than left implicit, per this project's own habit
+of naming known gaps instead of letting a citation silently go stale.
+**Backfilled the same day**: Stages 1–5 are now indexed in `NOTES.md`,
+and it's confirmed current as of Stage 5. The "Full evidence" pointers
+below can now be trusted to resolve to real data, not just a correctly-
+named but empty destination. Keeping it current from Stage 6 onward
+remains the standing expectation, not a one-time catch-up.
 
 ## Stage 0 results (2026-08-29): PASS, 3/3 clean — with three real bugs found and fixed on day one
 
@@ -1029,10 +1023,103 @@ verdict — a clean Sub-scenario B result says nothing about Sub-scenario
 A, and only Sub-scenario A's result should inform whether the fencing
 decision's conditional acceptance needs revisiting.
 
-### Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents while Postgres is under real load
+### Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents while Postgres is under real load — expanded (2026-09-01)
 
-Direct analog of Kafka's and Redis's quorum-loss scenarios. Confirm the
+Direct analog of Kafka's and Redis's quorum-loss scenarios: confirm the
 system fails safe rather than allowing any ambiguous promotion decision.
+But this stage has a methodology subtlety the earlier two didn't, worth
+resolving before building the test, not discovered mid-run.
+
+**Methodology note, found before running rather than the hard way**:
+Patroni's own Consul reads use `consistent=1`, which Consul refuses
+outright without a raft quorum. That means `patronictl list` — the tool
+every earlier stage leaned on for a quick status check — will likely
+**fail outright on every node** once quorum is lost, not just report
+stale data. Consul-derived state is exactly the thing this failure mode
+breaks, so it can't be the source of truth for this stage's safety
+check. **Poll each node's own `pg_is_in_recovery()` directly via `psql`
+instead** — the same discipline Stage 0 applied to "alive" vs. "voting
+member" and Stage 5 applied to Consul-reported visibility vs. actual
+replication state, now showing up a third time in this same
+investigation.
+
+**A real prerequisite finding, found while verifying the note above —
+the 9th confirmed instance of this project's undeclared-durability/
+quorum-default pattern, and a load-bearing one for the exact property
+this stage exists to check.** `PATRONI_CONSUL_CONSISTENCY` (Patroni's
+own config key, accepting `default`, `consistent`, or `stale`) governs
+which of these two read modes Patroni actually uses against Consul —
+and it was **completely undeclared anywhere in this project's config**,
+not in `patroni.yml`, not as an environment variable, confirmed by
+direct check rather than assumed. This matters specifically because
+Stage 6's whole fail-safe premise depends on Patroni reading consistent
+(quorum-backed) state rather than a stale read from a possibly-lagging
+individual agent — a stale read during quorum loss could return outdated
+cluster state and risk exactly the unsafe promotion decision this stage
+is designed to catch. Live behavior was already confirmed via Stage 5's
+log inspection to be using `consistent=1` reads — so the *behavior*
+being relied on was already correct, but only as an undeclared default,
+the same shape as all 8 prior instances (see `CLAUDE.md`'s standing
+note). **Decision: declare `PATRONI_CONSUL_CONSISTENCY=consistent`
+explicitly in `docker-compose.yml`**, matching the project's standing
+"declare it, don't rely on an implicit default" principle (same
+treatment as Kafka's `unclean.leader.election.enable=false`) — this
+locks in the behavior already verified safe rather than leaving it
+exposed to silently changing on a future Patroni upgrade or a config
+refactor that happens not to preserve an implicit default. Confirmed
+via Patroni's own documentation
+([`ENVIRONMENT.rst`](https://patroni.readthedocs.io/en/latest/ENVIRONMENT.html)),
+not assumed from memory.
+
+**The correct expected outcome here is an unbounded outage, not a
+bounded gap — say so explicitly before running, so a long stall isn't
+misread as a hang or a bug.** Stage 5 cut off only the primary from
+Consul; the rest of the cluster still had quorum and could elect a
+replacement once the old primary's TTL expired, producing a bounded
+~8–21s gap. Here, killing 2 of 3 Consul agents removes quorum for
+*every* Patroni node, including the current primary — the same TTL
+mechanism Stage 5 measured should still fire on the primary (expect a
+similar ~15–20s self-demotion), but **nothing can elect a replacement,
+because nothing has quorum to elect anyone.** The safe outcome is
+therefore an outage lasting until Consul quorum itself is restored, not
+a bounded number. A test that found a *bounded* recovery here would
+actually be the more alarming result — it would mean something got
+promoted without real quorum, which is the exact split-brain risk
+Stage 0 already proved Consul refuses to allow.
+
+**Explicitly check, not assume:**
+- Does the current primary self-demote once its own Consul session
+  fails to renew — checked via direct `pg_is_in_recovery()` polling on
+  that node specifically, not via `patronictl` or any other
+  Consul-derived view? Expect a magnitude similar to Stage 5's
+  ~15–20s, though confirm rather than assume it transfers unchanged.
+- **The actual safety check**: while quorum stays lost, does `psql`
+  against every node directly ever show more than one node reporting
+  `pg_is_in_recovery() = false` at the same time? This is the real
+  pass/fail condition — not whether a new primary eventually appears
+  (it shouldn't, until quorum returns).
+- Does the outage genuinely persist for as long as quorum stays lost,
+  with no promotion attempt succeeding at any point during that window —
+  confirmed by continuing to poll well past where Stage 5's ~15–20s
+  self-demotion number would predict any activity, not just checking
+  once early and once late?
+- **Traefik's client-routing path has the same Consul dependency
+  identified above for `patronictl` — treat its behavior as a separate,
+  clearly-labeled observation, not part of the Postgres/Patroni safety
+  verdict.** The routing spike verified in Stages 4–5 works by querying
+  Consul Catalog for whichever node is passing; with no Consul quorum,
+  that query path is likely degraded or failing closed too (e.g.
+  connection refused rather than stale-but-served traffic). If this
+  happens, it's expected and says nothing about whether Postgres itself
+  behaved safely — don't let a Traefik-side failure get folded into or
+  confused with the actual Postgres/Patroni finding.
+- **Recovery check**: once 1 of the 2 killed agents is restored (back
+  to 2 of 3, quorum regained), confirm exactly one node is elected and
+  the cluster converges cleanly — same standard already applied to
+  Kafka's and Redis's own quorum-loss recovery checks.
+- **Run at least 3 times**, matching the bar already applied to Stage
+  4's fencing measurement and Stage 5's split-brain check — this stage
+  is testing the same "fails safe vs. fails unsafe" category as both.
 
 ## What NOT to do in this pass
 
@@ -1070,6 +1157,21 @@ system fails safe rather than allowing any ambiguous promotion decision.
   the resulting decision (leave it unset). Retained here, struck
   through, as the record that this bullet did its job rather than
   quietly dropped once satisfied.
+- **Do not use `patronictl` (or any other Consul-derived view) as the
+  safety check for Stage 6.** Patroni's own Consul reads use
+  `consistent=1`, which Consul refuses outright without a raft quorum —
+  the exact tool every earlier stage leaned on for a quick status check
+  will likely fail outright during this stage's failure mode, not
+  report stale data. Poll each node's `pg_is_in_recovery()` directly via
+  `psql` instead. See Stage 6's own methodology note above for the full
+  reasoning.
+- **Do not expect Stage 6's outage to be bounded, and do not treat a
+  long stall as a bug.** Unlike Stage 5 (only the primary cut off,
+  the rest of the cluster still had quorum to elect a replacement),
+  Stage 6 removes quorum from every node — the safe outcome is an
+  outage that lasts until Consul quorum itself is restored, not a fixed
+  number of seconds. A bounded recovery here would be the alarming
+  result, not the reassuring one.
 
 ## Resource budget — re-measured (2026-08-29), original estimate revised, still not fully resolved
 
