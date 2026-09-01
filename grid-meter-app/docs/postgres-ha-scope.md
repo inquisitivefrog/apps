@@ -1489,7 +1489,7 @@ different HikariCP tuning profile for a proxy-fronted connection, for
 instance, would be a real and interesting finding in its own right, not
 a failure of this stage).
 
-## Stage 7 results (2026-09-01): Steps 1–2 done — cutover works, but needed more than a one-line config change, exactly as this stage's own plan flagged as a live possibility
+## Stage 7 results (2026-09-02): all four steps complete — cutover needed more than a one-line config change, exactly as this stage's own plan flagged as a live possibility
 
 **Step 1 (cutover) — done, but surfaced a real gap this stage's plan
 didn't anticipate.** `SPRING_DATASOURCE_URL` now points at

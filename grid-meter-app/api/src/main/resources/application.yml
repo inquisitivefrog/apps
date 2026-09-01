@@ -106,8 +106,18 @@ spring:
 
   data:
     redis:
-      host: ${SPRING_REDIS_HOST:localhost}
-      port: ${SPRING_REDIS_PORT:6379}
+      # Sentinel-aware, not a fixed host:port -- closes docs/redis-ha-scope.md's Stage 6 gap
+      # (the app-vs-infrastructure gap docs/ha-scope.md's standing lesson also named for
+      # Postgres): Stages 1-5 validated Sentinel/Redis failover directly via redis-cli, but the
+      # app's own client was still a fixed connection to the `redis` container specifically, with
+      # no idea a failover could ever happen. Lettuce (the default client) discovers the current
+      # master by asking the Sentinels, and subscribes to their pubsub for +switch-master events,
+      # so it re-points itself automatically when Sentinel promotes a replica -- no separate
+      # routing/proxy layer needed the way Postgres needed Traefik + Consul Catalog, since
+      # Sentinel awareness lives in the client itself here.
+      sentinel:
+        master: ${SPRING_REDIS_SENTINEL_MASTER:mymaster}
+        nodes: ${SPRING_REDIS_SENTINEL_NODES:localhost:26379}
 
 logging:
   pattern:

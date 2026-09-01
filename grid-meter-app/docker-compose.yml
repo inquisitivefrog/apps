@@ -78,8 +78,12 @@ services:
       SPRING_DATASOURCE_USERNAME: gridmeter
       SPRING_DATASOURCE_PASSWORD: gridmeter
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
-      SPRING_REDIS_HOST: redis
-      SPRING_REDIS_PORT: 6379
+      # Cut over from a fixed host:port to Sentinel-aware discovery (docs/redis-ha-scope.md's
+      # Stage 6) -- the app's Lettuce client now asks the Sentinels who the current master is and
+      # follows failover automatically, instead of always talking to the `redis` container by name
+      # regardless of what Sentinel has decided.
+      SPRING_REDIS_SENTINEL_MASTER: mymaster
+      SPRING_REDIS_SENTINEL_NODES: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
       GRID_METER_JWT_SECRET: 4H+9b+HAJnUJhWU+mEKE09Onq9J4VzpLkSG3zL4pvAs=
       # Passed through from the host shell (default 1.0, normal dev) so a load-test run can
       # `export GRID_METER_TRACING_SAMPLING_PROBABILITY=0.05` before `docker compose up` without
@@ -102,6 +106,9 @@ services:
       - kafka-2
       - kafka-3
       - redis
+      - sentinel-1
+      - sentinel-2
+      - sentinel-3
     # Discovered 2026-08-25 via load-tests/chaos-demo.sh: restarting the api container can
     # occasionally race Docker's embedded DNS registering "kafka" again fast enough -- Spring
     # Kafka builds its consumer eagerly within the first second of context startup, and a resolve
@@ -446,7 +453,7 @@ services:
   # treatment of the Kafka brokers (state is expected to reset on container recreation).
   sentinel-1:
     image: redis:8.10
-    command: sh -c "touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
     depends_on:
       - redis
     logging: *default-logging
@@ -459,7 +466,7 @@ services:
 
   sentinel-2:
     image: redis:8.10
-    command: sh -c "touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
     depends_on:
       - redis
     logging: *default-logging
@@ -472,7 +479,7 @@ services:
 
   sentinel-3:
     image: redis:8.10
-    command: sh -c "touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
     depends_on:
       - redis
     logging: *default-logging
