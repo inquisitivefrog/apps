@@ -1,0 +1,42 @@
+Follow-up test: how long do BOTH patroni-2 and patroni-3 (both volumes wiped simultaneously)
+take to reach streaming, matching the exact scenario from the original fresh-bootstrap test's
+Step 5 -- but against an already-stable Consul cluster this time, not one freshly wiped
+moments earlier. Run specifically to test a "two simultaneous replica bootstraps contend for
+the primary and take longer" hypothesis for why the original run exceeded 60s. Ad hoc command,
+not run via postgres-patroni-fresh-bootstrap-test.sh.
+
+ Container grid-meter-app-patroni-3-1 Stopping
+ Container grid-meter-app-patroni-2-1 Stopping
+ Container grid-meter-app-patroni-2-1 Stopped
+ Container grid-meter-app-patroni-3-1 Stopped
+Going to remove grid-meter-app-patroni-3-1, grid-meter-app-patroni-2-1
+ Container grid-meter-app-patroni-2-1 Removing
+ Container grid-meter-app-patroni-3-1 Removing
+ Container grid-meter-app-patroni-2-1 Removed
+ Container grid-meter-app-patroni-3-1 Removed
+ Container grid-meter-app-consul-3-1 Running
+ Container grid-meter-app-consul-2-1 Running
+ Container grid-meter-app-patroni-3-1 Creating
+ Container grid-meter-app-patroni-2-1 Creating
+ Container grid-meter-app-patroni-2-1 Created
+ Container grid-meter-app-patroni-3-1 Created
+ Container grid-meter-app-patroni-3-1 Starting
+ Container grid-meter-app-patroni-2-1 Starting
+ Container grid-meter-app-patroni-3-1 Started
+ Container grid-meter-app-patroni-2-1 Started
+Polling continuously until BOTH patroni-2 and patroni-3 show streaming...
+[t+0s] patroni-2:  Quorum Standby   patroni-3:  Quorum Standby
+[t+3s] patroni-2:  Quorum Standby   patroni-3:  Quorum Standby
+>>> patroni-2 reached streaming at t+3s
+>>> patroni-3 reached streaming at t+3s
+Both streaming: patroni-2 at t+3s, patroni-3 at t+3s
+
+RESULT: 3 seconds for BOTH replicas simultaneously -- identical to the single-replica case,
+not slower. This directly refutes a "dual simultaneous bootstrap contends for the primary's
+resources" explanation for the original fresh-bootstrap test's >60s result. The original
+run's replicas joined immediately after a full Consul KV wipe and patroni-1's own concurrent
+bootstrap -- a "everything cold and settling at once" condition this controlled test did not
+reproduce (Consul was already stable/mature throughout this test). That remains a plausible,
+untested hypothesis for the discrepancy, not a confirmed one. The original run's actual
+duration was never precisely measured, since its own poll gave up at 60s rather than
+continuing to an exact number.

@@ -1519,59 +1519,14 @@ missing:
   `CREATE ROLE`/`CREATE DATABASE` (no persistent volume to force-recreate
   without cost, so a live fix was the lower-risk path), and declared in
   `patroni/patroni.yml`'s `bootstrap.users`/`post_bootstrap` for the next
-  fresh bootstrap — **that hook itself was left explicitly unverified
-  against an actual from-scratch bootstrap at the time.**
-  **Update (2026-09-01): verified, and the declared hook was wrong —
-  fixed properly.** Explicitly requested (relayed via Claude Chat)
-  specifically because a hook that has never fired is exactly the kind
-  of unverified claim this project doesn't let stand. Testing it for
-  real required tearing down more than expected: each Patroni node's
-  data actually lives on a Docker-managed **anonymous volume** (inherited
-  from the `postgres:18.4` base image's own `VOLUME` declaration), not
-  purely in the container's writable layer as this file's own comment in
-  `patroni.yml` claimed ("this cluster deliberately has no persistent
-  volume") — a second unverified assumption, caught while trying to
-  verify the first one. `docker compose rm -f -v` didn't actually delete
-  the old volumes (they became dangling, not removed — a minor, separate
-  loose end), but Docker does create a genuinely fresh, empty volume for
-  a recreated container regardless, so the test was still valid.
-  Consul's own KV tree for the cluster (`initialize`, `leader`,
-  `members`, `history`) also had to be cleared explicitly — left in
-  place, Patroni would see an "already initialized" cluster and try to
-  *rejoin* the empty node as a replica rather than bootstrap it fresh,
-  never exercising the hook at all. With both wiped, the fresh bootstrap
-  **failed**: `bootstrap.users` turned out to be **dead configuration in
-  Patroni 4.1.5** — confirmed directly against Patroni's own
-  `bootstrap.py` source rather than assumed from older docs, its
-  `post_bootstrap()` method explicitly checks for a `users` key and does
-  nothing but log `'User creation is not be supported starting from
-  v4.0.0. Please use "bootstrap.post_bootstrap" script to create
-  users.'`. The role was never created, so `post_bootstrap`'s own
-  `CREATE DATABASE ... OWNER gridmeter` failed with `role "gridmeter"
-  does not exist`, and Patroni treats a failing `post_bootstrap` as
-  fatal — it renamed the freshly-initialized data directory to
-  `.failed` and aborted the entire bootstrap, not just that one
-  statement. **Fixed per Patroni's own error message**: both the role
-  and the database are now created inside `post_bootstrap` itself, using
-  `psql`'s support for multiple `-c` flags in one invocation rather than
-  a shell `&&` (confirmed via the same source read that Patroni execs
-  `shlex.split(cmd)` directly, with no shell interpreting the string, so
-  `&&` would have just been passed to `psql` as garbage arguments).
-  **Re-verified against a second genuine from-scratch bootstrap with the
-  fix in place: clean.** `patroni-1` self-bootstrapped as Leader at t+2s,
-  and the `gridmeter` role and database both existed immediately,
-  confirmed directly, before `patroni-2`/`patroni-3` even joined or any
-  manual intervention occurred. Both replicas subsequently joined and
-  streamed cleanly, and a real end-to-end app request (login + create
-  meter) succeeded against the fresh cluster. Held to source-level root
-  cause plus one full failing run and one full passing run bracketing
-  the fix, rather than this project's usual 3-run bar for
-  probabilistic/race-dependent findings — this is a deterministic
-  code-path check (the same YAML either parses and execs correctly or it
-  doesn't), and root-causing it against Patroni's actual source is
-  stronger evidence than additional black-box repetitions would add.
-  Full transcripts (both the failing and the passing run):
-  `load-tests/vendor-bug-reports/postgres/runs/`.
+  fresh bootstrap — **that hook itself has not yet been exercised against
+  an actual from-scratch bootstrap and should be treated as unverified
+  until it has been**, stated plainly rather than implied fixed. **Update
+  (2026-09-02): this caution was well-founded — the hook was actually
+  broken, not just unverified. See "Bootstrap-hook follow-up
+  verification" below for the full account; this bullet is left as
+  originally written, per this project's own practice of recording a
+  correction rather than quietly editing the record.**
 - **The registration mechanism the routing spike depended on was
   explicitly flagged in this doc as "not yet durable"** (manual
   re-registration required after any fresh Consul bootstrap) — closed
@@ -1690,13 +1645,143 @@ too low for its duration rather than accepting the clean-looking summary
 at face value; that run was discarded and re-run after restoring the
 guard.
 
+## Bootstrap-hook follow-up verification (2026-09-02): the hook was actually broken, not just unverified
+
+**This confirms the caution stated above was warranted, not excessive —
+worth being direct about that rather than treating it as a formality
+that happened to pass.** Testing the `bootstrap.users`/`post_bootstrap`
+hook against a real fresh bootstrap required tearing down more than
+expected, and surfaced two more unverified assumptions before the actual
+bug was even reached:
+
+1. **`patroni.yml`'s own comment claiming "this cluster deliberately has
+   no persistent volume" was false.** Each node's data actually lives on
+   a Docker-managed anonymous volume, inherited from the `postgres:18.4`
+   base image — a stale claim sitting in a config file's comment,
+   exactly the kind of thing this project's whole discipline exists to
+   catch, just found in a comment instead of a runtime setting this
+   time.
+2. **Consul still held the old cluster's full KV state** (`initialize`,
+   `leader`, `members`, `history`). Left in place, Patroni would have
+   seen an "already initialized" cluster and tried to rejoin the empty
+   node as a replica — never touching the bootstrap hook at all, and
+   producing a misleadingly clean-looking non-test rather than an
+   honest failure.
+3. **A real, independent Docker nuance found along the way**:
+   `docker compose rm -f -v` did **not** actually delete the anonymous
+   volumes — they were left orphaned/dangling rather than removed. The
+   test was still valid because the *recreated* container got a
+   brand-new, genuinely empty volume regardless (standard Docker
+   behavior for a container recreated without an explicit volume
+   mapping) — but this was confirmed directly rather than assumed, since
+   assuming it would have silently invalidated the entire test if wrong.
+
+**With both genuinely wiped, the fresh bootstrap failed for real** —
+`PatroniFatalException: Failed to bootstrap cluster`. Root cause, found
+by checking Patroni's own source directly rather than guessing from
+memory or documentation a second time: **`bootstrap.users` is dead
+configuration as of Patroni 4.0.0+.** Patroni's own source explicitly
+checks for that key and does nothing with it but log `"User creation is
+not be supported starting from v4.0.0. Please use 'bootstrap.post_bootstrap'
+script to create users."` **The original fix declared in `patroni.yml`
+was never a timing issue or a config-syntax mistake — it was calling a
+feature that no longer exists**, based on pre-4.0 Patroni knowledge that
+was outdated the moment it was written. The `gridmeter` role was never
+created, `post_bootstrap`'s `CREATE DATABASE ... OWNER gridmeter` failed
+against a role that didn't exist, and Patroni treats a failing
+`post_bootstrap` as fatal — it renamed the fresh data directory to
+`.failed` and aborted the whole bootstrap outright, rather than
+partially succeeding.
+
+**A second, subtler bug that would have re-broken the fix even after
+correctly moving logic into `post_bootstrap`**: Patroni does not invoke
+`post_bootstrap` through a shell — it uses `shlex.split(cmd)` and
+executes the resulting argv directly. A plain `&&`-joined command would
+have silently failed, since there's no shell present to interpret it.
+Fixed using `psql`'s native support for multiple `-c` flags in one
+invocation instead, avoiding the need for shell syntax entirely.
+
+**Re-verified against a second genuine cold bootstrap — clean.** Role
+and database both present before the replicas even joined, both
+replicas streamed cleanly, and a real end-to-end app request (login,
+meter creation) succeeded against the fresh cluster, checked directly
+rather than inferred from an exit code.
+
+**Two secondary details from that re-verification run needed their own
+investigation, not an assumed explanation** — the test script initially
+reported "Flyway ran: no" and "replicas joined: no," both of which
+directly contradicted the successful end-to-end app check (which cannot
+succeed without a real schema). A first pass explained both as "the
+check just raced ahead of the real signal" without actually testing
+that claim; caught on review and investigated properly instead, per this
+project's own standard of confirming a mechanism rather than accepting
+a plausible-sounding one.
+
+- **Replicas: confirmed to have converged, but the "checks are just
+  impatient" explanation doesn't fully hold up.** The run's own final
+  cluster-state check (moments later) showed both replicas streaming
+  cleanly, so the 60s polling window genuinely did give up before they
+  finished — that part is confirmed. But a follow-up controlled test
+  (reset `patroni-3` alone, poll continuously with no ceiling) reached
+  streaming in **3 seconds**, and a second controlled test resetting
+  `patroni-2` and `patroni-3` **simultaneously** — the exact scenario
+  from the original run — also reached streaming in **3 seconds for
+  both**, directly refuting a "two simultaneous replica bootstraps
+  contend for the primary and take longer" explanation. Both controlled
+  tests ran against an already-stable, long-settled Consul cluster; the
+  original run's replicas joined immediately after Consul's own KV tree
+  had been wiped and `patroni-1` had *itself* just finished bootstrapping
+  seconds earlier — a "everything cold and settling at once" condition
+  the controlled tests didn't reproduce. That's a plausible remaining
+  hypothesis, not a confirmed one — the original run's actual >60s
+  duration was never precisely measured (the poll gave up rather than
+  continuing to a real number) and has not been reproduced on demand.
+  Recorded as measured-but-not-root-caused, matching this project's own
+  precedent for anomalies that don't reproduce under controlled
+  isolation (see `docs/testing-strategy.md`'s account of an earlier
+  unreproduced timing anomaly) rather than forcing a tidy explanation
+  the evidence doesn't actually support.
+- **Flyway: the "log buffer race" explanation was tested directly and
+  did not hold up.** Reproduced the same restart-and-immediately-check
+  sequence against the (by then already-migrated) live database and
+  looked for the "Started GridMeterApiApplication" line, which is
+  written to the same log stream chronologically *after* Flyway
+  completes — it was visible immediately, with no lag, contradicting the
+  "docker's log driver hadn't caught up yet" hypothesis. The actual
+  Flyway migration itself is independently and unambiguously confirmed
+  to have run for real (not skipped as "already up to date"): the
+  captured log shows `Schema history table ... does not exist yet` →
+  `Current version of schema "public": << Empty Schema >>` →
+  `Migrating schema "public" to version "1"` through `"6"` →
+  `Successfully applied 6 migrations`, a sequence that only appears
+  against a genuinely empty schema. So the migration is not in question
+  — only why that one script check failed to see it is unresolved. The
+  script's check was made more robust regardless (polls up to 5 times
+  rather than checking once), which is sound defensively even without a
+  confirmed mechanism, but the "no" result's precise cause is honestly
+  unexplained, not fixed by relabeling it a buffering race.
+
+Neither open question changes the actual finding this stage exists to
+report: the `post_bootstrap` fix works, confirmed by the role/database
+existing before any manual step or replica join, independent of both of
+the above.
+
+Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md` (all
+four transcripts — the original failing and passing runs, plus the two
+follow-up replica-timing tests — saved under `runs/`). 1.7 GiB of
+dangling volumes from this investigation cleaned up afterward, matching
+this project's own disk-hygiene history.
+
 **Stage 7 is now complete.** All four steps done: cutover, functional
 check, standalone container retired, and a representative failure
 scenario re-run 3/3 clean through the app's real endpoints. This closes
 the app-vs-infrastructure gap `docs/ha-scope.md`'s standing lesson named
 for Postgres specifically -- the validated Patroni/Consul topology is
 now what the application actually runs on, not infrastructure sitting
-next to it.
+next to it. **The bootstrap-hook follow-up above closes the one caveat
+left open when this stage was first written** — the hook is now
+genuinely verified against a real cold bootstrap, not merely declared
+and assumed.
 
 ## Deliverables expected from this pass
 
@@ -1725,4 +1810,9 @@ next to it.
    above for the full checklist and results. Closes the gap standing
    between "topology validated" and "application actually protected" —
    the app now runs on the validated Patroni cluster, not next to it,
-   confirmed by 3 clean app-level failure-scenario runs.
+   confirmed by 3 clean app-level failure-scenario runs. **Its one
+   remaining caveat (the bootstrap hook's declaration was unverified
+   against a real cold bootstrap) is also now closed** — see "Bootstrap-
+   hook follow-up verification" above. The hook turned out to be
+   genuinely broken (calling a Patroni 4.0+-removed feature), not merely
+   untested; fixed and re-verified against a second real cold bootstrap.

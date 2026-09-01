@@ -1,0 +1,26 @@
+Follow-up test: how long does a single, genuinely fresh replica (patroni-3, volume wiped)
+take to reach streaming, against an already-stable Consul cluster? Run to check whether the
+original fresh-bootstrap test's >60s replica-join result reflects a real, reproducible
+duration or was specific to that run's exact conditions (fresh Consul KV + concurrent
+patroni-1 bootstrap). Ad hoc command, not run via postgres-patroni-fresh-bootstrap-test.sh.
+
+Old volume: 400ace83903a733e36a2d4e1dc1d4501a1fa7a569ef6b9375b9754cc1b28ea9b
+ Container grid-meter-app-patroni-3-1 Stopping
+ Container grid-meter-app-patroni-3-1 Stopped
+Going to remove grid-meter-app-patroni-3-1
+ Container grid-meter-app-patroni-3-1 Removing
+ Container grid-meter-app-patroni-3-1 Removed
+ Container grid-meter-app-consul-3-1 Running
+ Container grid-meter-app-patroni-3-1 Creating
+ Container grid-meter-app-patroni-3-1 Created
+ Container grid-meter-app-patroni-3-1 Starting
+ Container grid-meter-app-patroni-3-1 Started
+Polling continuously (no giving-up ceiling) until patroni-3 shows streaming...
+[t+1s] | patroni-3 | patroni-3 | Quorum Standby | creating replica |    |     unknown |     |    unknown |     |
+[t+3s] | patroni-3 | patroni-3 | Quorum Standby | streaming |  1 |   0/7000000 |   0 |  0/7000000 |   0 |
+patroni-3 reached streaming at t+3s
+
+RESULT: 3 seconds. Against a stable, long-settled Consul cluster, a single fresh replica
+bootstrap for this project's tiny (near-empty) database converges almost immediately --
+20x faster than the original fresh-bootstrap test's >60s (never-precisely-measured, since
+the poll gave up rather than continuing) result for the equivalent step.

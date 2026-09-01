@@ -519,5 +519,46 @@ request (login + create meter) succeeded against the fresh cluster.
 
 New script: `load-tests/postgres-patroni-fresh-bootstrap-test.sh`.
 Transcripts for both the failing run (confirming the bug was real) and
-the passing run (confirming the fix) are in `runs/`. Full account:
+the passing run (confirming the fix) are in `runs/`.
+
+**Two secondary details from the passing run were investigated properly
+rather than explained away, per an explicit request to hold this to the
+same standard as everything else in this project.** The passing run's
+own "Flyway ran: no" and "replicas joined: no" checks both contradicted
+the run's successful end-to-end app request -- a first pass explained
+both as the checks simply racing ahead of the real signal, without
+testing that claim.
+
+- **Replicas**: confirmed they did converge (the run's own final state
+  check showed both streaming), so the 60s poll genuinely gave up too
+  early -- that much holds. But two follow-up controlled tests (a single
+  fresh replica reset, then both replicas reset simultaneously,
+  matching the original scenario exactly) both converged in **3
+  seconds** against an already-stable Consul cluster -- directly
+  refuting a "two simultaneous bootstraps contend for the primary"
+  explanation for the original run's >60s duration. The original run's
+  replicas joined immediately after a full Consul KV wipe plus
+  patroni-1's own concurrent bootstrap, a condition the controlled tests
+  didn't reproduce (Consul was already mature/stable throughout them) --
+  a plausible remaining hypothesis, not a confirmed one. The original
+  run's actual duration was never precisely measured, since its own
+  poll gave up rather than continuing to a real number. Recorded as
+  measured-but-not-root-caused rather than forced into a tidy
+  explanation. Transcripts: `runs/20260901-replica-timing-single/` and
+  `runs/20260901-replica-timing-dual/`.
+- **Flyway**: the "log buffer race" explanation was tested directly and
+  did not hold up -- reproduced the same restart-and-immediately-check
+  sequence and found a later log line (`Started GridMeterApiApplication`,
+  written after Flyway completes) visible with no lag at all. The
+  migration itself is independently and unambiguously confirmed real
+  (the captured log shows an empty-schema detection followed by all 6
+  migrations actually running, not a "nothing to do" skip), so the
+  question is only why that one script check failed to see it --
+  unresolved. The check itself was made more robust regardless (polls up
+  to 5 times), which is sound defensively even without a confirmed
+  mechanism.
+
+Neither open question changes the actual finding: the `post_bootstrap`
+fix works, confirmed by the role/database existing before any manual
+step or replica join, independent of both of the above. Full account:
 `docs/postgres-ha-scope.md`'s Stage 7 results section.

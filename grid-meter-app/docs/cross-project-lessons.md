@@ -185,6 +185,23 @@ control-flow work instead.
 
 ## Kubernetes and infrastructure-as-code pitfalls
 
+**`docker compose rm -f -v` does not reliably delete a container's
+anonymous volumes — but recreating the container still gets a genuinely
+fresh one, which can mask the first fact if not checked directly.**
+Found while building a real cold-bootstrap test for Patroni: the `-v`
+flag left the old anonymous volumes orphaned/dangling rather than
+removed, which could easily have invalidated the entire test (a "fresh"
+bootstrap secretly reusing old data) if the new container had happened
+to reuse one of them. It didn't — a container recreated without an
+explicit volume mapping gets a brand-new anonymous volume regardless of
+what `-v` did or didn't clean up — but this was confirmed directly
+rather than assumed, since assuming it would have produced a
+silently-invalid test with no indication anything was wrong. General
+rule: when a test's validity depends on a truly clean data volume,
+verify the volume is actually new (a fresh volume ID, an empty data
+directory checked directly) rather than trusting a teardown command's
+flags to have done what their names imply.
+
 **A config language's comment syntax isn't universal — verify it per
 language, not per project.** Alloy's River language uses `//` for
 comments, not `#` — an easy assumption to get wrong coming from
