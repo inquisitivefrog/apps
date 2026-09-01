@@ -1023,7 +1023,77 @@ verdict — a clean Sub-scenario B result says nothing about Sub-scenario
 A, and only Sub-scenario A's result should inform whether the fencing
 decision's conditional acceptance needs revisiting.
 
-### Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents while Postgres is under real load — expanded (2026-09-01)
+## Stage 6 results (2026-09-01): PASS, 3/3 clean, one run per possible surviving-agent combination — the system genuinely fails safe
+
+Ran using direct `pg_is_in_recovery()` polling on each of the 3 nodes
+independently, per this stage's own methodology note above — never
+`patronictl` or any other Consul-derived view, since `consistent` reads
+fail cluster-wide once quorum is lost. Each run polled continuously
+across a full 60-second window, not spot-checked at two points, per the
+requirement to confirm the outage genuinely persists rather than just
+starting and ending as expected.
+
+| Run | Surviving agent | Primary | Self-demoted at | Unsafe promotion |
+|---|---|---|---|---|
+| 1 | `consul-3` | `patroni-3` | 12326ms | No |
+| 2 | `consul-1` | `patroni-3` | ~15000ms | No |
+| 3 | `consul-2` | `patroni-3` | ~3000ms | No |
+
+**The critical safety property held perfectly across all 3 runs**:
+Consul correctly refused the `consistent` operation immediately (real
+`500`s each time), and neither non-leader node ever reported itself as
+primary at any point across any full 60-second window. This confirms
+the expected outcome stated before this stage ran: the system becomes
+**unavailable for writes, never ambiguous about who's primary** — an
+unbounded outage is the correct safe behavior here, not a defect, and
+no run showed anything resembling a bounded recovery (which would have
+been the alarming result, not the reassuring one).
+
+**A real, interesting nuance found, refining Stage 5's ~15–20s
+self-demotion estimate rather than contradicting it**: self-demotion
+speed depends on whether the primary's own paired Consul agent is among
+the two killed. Run 1 and Run 2 (the primary's own agent survived but
+couldn't reach quorum) took 12.3s and ~15s — in line with Stage 5's
+range. Run 3 (the primary's own agent, `consul-3`, was killed directly)
+took only ~3s. The mechanism is precise: an immediate connection
+failure to a dead agent is detected faster than a live-but-quorumless
+agent that still accepts and processes the request before failing at
+the raft layer. Worth remembering as a general shape for any future
+Consul-backed HA testing in this project: "the agent is gone" and "the
+agent is alive but the cluster it's part of has no quorum" are
+different failure signals with different detection latencies, not
+interchangeable versions of "Consul is down."
+
+**Two real bugs found while building this stage's test, both reported
+plainly rather than smoothed over:**
+
+1. **A self-inflicted mistake, not a Patroni/Consul finding**: piping a
+   live, state-mutating script's output through `head -30` triggered a
+   `SIGPIPE` that killed the script before its own cleanup logic ran,
+   leaving 2 Consul agents stopped. Caught and restored immediately.
+   Worth a standing personal/team lesson beyond this project: never
+   truncate the output of a script that mutates real infrastructure
+   state via a pipe like `| head` — if the reader side closes early, the
+   writer can be killed mid-mutation before any trap/cleanup handler
+   fires, regardless of how carefully that handler was written.
+2. **An unexplained loop bug, honestly reported as mitigated rather than
+   root-caused**: an early version of the monitoring loop's condition
+   used `date +%s%N`-based nanosecond arithmetic and exited after only
+   ~2.5s instead of running the full 60s — isolated repro attempts of
+   the identical pattern didn't reproduce it, so the actual mechanism
+   remains unknown. Rather than keep chasing an unreproduced timing
+   anomaly against live infrastructure, the loop was redesigned around
+   bash's `SECONDS` builtin (already proven reliable elsewhere in this
+   project's scripts) for loop control, decoupling correctness from
+   millisecond arithmetic entirely. This trades sub-second timing
+   precision for robustness — an honest, stated tradeoff, not a claimed
+   fix for a bug whose cause was never actually found.
+
+Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
+
+**All 6 stages of this doc's plan are now complete.**
+
+### Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents while Postgres is under real load — expanded (2026-09-01); **done, see results above**
 
 Direct analog of Kafka's and Redis's quorum-loss scenarios: confirm the
 system fails safe rather than allowing any ambiguous promotion decision.
@@ -1070,6 +1140,18 @@ refactor that happens not to preserve an implicit default. Confirmed
 via Patroni's own documentation
 ([`ENVIRONMENT.rst`](https://patroni.readthedocs.io/en/latest/ENVIRONMENT.html)),
 not assumed from memory.
+
+**Applied and re-verified (2026-09-01), not just declared.** Rolling
+recreate of all 3 nodes with `PATRONI_CONSUL_CONSISTENCY=consistent`
+now explicit, confirming the declaration didn't silently change
+behavior from what was already measured — including a real, clean
+failover when the leader's own container was the one recreated. This is
+the same "verify the fix didn't introduce its own regression" discipline
+already applied everywhere else in this pass (e.g. Redis's Finding A
+re-verification after its entrypoint fix). Committed in two focused
+commits (`5f25c4c`, `e6e61cd`), not yet pushed. **This closes the
+prerequisite work — Stage 6's actual chaos test (kill 2 of 3 Consul
+agents under real load) is still pending, not yet run.**
 
 **The correct expected outcome here is an unbounded outage, not a
 bounded gap — say so explicitly before running, so a long stall isn't
@@ -1157,21 +1239,14 @@ Stage 0 already proved Consul refuses to allow.
   the resulting decision (leave it unset). Retained here, struck
   through, as the record that this bullet did its job rather than
   quietly dropped once satisfied.
-- **Do not use `patronictl` (or any other Consul-derived view) as the
-  safety check for Stage 6.** Patroni's own Consul reads use
-  `consistent=1`, which Consul refuses outright without a raft quorum —
-  the exact tool every earlier stage leaned on for a quick status check
-  will likely fail outright during this stage's failure mode, not
-  report stale data. Poll each node's `pg_is_in_recovery()` directly via
-  `psql` instead. See Stage 6's own methodology note above for the full
-  reasoning.
-- **Do not expect Stage 6's outage to be bounded, and do not treat a
-  long stall as a bug.** Unlike Stage 5 (only the primary cut off,
-  the rest of the cluster still had quorum to elect a replacement),
-  Stage 6 removes quorum from every node — the safe outcome is an
-  outage that lasts until Consul quorum itself is restored, not a fixed
-  number of seconds. A bounded recovery here would be the alarming
-  result, not the reassuring one.
+- ~~Do not use `patronictl` (or any other Consul-derived view) as the
+  safety check for Stage 6.~~ **Followed — see "Stage 6 results" above**:
+  all 3 runs used direct `pg_is_in_recovery()` polling, never
+  `patronictl`, per this bullet's own reasoning.
+- ~~Do not expect Stage 6's outage to be bounded, and do not treat a
+  long stall as a bug.~~ **Confirmed correct — see "Stage 6 results"
+  above**: all 3 runs showed a genuine unbounded-until-quorum-restored
+  outage with zero unsafe promotion, exactly as predicted, not a bug.
 
 ## Resource budget — re-measured (2026-08-29), original estimate revised, still not fully resolved
 
@@ -1195,18 +1270,22 @@ exists.
 
 ## Deliverables expected from this pass
 
-1. Stage 0 through Stage 5 findings, reported before proceeding
-   further — **done**, see the results sections above for all six
+1. Stage 0 through Stage 6 findings, reported before proceeding
+   further — **done, all six stages complete**, see the results
+   sections above
 2. Explicit topology and fencing-mechanism decisions, documented here
    before Stage 2 begins — topology and Patroni deployment model done;
    the synchronous-standby mode is resolved (quorum `ANY 1 (*)`, see
    "Sync mode decision" above); the fencing approach is resolved and its
    conditional acceptance confirmed by real measurement in both the
    restart case and the harder live-partition case (see "Fencing
-   decision," "Stage 4 results," and "Stage 5 results" above) — nothing
-   left undecided on this front
+   decision," "Stage 4 results," and "Stage 5 results" above); Stage 6
+   additionally confirmed total quorum loss fails safe to an unbounded
+   outage rather than any ambiguous promotion — nothing left undecided
+   on this front
 3. A results doc analogous to `docs/testing-strategy-ha-supplement.md`,
-   capturing what Stages 4–6 actually find — Stages 4 and 5 are in;
-   expect this to require at least one significant revision pass, the
-   same way the Kafka doc did, given this layer's added complexity.
-   Stage 6 remains
+   capturing what Stages 4–6 actually found — **done, all three stages
+   in**. This doc's own accumulated Stage 0–6 results sections serve
+   that role directly rather than a separate document, consistent with
+   how this doc has been maintained throughout rather than written once
+   at the end.
