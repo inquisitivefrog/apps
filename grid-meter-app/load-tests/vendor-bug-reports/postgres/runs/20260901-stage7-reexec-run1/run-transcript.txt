@@ -1,0 +1,45 @@
+=== Logging in ===
+=== Creating a test meter for this run ===
+Meter: 6b780433-6fdc-4dbf-a043-81c9810518c1
+
+=== Identifying current leader ===
++ Cluster: gridmeter-postgres-ha (7680650597495504932) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Leader         | running   |  1 |             |     |            |     |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  1 |   0/A000168 |   0 |  0/A000168 |   0 |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  1 |   0/A000168 |   0 |  0/A000168 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+Current leader: patroni-1
+
+=== Starting continuous app-level write traffic (background, ~3.3 req/s) ===
+
+=== Killing patroni-1 ===
+ Container grid-meter-app-patroni-1-1 Stopping 
+ Container grid-meter-app-patroni-1-1 Stopped 
+
+=== Polling for a new leader at the infrastructure level (up to 60s) ===
+  New leader: patroni-2 -- infra-level RTO: 1832ms
+
+=== Continuing app traffic for 20s past infra-level election, to observe app-level recovery ===
+
+=== Stopping traffic and restoring patroni-1 ===
+ Container grid-meter-app-patroni-1-1 Starting 
+ Container grid-meter-app-patroni-1-1 Started 
+
+=== RESULT SUMMARY ===
+Old leader: patroni-1 -> New leader: patroni-2
+Total requests during run: 42 (success: 41, failed/timed-out: 1)
+App-level RTO (first successful write after outage began): 9ms
+Last failing request at: 669ms after outage began
+HTTP status code breakdown:
+   1 000
+  41 201
+
+Recovered without any app/pool restart: yes
+
+Full request log: /var/folders/zf/fb84p94n667_94m4dtdmljcc0000gn/T/tmp.uvgYJwV1Wy/requests.log
+
+=== Cleanup: deleting the test meter's readings via direct SQL (readings are immutable, no DELETE endpoint) ===
+DELETE 42
+DELETE 1

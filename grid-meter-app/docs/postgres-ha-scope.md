@@ -1783,6 +1783,29 @@ left open when this stage was first written** — the hook is now
 genuinely verified against a real cold bootstrap, not merely declared
 and assumed.
 
+**Re-executed in full afterward (2026-09-01), specifically because the
+underlying cluster had been torn down and rebuilt multiple times since
+Stage 7 was first verified** (the `post_bootstrap` fix itself, plus two
+follow-up replica-timing tests) — re-confirming the app-level failure
+scenario still holds after all of that, rather than assuming a fix
+verified once stays valid through later, unrelated changes to the same
+infrastructure. 3/3 clean, each run killing a different node (all three
+cycled through as leader across the three runs):
+
+| Run | Old → new leader | Infra RTO | App RTO | Requests | Failed |
+|---|---|---|---|---|---|
+| 1 | patroni-1 → patroni-2 | 1832ms | 9ms | 42 | 1 |
+| 2 | patroni-2 → patroni-3 | 1622ms | 5657ms | 57 | 1 |
+| 3 | patroni-3 → patroni-2 | 1868ms | 308ms | 28 | 2 |
+
+Self-healed with no app/pool restart in every run, consistent with the
+original Stage 7 results. Run 3 reproduced the same phantom-success
+pattern found in the original pass (26 client-reported successes, 27
+actual rows in the database) — the exact gap `docs/idempotency-scope.md`
+now exists to close, seen again here as a live, current confirmation
+that the gap is real and still present, not something that was
+somehow already fixed by the unrelated Patroni work in between.
+
 ## Deliverables expected from this pass
 
 1. Stage 0 through Stage 6 findings, reported before proceeding

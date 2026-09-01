@@ -1,0 +1,45 @@
+=== Logging in ===
+=== Creating a test meter for this run ===
+Meter: a7c8dabb-6404-473a-a5ca-a7ab416e495c
+
+=== Identifying current leader ===
++ Cluster: gridmeter-postgres-ha (7680650597495504932) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Replica        | streaming |  2 |   0/A0090F8 |   0 |  0/A0090F8 |   0 |
+| patroni-2 | patroni-2 | Leader         | running   |  2 |             |     |            |     |
+| patroni-3 | patroni-3 | Quorum Standby | streaming |  2 |   0/A009430 |   0 |  0/A009430 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+Current leader: patroni-2
+
+=== Starting continuous app-level write traffic (background, ~3.3 req/s) ===
+
+=== Killing patroni-2 ===
+ Container grid-meter-app-patroni-2-1 Stopping 
+ Container grid-meter-app-patroni-2-1 Stopped 
+
+=== Polling for a new leader at the infrastructure level (up to 60s) ===
+  New leader: patroni-3 -- infra-level RTO: 1622ms
+
+=== Continuing app traffic for 20s past infra-level election, to observe app-level recovery ===
+
+=== Stopping traffic and restoring patroni-2 ===
+ Container grid-meter-app-patroni-2-1 Starting 
+ Container grid-meter-app-patroni-2-1 Started 
+
+=== RESULT SUMMARY ===
+Old leader: patroni-2 -> New leader: patroni-3
+Total requests during run: 57 (success: 56, failed/timed-out: 1)
+App-level RTO (first successful write after outage began): 5657ms
+Last failing request at: 327ms after outage began
+HTTP status code breakdown:
+   1 000
+  56 201
+
+Recovered without any app/pool restart: yes
+
+Full request log: /var/folders/zf/fb84p94n667_94m4dtdmljcc0000gn/T/tmp.iQUxTYPrUp/requests.log
+
+=== Cleanup: deleting the test meter's readings via direct SQL (readings are immutable, no DELETE endpoint) ===
+DELETE 57
+DELETE 1

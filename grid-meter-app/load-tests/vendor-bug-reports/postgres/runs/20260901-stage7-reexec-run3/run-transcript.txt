@@ -1,0 +1,45 @@
+=== Logging in ===
+=== Creating a test meter for this run ===
+Meter: fc18c9f9-85a6-43e4-a1fc-5062c45a1268
+
+=== Identifying current leader ===
++ Cluster: gridmeter-postgres-ha (7680650597495504932) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Quorum Standby | streaming |  3 |   0/A013710 |   0 |  0/A013710 |   0 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming |  3 |   0/A013738 |   0 |  0/A013738 |   0 |
+| patroni-3 | patroni-3 | Leader         | running   |  3 |             |     |            |     |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+Current leader: patroni-3
+
+=== Starting continuous app-level write traffic (background, ~3.3 req/s) ===
+
+=== Killing patroni-3 ===
+ Container grid-meter-app-patroni-3-1 Stopping 
+ Container grid-meter-app-patroni-3-1 Stopped 
+
+=== Polling for a new leader at the infrastructure level (up to 60s) ===
+  New leader: patroni-2 -- infra-level RTO: 1868ms
+
+=== Continuing app traffic for 20s past infra-level election, to observe app-level recovery ===
+
+=== Stopping traffic and restoring patroni-3 ===
+ Container grid-meter-app-patroni-3-1 Starting 
+ Container grid-meter-app-patroni-3-1 Started 
+
+=== RESULT SUMMARY ===
+Old leader: patroni-3 -> New leader: patroni-2
+Total requests during run: 28 (success: 26, failed/timed-out: 2)
+App-level RTO (first successful write after outage began): 308ms
+Last failing request at: 5968ms after outage began
+HTTP status code breakdown:
+   2 000
+  26 201
+
+Recovered without any app/pool restart: yes
+
+Full request log: /var/folders/zf/fb84p94n667_94m4dtdmljcc0000gn/T/tmp.3jjEADy9rW/requests.log
+
+=== Cleanup: deleting the test meter's readings via direct SQL (readings are immutable, no DELETE endpoint) ===
+DELETE 27
+DELETE 1
