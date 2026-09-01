@@ -392,3 +392,25 @@ recording precisely**:
 
 This closes out all 6 stages of the staged Postgres/Patroni/Consul HA
 pass.
+
+## Resource budget — re-measured against the real full topology (belated, closed)
+
+One item from the doc's own plan was left unaddressed through Stages
+2-6 and the addendum: re-confirm the VM-ceiling concern with real
+`docker stats` numbers once the full 3-Consul + 3-Patroni topology was
+actually up, not the original pre-Stage-2 estimate. Nothing in the later
+stages happened to force a look back at it, so it just sat stale.
+
+Caught on a direct re-test request and closed with real numbers, full
+stack up and idle: Consul (3 agents) ~135 MiB, Patroni-supervised
+Postgres (3 nodes) ~279 MiB — Postgres HA layer total ~414 MiB. Full
+20-container stack (both the Patroni cluster and the standalone
+`postgres` container the app still actually points at, running side by
+side, pre-cutover) totals ~3.57 GiB, ~4.18 GiB of headroom under the
+7.749 GiB Docker Desktop VM ceiling. Post-cutover (standalone `postgres`
+retired) that's ~3.53 GiB, ~4.22 GiB headroom. `ha-scope.md`'s original
+"~8.2-8.9 GiB, exceeds the ceiling" estimate is confirmed substantially
+overstated, same direction as Redis's own estimate-vs-real gap. No VM
+allocation increase needed. Full writeup in
+`docs/postgres-ha-scope.md`'s "Resource budget — finally re-measured
+against the real full topology" section.

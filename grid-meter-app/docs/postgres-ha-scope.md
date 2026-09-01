@@ -437,12 +437,13 @@ than being specific to those two technologies:
 estimate): ~3.42 GiB real baseline, ~4.33 GiB headroom, now that Redis's
 pass is closed and its real (lighter-than-estimated) footprint is known.
 The original "~8.2–8.9 GiB, exceeds the VM ceiling" estimate looks overly
-pessimistic in light of this — but **the VM-ceiling concern stays
-explicitly open, not resolved**, per this doc's own instruction: confirm
-with real `docker stats` numbers again once Stage 2 actually stands up
-the full Postgres+Patroni+Consul topology, the same discipline already
-applied to Kafka and Redis, before concluding whether raising the VM
-allocation is actually necessary.
+pessimistic in light of this — at this point in the investigation **the
+VM-ceiling concern was still explicitly open, not resolved**, pending a
+re-confirmation with real `docker stats` numbers once Stage 2 actually
+stood up the full Postgres+Patroni+Consul topology. **That re-confirmation
+was ultimately done, but not until after Stage 6 — see "Resource budget —
+finally re-measured against the real full topology" near the end of this
+doc for the real numbers and the closed verdict.**
 
 Also pinned **Consul 1.20.1** in `docs/tech-stack-versions.md`.
 
@@ -567,9 +568,12 @@ above).
 **Resource budget**: not re-measured this session — no fresh `docker
 stats` numbers were captured against the full Postgres+Patroni+Consul
 topology now that it's actually up. The VM-ceiling concern named in
-Stage 0's results therefore stays open per this doc's own standing
-instruction; don't treat it as resolved just because the topology
-itself is now running cleanly.
+Stage 0's results therefore stayed open per this doc's own standing
+instruction at this point in the investigation; it went unaddressed
+through Stages 3–6 and the addendum too, and was only actually closed
+afterward — see "Resource budget — finally re-measured against the real
+full topology" near the end of this doc for the real numbers and the
+closed verdict.
 
 Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
 
@@ -1339,25 +1343,64 @@ Stage 0 already proved Consul refuses to allow.
   above**: all 3 runs showed a genuine unbounded-until-quorum-restored
   outage with zero unsafe promotion, exactly as predicted, not a bug.
 
-## Resource budget — re-measured (2026-08-29), original estimate revised, still not fully resolved
+## Resource budget — finally re-measured against the real full topology (2026-09-02), now fully resolved
 
-`ha-scope.md`'s original estimate (full 3× expansion of all three
-data-tier layers at ~8.2–8.9 GiB, exceeding the 7.748 GiB Docker Desktop
-VM ceiling) has been **revised, not confirmed**, now that Redis's pass
-closed out with a real, lighter-than-estimated footprint: current
-baseline is ~3.42 GiB, with ~4.33 GiB of headroom under the VM ceiling.
-The original "exceeds the ceiling, will need a VM bump" conclusion now
-looks overly pessimistic in light of this.
+The gap this doc had been carrying since Stage 2 — "re-confirm with real
+`docker stats` numbers once the full Postgres+Patroni+Consul topology is
+actually up" — was never followed up through five subsequent stages.
+Caught only because it was explicitly re-raised after the Stage 6 addendum
+closed, not because anything in the stages themselves prompted a check:
+none of Stages 2–6 or the addendum happened to need a resource number, so
+the open item just sat there while the section header kept describing a
+"once Stage 2 stands up the topology" condition that had long since been
+true. Recorded here as its own instance of this project's "testing is
+re-testing, don't treat an old stale claim as settled just because
+nothing forced you to look again" discipline, applied to a documentation
+gap rather than a system behavior this time.
 
-**This is not yet a resolved question.** Per this doc's own standing
-discipline, re-confirm with real `docker stats` numbers once Stage 2
-actually stands up the full Postgres+Patroni+Consul topology (3 Consul
-agents + 3 Patroni-supervised Postgres containers) — Consul's and
-Patroni's own real combined footprint could still surprise in either
-direction once actually running together, the same way Redis's estimate
-turned out meaningfully lighter than `ha-scope.md`'s original guess. Do
-not treat the VM-ceiling concern as closed until that Stage 2 number
-exists.
+**Real, live `docker stats --no-stream` numbers, captured with the full
+stack up and idle** (all 20 containers running, including both the
+Patroni/Consul topology from this investigation and the standalone
+`postgres` container `application.yml`/`docker-compose.yml` still point
+the app at — the two have been running side by side throughout this
+whole investigation, not yet cut over):
+
+| Layer | Containers | Combined memory |
+|---|---|---|
+| Consul (3 agents) | `consul-1`/`consul-2`/`consul-3` | ~135 MiB |
+| Patroni-supervised Postgres (3 nodes) | `patroni-1`/`patroni-2`/`patroni-3` | ~279 MiB |
+| **Postgres HA layer total** | | **~414 MiB (~0.40 GiB)** |
+| Standalone `postgres` (pre-cutover, still the app's real datasource) | `postgres` | ~41 MiB |
+| Everything else (Kafka ×3, Redis+2 replicas, api, frontend, Traefik, Prometheus/Grafana/Loki/Alloy) | | ~3,150 MiB |
+| **Full stack total, as currently running (both Postgres paths up at once)** | 20 containers | **~3.57 GiB** |
+
+Against the 7.749 GiB Docker Desktop VM ceiling, that's **~4.18 GiB of
+real headroom today**, with both the old and new Postgres paths running
+simultaneously. The number that actually answers this doc's original
+question — what happens **after** cutover, once the standalone `postgres`
+container is retired in favor of the Patroni cluster — is the current
+total minus that one container: **~3.53 GiB, ~4.22 GiB headroom**,
+since the Patroni/Consul layer being added is already fully accounted
+for in the number above.
+
+**Resolved: `ha-scope.md`'s original "~8.2–8.9 GiB, exceeds the VM
+ceiling" estimate was substantially overstated**, the same direction and
+same rough magnitude as Redis's own estimate-vs-real gap. Postgres HA
+adds a real but modest ~414 MiB — Consul's raft/gossip footprint and
+Patroni's own supervisor process are both lightweight compared to a
+Postgres backend, and the 512 MiB per-container cap on each Patroni node
+is far from being pressured (each is using under 100 MiB, ~18-20% of its
+cap). **The VM-ceiling concern that has been open since `ha-scope.md`'s
+original estimate is now closed** — this project comfortably fits the
+full Postgres HA topology (in addition to the already-closed Kafka and
+Redis HA layers) with GiB of headroom to spare, on the same 24GB MacBook
+Air this whole project is budgeted against. No VM allocation increase is
+needed for this or any prior HA layer.
+
+CPU is not the constraint at any point in this measurement — every
+container sits under 5% CPU at idle, consistent with memory being the
+binding resource for this project throughout, per `architecture.md`'s
+resource-budget notes.
 
 ## Deliverables expected from this pass
 
