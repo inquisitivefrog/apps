@@ -36,12 +36,18 @@ optional follow-up polish:
   cluster and re-ran the primary-kill scenario 3/3 clean through the
   app's real endpoints; HikariCP self-heals via
   `PrimaryFailoverSQLExceptionOverride` with no restart needed.
-- **Redis**: **done (2026-09-01)** — `docs/redis-ha-scope.md`'s Stage 6
-  cut the app over to a Sentinel-aware client
-  (`spring.data.redis.sentinel.*`) and re-ran the primary-kill scenario
-  3/3 clean through the app's real ingest endpoint; zero HTTP-level
-  impact in any run, since this app's write path never touches Redis
-  synchronously, and the async cache write survived every failover.
+- **Redis**: **done (2026-09-02)** — `docs/redis-ha-scope.md`'s Stage 6
+  found the app's Redis client had zero Sentinel awareness (a fixed
+  connection to a single container by name), cut it over to
+  `spring.data.redis.sentinel.master`/`.nodes`, and re-ran the
+  primary-kill scenario 3/3 clean with zero HTTP-level impact — the
+  app's write path persists to Postgres/Kafka independently of Redis, so
+  the real question was whether the async cache write survives
+  failover, and it did every time. Also hit and root-caused a
+  previously-deferred bug (`/tmp/sentinel.conf` surviving a plain
+  restart) that had been sitting as a known, low-priority, unfixed loose
+  end since Stage 5 — closed structurally once cutover work actually
+  depended on Sentinel startup order.
 - **Kafka**: **confirmed clean, no remediation needed (2026-09-02)** —
   checked `kafka-ha-demo.sh` directly rather than assuming either way;
   every scenario logs in for a real JWT and sends readings via
@@ -50,6 +56,17 @@ optional follow-up polish:
   of both Postgres's and Redis's on this specific dimension — see
   `docs/testing-strategy-ha-supplement.md`'s "Application-level
   validation" section for the full confirmation.
+
+**All three layers now resolved as of 2026-09-02** — this standing
+lesson's own premise (infrastructure-level testing isn't
+application-level protection) was checked against all three passes, not
+assumed to generalize from Postgres alone: it held for Postgres and
+Redis (each found real, independent application-level gaps once
+checked), and did not hold for Kafka (confirmed already covered by
+construction). That asymmetry is itself worth remembering — the lesson
+was "check this everywhere," not "assume this everywhere," and checking
+rather than assuming is what surfaced Kafka as the one layer that didn't
+need remediation.
 
 **Why this matters more than it might look**: a chaos-testing pass that
 proves infrastructure resilience but never confirms the application
