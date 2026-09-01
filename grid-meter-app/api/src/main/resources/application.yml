@@ -24,6 +24,18 @@ spring:
       idle-timeout: 600000
       max-lifetime: 1800000
       validation-timeout: 5000
+      # SPRING_DATASOURCE_URL now routes through Traefik's :55432 entrypoint to whichever Patroni
+      # node is currently primary (docs/postgres-ha-scope.md's "Patroni deployment model" S4) --
+      # but a connection already open before a failover keeps talking to that same node for its
+      # whole lifetime; Traefik can't migrate an established TCP connection. A pooled connection
+      # to a node Patroni has since demoted still passes HikariCP's own Connection.isValid() check
+      # (the socket and Postgres backend are both alive -- only writes are rejected), so without
+      # this override the pool would keep handing it out and every write through it would keep
+      # failing with the same read-only error until max-lifetime eventually recycled it. Forces an
+      # immediate evict-and-retry-with-a-fresh-connection the moment a write hits Postgres'
+      # read-only-transaction SQLState (25006) instead. See PrimaryFailoverSQLExceptionOverride's
+      # own Javadoc for the full mechanism.
+      exception-override-class-name: com.gridmeter.api.config.PrimaryFailoverSQLExceptionOverride
 
   jpa:
     hibernate:

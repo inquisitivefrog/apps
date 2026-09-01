@@ -1,11 +1,17 @@
 # grid-meter-app — High-availability scope: PostgreSQL (Patroni)
 
-**Status (2026-09-02): all 6 planned stages complete, topology validated
-clean throughout — but the application has not been cut over to it.**
-`SPRING_DATASOURCE_URL` still points at the original standalone
-`postgres` container. See "Real, still-open gap found while measuring
-this" near the end of this doc before treating this pass's clean results
-as meaning the app's data tier is currently protected — it isn't yet.
+**Status (2026-09-02): Stages 0–6 complete; Stage 7 (application-level
+cutover and validation) Steps 1–2 done, Steps 3–4 remaining.**
+`SPRING_DATASOURCE_URL` now points at Traefik's `:55432` entrypoint, and
+real app traffic (login, meter create, reading ingest via Kafka, search)
+has been confirmed working against the Patroni cluster — see "Stage 7
+results" near the end of this doc for what was found (including a real,
+concrete instance of the "more than a one-line config change" risk this
+stage's own plan predicted). The standalone `postgres` container has not
+yet been retired, and no failure scenario has yet been re-run through
+the app's real endpoints — treat those as still open, not done by
+implication. This same gap applies to the Kafka and Redis passes too;
+see `docs/ha-scope.md`'s new standing lesson.
 
 ## Why this doc exists
 
@@ -1402,21 +1408,156 @@ the `CLAUDE.md` count/unpushed-commits housekeeping (bookkeeping) — this
 is the actual cutover step, without which this entire pass's real-world
 value is zero regardless of how clean every stage's results were.
 
-**Not part of this pass's original scope, and not attempted here** —
-recorded as the clear, single most important next action once this doc
-is otherwise closed out, ahead of any of the smaller housekeeping items
-listed elsewhere. At minimum, this needs: pointing
-`SPRING_DATASOURCE_URL` (and any related connection config) at the
-Patroni cluster's write path — which is exactly what the Traefik +
-Consul Catalog routing spike from §4 of "Patroni deployment model" above
-was built and verified for — retiring the standalone `postgres`
-container once cutover is confirmed working, and then, ideally,
-re-running at least one representative failure scenario (Stage 4's
-primary-kill, being the most direct "does this protect real app
-traffic" test) against the app itself rather than against direct `psql`
-connections, to confirm the validated topology actually protects live
-application traffic end to end — not just that the topology protects
-itself in isolation.
+**This is not specific to Postgres** — see `docs/ha-scope.md`'s new
+standing lesson on this same gap, found here first but structurally
+present in the Kafka and Redis passes too.
+
+Formalized below as **Stage 7**, rather than left as an informal note —
+matching this doc's own discipline of giving every real piece of
+required work its own staged, checklist-driven section instead of a
+paragraph of prose.
+
+### Stage 7 — Application-level cutover and validation: route real traffic through Traefik → API → Postgres, not direct `psql`
+
+**Not yet started.** This stage exists because Stages 0–6 and the
+routing spike all validated the Patroni/Consul/Postgres topology in
+isolation — the closest any of them came to the application was the
+routing spike's raw TCP connection through Traefik, which still bypassed
+the API entirely. Nothing in this pass has yet proven the *application*
+survives any of the failure modes already validated at the
+infrastructure level.
+
+**Step 1 — Cutover.** Point `SPRING_DATASOURCE_URL` (and any related
+HikariCP configuration) at Traefik's `:55432` entrypoint instead of the
+standalone `postgres` container's address — this is exactly the path
+the routing spike (§4 of "Patroni deployment model" above) was built and
+verified for. **Explicitly check, not assume**: does the Postgres JDBC
+driver, combined with HikariCP's connection pooling, behave correctly
+against a TCP proxy target whose backend identity can change mid-pool-
+lifetime (during a failover), the same way it would against a normal
+single, fixed-identity host? This is a different connection shape than
+anything tested so far and shouldn't be assumed to "just work" by
+analogy to a direct connection.
+
+**Step 2 — Basic functional check, before touching anything else.**
+Exercise the app's real endpoints (`POST`/`GET /api/v1/meters`,
+`POST`/`GET /api/v1/readings`) against the new path. Confirm writes
+actually land and reads return real data — not just that the API
+container starts up cleanly and passes its own health check.
+
+**Step 3 — Retire the standalone `postgres` container.** Only after
+Step 2 is confirmed working. Remove it from `docker-compose.yml` (or
+explicitly document a reason to keep it, if one exists) rather than
+leaving it running unused indefinitely.
+
+**Step 4 — Re-run a representative failure scenario through the app
+itself, not direct SQL.** Stage 4's primary-kill is the right candidate
+— it's the cleanest "does this protect real traffic" test available.
+Generate real load against the app's actual endpoints (a small
+load-tests script or JMeter plan hitting `POST /api/v1/readings`
+repeatedly) while killing the primary, and check:
+- **Does the app's HikariCP pool recover cleanly after failover**, or
+  does it need a restart / manual intervention — stale pooled
+  connections still pointing at a now-demoted node are a real, specific
+  risk a direct-`psql` test can't surface, since `psql` doesn't pool
+  connections the way HikariCP does.
+- **What does an HTTP client actually observe** during the ~1.7–2s RTO
+  window Stage 4 measured at the infrastructure level — a transparent
+  retry-and-succeed, a `5xx`, or a hung request bound by Hikari's
+  current 5s `connection-timeout`? This is the number that actually
+  matters to a real caller, and it hasn't been measured anywhere in this
+  pass so far.
+- **Does the existing `connection-timeout=5s`** — set during the
+  original single-instance chaos-testing work, before any real failover
+  mechanism existed underneath it — still make sense now that Stage 4
+  has measured a real, fast (~1.7–2s) RTO? `docs/ha-scope.md`'s own
+  "HikariCP connection-timeout: reframed, not settled" section
+  predicted exactly this re-tuning question would need revisiting once
+  real Postgres HA existed and a real RTO could be measured — that
+  moment is now.
+
+**Step 5 — Hold this to the same 3-run bar** already applied to every
+other correctness-critical finding in this pass (Stages 4, 5, and 6).
+
+**Step 6 — Document findings the same way every other stage in this doc
+has been documented**: real measured numbers, explicit "confirmed, not
+assumed" checks, and honest reporting of anything unexpected — including
+if cutover turns out to need more than a one-line config change (a
+different HikariCP tuning profile for a proxy-fronted connection, for
+instance, would be a real and interesting finding in its own right, not
+a failure of this stage).
+
+## Stage 7 results (2026-09-01): Steps 1–2 done — cutover works, but needed more than a one-line config change, exactly as this stage's own plan flagged as a live possibility
+
+**Step 1 (cutover) — done, but surfaced a real gap this stage's plan
+didn't anticipate.** `SPRING_DATASOURCE_URL` now points at
+`jdbc:postgresql://traefik:55432/gridmeter`. Before the URL change would
+even work, two things this pass had never needed before turned out to be
+missing:
+
+- **The `gridmeter` role and database never existed on the Patroni
+  cluster.** The standalone `postgres` container gets both for free from
+  the official image's `POSTGRES_USER`/`POSTGRES_DB` env vars; Patroni's
+  `bootstrap` section only ever created the `postgres` superuser. Found
+  immediately on the first connection attempt (`password authentication
+  failed for user "gridmeter"`) rather than discovered as a subtler
+  runtime issue. Fixed live on the running cluster via direct
+  `CREATE ROLE`/`CREATE DATABASE` (no persistent volume to force-recreate
+  without cost, so a live fix was the lower-risk path), and declared in
+  `patroni/patroni.yml`'s `bootstrap.users`/`post_bootstrap` for the next
+  fresh bootstrap — **that hook itself has not yet been exercised against
+  an actual from-scratch bootstrap and should be treated as unverified
+  until it has been**, stated plainly rather than implied fixed.
+- **The registration mechanism the routing spike depended on was
+  explicitly flagged in this doc as "not yet durable"** (manual
+  re-registration required after any fresh Consul bootstrap) — closed
+  before wiring the app to depend on it, per the same "don't silently
+  resolve an explicitly-flagged open question" discipline this project
+  has already been burned by twice (`CLAUDE.md`'s standing note). Added
+  a one-shot `postgres-primary-registrar` service
+  (`scripts/register-postgres-primary.sh`) that polls each Patroni
+  node's own REST API before registering, then exits — re-runs
+  automatically and idempotently on every `docker compose up`. **Verified
+  against the actual failure mode being closed, not a milder one**: all
+  3 Consul agents were genuinely stopped and removed (not just
+  restarted, no data volume to fall back on), confirmed the
+  `postgres-primary` service was completely absent from the fresh
+  Consul (`[]`), then confirmed the registrar correctly re-registered
+  all 3 nodes with the real current primary the only one passing.
+- **Addressed, not just noted, the stale-pooled-connection risk this
+  stage's own Step 1 explicitly called out** ("does HikariCP behave
+  correctly against a TCP proxy target whose backend identity can change
+  mid-pool-lifetime"): added
+  `PrimaryFailoverSQLExceptionOverride` (HikariCP's
+  `exceptionOverrideClassName` mechanism), which forces an immediate
+  evict-and-retry the moment a write hits Postgres' `25006`
+  (read-only-transaction) SQLState — the exact error a pooled connection
+  to a freshly-demoted node produces, since a demoted node still passes
+  `Connection.isValid()` and would otherwise keep being handed out until
+  `max-lifetime` eventually recycled it. **Not yet verified under a real
+  failover** — Step 4 below is what will actually test whether this
+  override behaves as intended, not just that it compiles and is wired
+  in.
+
+**Step 2 (basic functional check) — done, confirmed working, not just
+"container starts."** Real login (`POST /api/v1/auth/login`), meter
+creation, reading ingestion (round-tripping through the app's actual
+Kafka producer/consumer), and search all confirmed working against the
+new path — checked directly, not inferred: the created row was queried
+directly on `patroni-2` (confirmed present) and directly on the
+standalone `postgres` container (confirmed absent), ruling out any
+dual-write confusion or stale routing.
+
+**Step 3 (retire the standalone `postgres` container) — deliberately not
+done yet**, per this stage's own sequencing (Step 3 is gated on Step 2
+being confirmed, and Step 4's failure-scenario re-test is cleaner to run
+while both paths still exist for comparison if anything unexpected
+happens).
+
+**Step 4 (re-run a representative failure scenario through the app
+itself) — not yet done.** This is what will actually test the
+`SQLExceptionOverride` fix above under real conditions, and is the step
+that determines whether this stage can be marked complete.
 
 ## Deliverables expected from this pass
 
@@ -1439,3 +1580,10 @@ itself in isolation.
    that role directly rather than a separate document, consistent with
    how this doc has been maintained throughout rather than written once
    at the end.
+4. Stage 7 (application-level cutover and validation) — **not started**.
+   Added 2026-09-02 after Stages 0–6's infrastructure-only validation
+   scope was recognized as insufficient on its own; see Stage 7's own
+   section above for the full checklist. This is now the one remaining
+   item standing between "topology validated" and "application actually
+   protected," and outranks every other open item in this doc
+   (resource-budget housekeeping, `CLAUDE.md`'s count, unpushed commits).

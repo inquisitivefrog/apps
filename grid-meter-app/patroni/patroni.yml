@@ -50,3 +50,19 @@ bootstrap:
   pg_hba:
     - host replication replicator 0.0.0.0/0 md5
     - host all all 0.0.0.0/0 md5
+  # Found missing during the app cutover (docs/postgres-ha-scope.md's "Real, still-open gap"
+  # section): the bootstrap section above only ever created the postgres superuser -- unlike the
+  # standalone `postgres` service, which gets its `gridmeter` role/database for free from the
+  # official image's POSTGRES_USER/POSTGRES_DB env vars, this cluster never had an equivalent.
+  # `users` creates the role on bootstrap; `post_bootstrap` then creates the database it owns,
+  # matching SPRING_DATASOURCE_USERNAME/PASSWORD below. Fixed live on the already-running cluster
+  # via direct psql (CREATE ROLE/CREATE DATABASE) first, since this cluster has no persistent
+  # volume to force-recreate without cost -- this declares the same fix for the next fresh
+  # bootstrap, but the post_bootstrap hook itself has not yet been exercised against an actual
+  # from-scratch bootstrap in this project; treat it as unverified until it has been.
+  users:
+    gridmeter:
+      password: gridmeter
+      options:
+        - createdb
+  post_bootstrap: psql -U postgres -c "CREATE DATABASE gridmeter OWNER gridmeter;"

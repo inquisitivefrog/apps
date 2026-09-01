@@ -27,11 +27,12 @@ services:
       # metric never sees it (not as a success, not as a failure) -- Traefik itself is what
       # generates the resulting 502, so it's the only place this failure class is visible.
       - --metrics.prometheus=true
-      # Postgres HA client-write-routing spike (docs/postgres-ha-scope.md's "Patroni deployment
-      # model" §4) -- a separate TCP entrypoint + Consul Catalog provider, deliberately not
-      # wired into the app itself (the real `postgres` service is untouched). Routes to whichever
-      # Patroni node is currently reported healthy for the `postgres-primary` Consul service
-      # registered by load-tests/postgres-traefik-routing-register.sh (health check hits each
+      # Postgres HA client-write-routing (docs/postgres-ha-scope.md's "Patroni deployment
+      # model" §4) -- a separate TCP entrypoint + Consul Catalog provider, now the app's real
+      # datasource path (see api's SPRING_DATASOURCE_URL below) after this mechanism was
+      # validated across Stages 4-6 as a spike first. Routes to whichever Patroni node is
+      # currently reported healthy for the `postgres-primary` Consul service, kept registered on
+      # every startup by the postgres-primary-registrar service above (health check hits each
       # node's own :8008/primary -- 200 only from the actual current primary, 503 otherwise --
       # confirmed live before wiring this, not assumed from Patroni's docs).
       - --entrypoints.pgprimary.address=:55432
@@ -68,7 +69,12 @@ services:
       context: ./api
     logging: *default-logging
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gridmeter
+      # Cut over from the standalone `postgres` container to the Patroni cluster's write path
+      # (docs/postgres-ha-scope.md's "Real, still-open gap" section) -- routes through Traefik's
+      # :55432 entrypoint to whichever Patroni node is currently primary, kept registered by the
+      # postgres-primary-registrar service. The standalone `postgres` container stays defined
+      # below (not yet retired) until this cutover is verified working end to end.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://traefik:55432/gridmeter
       SPRING_DATASOURCE_USERNAME: gridmeter
       SPRING_DATASOURCE_PASSWORD: gridmeter
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
@@ -328,6 +334,29 @@ services:
       resources:
         limits:
           memory: 512m
+    networks:
+      - grid-meter
+
+  # One-shot registrar for the postgres-primary Consul service Traefik's :55432 entrypoint
+  # (below) routes through. Closes a durability gap docs/postgres-ha-scope.md's "Patroni
+  # deployment model" section explicitly flagged: the routing spike this validated against in
+  # Stages 4-6 only ever registered this manually via
+  # load-tests/postgres-traefik-routing-register.sh, so a fresh Consul bootstrap (a plain
+  # `docker compose down && up`, not even a failure) would silently leave the entrypoint with no
+  # backend at all. Runs scripts/register-postgres-primary.sh, which polls each Patroni node's
+  # own REST API before registering rather than trusting container start order, then exits --
+  # re-runs (idempotently, since Consul's register API is a PUT by ID) on every `docker compose
+  # up`, no manual step required.
+  postgres-primary-registrar:
+    image: curlimages/curl:8.11.1
+    volumes:
+      - ./scripts/register-postgres-primary.sh:/register-postgres-primary.sh:ro
+    entrypoint: ["/bin/sh", "/register-postgres-primary.sh"]
+    logging: *default-logging
+    depends_on:
+      - patroni-1
+      - patroni-2
+      - patroni-3
     networks:
       - grid-meter
 
