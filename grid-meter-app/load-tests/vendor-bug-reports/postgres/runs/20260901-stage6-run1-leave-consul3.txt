@@ -1,0 +1,106 @@
+Stage 6, Run 1 (re-tested 2026-09-01 with Traefik check + staggered 2-of-3 recovery check)
+Script: load-tests/postgres-consul-quorum-loss-test.sh
+Captured verbatim from the actual run.
+
+Surviving agent: consul-3 -- killing: consul-1 consul-2
+=== Confirming live ttl/loop_wait/retry_timeout ===
+loop_wait: 10
+retry_timeout: 10
+ttl: 30
+
+=== Identifying current leader ===
++ Cluster: gridmeter-postgres-ha (7679714027490770973) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 18 |   0/51E9AD8 |   0 |  0/51E9AD8 |   0 |
+| patroni-2 | patroni-2 | Leader         | running   | 18 |             |     |            |     |
+| patroni-3 | patroni-3 | Quorum Standby | streaming | 18 |   0/51E9AD8 |   0 |  0/51E9AD8 |   0 |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+Current leader: patroni-2
+
+=== Marker table + last acknowledged write on patroni-2 ===
+CREATE TABLE
+INSERT 0 1
+
+=== Killing 2 of 3 Consul agents: consul-1 consul-2 (leaving only consul-3, below raft majority) ===
+ Container grid-meter-app-consul-1-1 Stopping 
+ Container grid-meter-app-consul-2-1 Stopping 
+ Container grid-meter-app-consul-1-1 Stopped 
+ Container grid-meter-app-consul-2-1 Stopped 
+
+=== Confirming Consul itself correctly refuses a consistent operation (per Stage 0's baseline) ===
+Error! Failed writing data: Unexpected response code: 500 (rpc error getting client: failed to get conn: dial tcp <nil>->172.18.0.15:8300: i/o timeout)
+  (correctly refused, as expected)
+
+=== Monitoring all 3 nodes' OWN pg_is_in_recovery() directly for up to 60s ===
+    (bypassing Consul/patronictl entirely -- consistent reads are expected to fail cluster-wide)
+  [0ms] patroni-1=t patroni-2=unreachable patroni-3=t | patroni-2_write=no
+  [0ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): failed:psql: error: connection to server at "traefik" (172.18.0.6), port 55432 failed: server closed the connection unexpectedly
+  [3000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [5000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [7000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [7000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [10000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [12000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [15000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [15000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [17000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [20000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [22000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [22000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [24000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [27000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [29000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [29000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [32000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [34000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [36000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [36000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [39000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [41000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [44000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [44000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [46000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [49000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [51000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [51000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+  [54000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [56000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [58000ms] patroni-1=t patroni-2=t patroni-3=t | patroni-2_write=no
+  [58000ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): reached:172.18.0.19/32
+
+=== Staggered restore, part 1: bringing back only consul-1 (crossing 1-of-3 -> 2-of-3, quorum just regained) ===
+    Isolating this specific transition per docs/postgres-ha-scope.md's Stage 6 checklist --
+    confirm exactly ONE node gets cleanly, unambiguously elected right here, not just that
+    the cluster is healthy once everything is eventually restored.
+ Container grid-meter-app-consul-1-1 Starting 
+ Container grid-meter-app-consul-1-1 Started 
+  [0ms since restoring agent 1] nodes reporting primary (recovery=false): 0 (none)
+  [3000ms since restoring agent 1] nodes reporting primary (recovery=false): 0 (none)
+  [7000ms since restoring agent 1] nodes reporting primary (recovery=false): 0 (none)
+  [10000ms since restoring agent 1] nodes reporting primary (recovery=false): 1 (patroni-3)
+  -> Exactly one node (patroni-3) cleanly elected at 2-of-3 quorum, after 10000ms
+
+=== Staggered restore, part 2: bringing back consul-2 (full 3-of-3) ===
+ Container grid-meter-app-consul-2-1 Starting 
+ Container grid-meter-app-consul-2-1 Started 
+
+=== Waiting for full cluster recovery (up to 90s) ===
++ Cluster: gridmeter-postgres-ha (7679714027490770973) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 19 |   0/5219B88 |   0 |  0/5219B88 |   0 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 19 |   0/5219B88 |   0 |  0/5219B88 |   0 |
+| patroni-3 | patroni-3 | Leader         | running   | 19 |             |     |            |     |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+Fully recovered after 11s
+
+=== RESULT SUMMARY ===
+Original leader: patroni-2
+Consul correctly refused a consistent write during quorum loss: confirmed above
+Original leader self-demoted / stopped accepting writes at: 3000 ms after quorum loss began
+UNSAFE PROMOTION DETECTED (a non-leader node reported itself primary without real quorum): no
+2-of-3 recovery transition: exactly one node (patroni-3) cleanly elected at 10000ms after restoring the first agent10000
+
+=== Cleanup: removing probe rows ===
+DELETE 0

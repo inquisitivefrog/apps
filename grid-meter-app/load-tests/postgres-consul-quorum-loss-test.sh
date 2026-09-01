@@ -123,6 +123,25 @@ while (( SECONDS - LOOP_START < 60 )); do
   fi
   echo "${LINE} | ${LEADER}_write=${LEADER_WRITE_OK}"
 
+  # Traefik + Consul Catalog client-routing check -- deliberately separate from, and NOT part of,
+  # the Postgres/Patroni safety verdict above. The routing spike (Stages 4-5) works by querying
+  # Consul Catalog for whichever postgres-primary instance is currently "passing"; with no Consul
+  # quorum at all, that query path is itself expected to degrade or fail closed. A failure here
+  # says nothing about whether Postgres/Patroni behaved safely -- it's reported purely as its own
+  # informational finding about how the routing layer behaves under this failure mode, checked
+  # every 3rd iteration (~6s) rather than every iteration, since it's observational, not the
+  # safety check this stage exists to run.
+  if (( i % 3 == 1 )); then
+    TRAEFIK_RESULT="unknown"
+    if TRAEFIK_OUT=$(docker compose exec -T -e PGPASSWORD=gridmeter "$LEADER" \
+        psql -h traefik -p 55432 -U postgres -Atc "SELECT inet_server_addr()::text;" 2>&1); then
+      TRAEFIK_RESULT="reached:${TRAEFIK_OUT}"
+    else
+      TRAEFIK_RESULT="failed:$(echo "$TRAEFIK_OUT" | head -1 | tr -d '\n')"
+    fi
+    echo "  [${NOW_MS}ms] TRAEFIK/ROUTING (informational only, not part of the safety verdict): ${TRAEFIK_RESULT}"
+  fi
+
   if [[ "$UNSAFE_PROMOTION_DETECTED" == "yes" ]]; then
     echo "  !!! UNSAFE PROMOTION: $UNSAFE_PROMOTION_NODE reports pg_is_in_recovery=false without real Consul quorum !!!"
     break
@@ -132,8 +151,45 @@ while (( SECONDS - LOOP_START < 60 )); do
 done
 
 echo
-echo "=== Restoring ${KILL_AGENTS[*]} ==="
-docker compose start "${KILL_AGENTS[@]}"
+echo "=== Staggered restore, part 1: bringing back only ${KILL_AGENTS[0]} (crossing 1-of-3 -> 2-of-3, quorum just regained) ==="
+echo "    Isolating this specific transition per docs/postgres-ha-scope.md's Stage 6 checklist --"
+echo "    confirm exactly ONE node gets cleanly, unambiguously elected right here, not just that"
+echo "    the cluster is healthy once everything is eventually restored."
+docker compose start "${KILL_AGENTS[0]}"
+
+QUORUM_REGAINED_AT_MS=""
+ELECTED_NODE=""
+START=$SECONDS
+while (( SECONDS - START < 60 )); do
+  ELAPSED_MS=$(( (SECONDS - START) * 1000 ))
+  PRIMARY_COUNT=0
+  PRIMARY_NODES=()
+  for NODE in "${ALL_NODES[@]}"; do
+    R="unreachable"
+    if R_OUT=$(docker compose exec -T "$NODE" psql -U postgres -Atc "SELECT pg_is_in_recovery();" 2>/dev/null); then
+      R="$R_OUT"
+    fi
+    if [[ "$R" == "f" ]]; then
+      PRIMARY_COUNT=$((PRIMARY_COUNT+1))
+      PRIMARY_NODES+=("$NODE")
+    fi
+  done
+  echo "  [${ELAPSED_MS}ms since restoring agent 1] nodes reporting primary (recovery=false): ${PRIMARY_COUNT} (${PRIMARY_NODES[*]:-none})"
+  if (( PRIMARY_COUNT == 1 )); then
+    QUORUM_REGAINED_AT_MS="$ELAPSED_MS"
+    ELECTED_NODE="${PRIMARY_NODES[0]}"
+    echo "  -> Exactly one node ($ELECTED_NODE) cleanly elected at 2-of-3 quorum, after ${ELAPSED_MS}ms"
+    break
+  elif (( PRIMARY_COUNT > 1 )); then
+    echo "  !!! AMBIGUOUS ELECTION: $PRIMARY_COUNT nodes simultaneously report primary at 2-of-3 quorum !!!"
+    break
+  fi
+  sleep 3
+done
+
+echo
+echo "=== Staggered restore, part 2: bringing back ${KILL_AGENTS[1]} (full 3-of-3) ==="
+docker compose start "${KILL_AGENTS[1]}"
 
 echo
 echo "=== Waiting for full cluster recovery (up to 90s) ==="
@@ -159,6 +215,11 @@ echo "Original leader self-demoted / stopped accepting writes at: ${DEMOTED_AT_M
 echo "UNSAFE PROMOTION DETECTED (a non-leader node reported itself primary without real quorum): ${UNSAFE_PROMOTION_DETECTED}"
 if [[ "$UNSAFE_PROMOTION_DETECTED" == "yes" ]]; then
   echo "  -> Node: $UNSAFE_PROMOTION_NODE"
+fi
+if [[ -n "$QUORUM_REGAINED_AT_MS" ]]; then
+  echo "2-of-3 recovery transition: exactly one node (${ELECTED_NODE}) cleanly elected at ${QUORUM_REGAINED_AT_MS}ms after restoring the first agent"
+else
+  echo "2-of-3 recovery transition: NOT confirmed within 60s -- real problem, not a formatting artifact"
 fi
 
 echo

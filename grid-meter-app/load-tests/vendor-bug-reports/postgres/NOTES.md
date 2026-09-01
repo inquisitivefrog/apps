@@ -5,9 +5,9 @@ tracks status/progress against that plan's staged approach, not a duplicate
 of its reasoning. Clustering solution: Patroni + Consul (decided in
 `docs/ha-scope.md`, inherited as-is — see that doc's reasoning).
 
-**Status (2026-09-01): Stages 0–5 complete. Stage 6 (kill 2 of 3 Consul
-agents while Postgres is under real load) is the only remaining stage in
-this pass — see "Next: Stage 6" below.**
+**Status (2026-09-01): Stages 0–6 complete — this closes out the entire
+staged Postgres/Patroni/Consul HA pass. See "Stage 6" near the end of
+this file for the final stage's results.**
 
 ## Stage 0 — Confirm Consul quorum works in isolation (complete, PASS 3/3)
 
@@ -280,15 +280,115 @@ for the raft-leader check, wrong field index for the cluster timeline)
 | Docker Compose | 5.4.0 |
 | Host OS | macOS 26.5.2, arm64 (Apple Silicon) |
 
-## Next: Stage 6
+## Stage 6 — Quorum-loss equivalent: kill 2 of 3 Consul agents under real load (complete, PASS, 3/3, each run leaving a different agent up)
 
-Not yet started. Per `docs/postgres-ha-scope.md`: kill 2 of 3 Consul
-agents while Postgres is under real load — direct analog of Kafka's and
-Redis's own quorum-loss scenarios. Confirm the system fails safe (no
-ambiguous promotion decision) rather than failing unsafe. Also still
-open, tracked separately, not blocking Stage 6: a decision on whether
-`~8–21s` is an acceptable availability-gap magnitude for this project's
-scope, and the still-untested "both replicas down while the primary
-stays up" scenario `synchronous_mode_strict` governs (see
-`docs/postgres-ha-scope.md`'s "Sync mode decision" section — left unset,
-decided from direct measurement, not re-opened by this stage).
+Script: `load-tests/postgres-consul-quorum-loss-test.sh`, parameterized
+by which single Consul agent survives.
+
+**A real prerequisite finding surfaced while scoping this stage**: Consul
+refuses `consistent=1` reads (which Patroni's own Consul client uses)
+outright without a raft quorum — meaning `patronictl list`, the tool
+every earlier stage leaned on, was expected to fail on *every* node
+during this stage's failure mode, not just report stale data. This
+stage's safety check therefore polls each of the 3 nodes' own
+`pg_is_in_recovery()` directly via `psql`, bypassing Consul-derived
+state entirely — the same discipline as Stage 0's "alive vs. voting
+member" and Stage 5's "Consul-reported visibility vs. actual replication
+state," now a third time in this investigation.
+
+**The 9th confirmed instance of the undeclared-durability/quorum-default
+pattern, found verifying the note above**: `PATRONI_CONSUL_CONSISTENCY`
+was completely undeclared anywhere in this project, despite governing
+exactly the read-consistency property this stage's safety depends on.
+Live behavior already matched the safe value (`consistent`, confirmed
+via Stage 5's own log inspection) — declared explicitly in
+`docker-compose.yml` to stop relying on that being a coincidence,
+applied via a rolling recreate (replicas first, leader last, one real
+expected failover), verified unchanged on all 3 nodes afterward.
+
+**Re-tested (2026-09-01) after the first pass, adding two things the
+original 3 runs didn't cover**, per direct follow-up: (a) Traefik's
+client-routing behavior during total Consul quorum loss, checked as its
+own clearly-labeled observation, never folded into the Postgres/Patroni
+safety verdict; (b) the specific 1-of-3 → 2-of-3 recovery transition,
+isolated via a staggered restore (bring back one killed agent, confirm
+exactly one node gets cleanly elected, *then* restore the second) rather
+than restoring both agents together and only checking the eventual
+full-health end state. The table below is the final, complete result;
+the original 3-run pass without these two checks is superseded by it.
+
+| Run | Surviving agent | Primary | Self-demoted at | Unsafe promotion | 2-of-3 recovery |
+|---|---|---|---|---|---|
+| 1 | `consul-3` | `patroni-2` | 3000ms | No | 1 node cleanly elected, 10000ms |
+| 2 | `consul-1` | `patroni-3` | 10000ms | No | 1 node cleanly elected, 37000ms |
+| 3 | `consul-2` | `patroni-2` | 10000ms | No | 1 node cleanly elected, 7000ms |
+
+**The critical safety property held in all 3 runs**: Consul correctly
+refused the consistent operation immediately (real `500`s each time),
+and neither non-leader node ever reported itself primary at any point
+across any full 60-second window, confirmed via direct query on all 3
+nodes independently. The system fails safe — unavailable for writes,
+never ambiguous about who's primary — exactly as this stage exists to
+verify, not merely assumed from Stage 0's Consul-only baseline.
+
+**The 2-of-3 recovery transition was also clean in all 3 runs — exactly
+one node elected, never zero-then-ambiguous, never two at once** — but
+the *time* to reach that clean election varied widely (7s to 37s), with
+no clear causal pattern identified (self-demotion time didn't correlate
+with recovery time in any consistent way across the 3 runs). Reported
+honestly as real variance rather than forcing a tidy explanation that
+the data doesn't actually support.
+
+**A genuinely useful finding for understanding Traefik + Consul
+Catalog's actual behavior under this failure mode, confirmed 3/3
+identically**: Traefik kept routing every client connection to the
+*same* node for the entire ~59-second quorum-loss window in every run —
+even after that node had already self-demoted and was no longer really
+primary. This is not a Traefik bug and not unsafe (a write sent there
+would just fail against a read-only replica, not corrupt anything) —
+it's a direct, mechanical consequence of how the whole routing spike
+works: Traefik relies on Consul Catalog's health-check status, and
+Consul itself cannot process *any* health-check state changes without a
+raft quorum to write them into. Once quorum is lost, Consul Catalog's
+last-known-good answer is simply frozen, and Traefik has no way to know
+it's stale. This is a different specific mechanism from Stage 5's
+"Patroni reuses a stale pooled connection" finding, but the same general
+shape: a health/routing signal derived from Consul is not the same thing
+as the real state of the component being routed to, and the gap between
+them widens for as long as Consul itself can't be consulted at all.
+
+**Three real script bugs found and fixed across both passes, worth
+recording precisely**:
+1. A self-inflicted mistake, not a code bug: piping a live,
+   state-mutating script through `head -30` triggered a `SIGPIPE` that
+   killed it before its own cleanup ran, leaving 2 Consul agents
+   stopped. Caught and restored immediately. Lesson: never truncate
+   output from a script that mutates real infrastructure state via a
+   pipe that can close early.
+2. An unreproduced timing anomaly in the first pass: a first version
+   driving the monitoring loop's `while` condition directly off
+   `date +%s%N` nanosecond arithmetic exited after only ~2.5s instead of
+   the intended 60s — isolated repros of the identical pattern did not
+   reproduce it. Worked around by redesigning the loop to use the
+   `SECONDS` builtin for loop control instead, trading sub-second timing
+   precision for robustness.
+3. **The same class of bug recurred in the *new* staggered-restore
+   loop during the re-test, even though it already used the `SECONDS`
+   builtin** — one run's 2-of-3 recovery check silently stopped after a
+   single iteration with no error. This time the actual mechanism was
+   identified: the underlying shell command had exceeded the tool
+   environment's foreground-execution window and been force-migrated to
+   run in the background mid-script, and that migration itself appears
+   to disrupt the running script's loop execution. Confirmed by
+   re-running the identical scenario launched as a background command
+   from the very start (no mid-run migration) — it completed cleanly
+   with a normal result (7000ms). The underlying cluster had, in fact,
+   converged correctly on its own during the failed observation (checked
+   directly afterward) — this was lost visibility into a real, safe
+   outcome, not a masked unsafe one. **Portable lesson for future
+   sessions**: launch any script expected to run long enough to risk a
+   foreground timeout as a background command from the start, rather
+   than letting it be migrated mid-execution.
+
+This closes out all 6 stages of the staged Postgres/Patroni/Consul HA
+pass.
