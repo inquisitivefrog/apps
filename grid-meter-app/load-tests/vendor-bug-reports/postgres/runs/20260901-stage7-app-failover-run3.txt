@@ -1,0 +1,49 @@
+Stage 7, Run 3: app-level primary-failure test (real HTTP traffic through the API, not direct psql)
+Script: load-tests/postgres-app-primary-failure-test.sh
+Captured verbatim from the actual run.
+
+=== Logging in ===
+=== Creating a test meter for this run ===
+Meter: 1574cb82-6278-48bd-a1a3-1484eab699ac
+
+=== Identifying current leader ===
++ Cluster: gridmeter-postgres-ha (7679714027490770973) ---+-------------+-----+------------+-----+
+| Member    | Host      | Role           | State     | TL | Receive LSN | Lag | Replay LSN | Lag |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+| patroni-1 | patroni-1 | Quorum Standby | streaming | 25 |   0/5727F00 |   0 |  0/5727F00 |   0 |
+| patroni-2 | patroni-2 | Quorum Standby | streaming | 25 |   0/5727F00 |   0 |  0/5727F00 |   0 |
+| patroni-3 | patroni-3 | Leader         | running   | 25 |             |     |            |     |
++-----------+-----------+----------------+-----------+----+-------------+-----+------------+-----+
+Current leader: patroni-3
+
+=== Starting continuous app-level write traffic (background, ~3.3 req/s) ===
+
+=== Killing patroni-3 ===
+ Container grid-meter-app-patroni-3-1 Stopping 
+ Container grid-meter-app-patroni-3-1 Stopped 
+
+=== Polling for a new leader at the infrastructure level (up to 60s) ===
+  New leader: patroni-1 -- infra-level RTO: 1632ms
+
+=== Continuing app traffic for 20s past infra-level election, to observe app-level recovery ===
+
+=== Stopping traffic and restoring patroni-3 ===
+ Container grid-meter-app-patroni-3-1 Starting 
+ Container grid-meter-app-patroni-3-1 Started 
+
+=== RESULT SUMMARY ===
+Old leader: patroni-3 -> New leader: patroni-1
+Total requests during run: 42 (success: 41, failed/timed-out: 1)
+App-level RTO (first successful write after outage began): 0ms
+Last failing request at: 337ms after outage began
+HTTP status code breakdown:
+   1 000
+  41 201
+
+Recovered without any app/pool restart: yes
+
+Full request log: /var/folders/zf/fb84p94n667_94m4dtdmljcc0000gn/T/tmp.DAAPN73VeL/requests.log
+
+=== Cleanup: deleting the test meter's readings via direct SQL (readings are immutable, no DELETE endpoint) ===
+DELETE 42
+DELETE 1

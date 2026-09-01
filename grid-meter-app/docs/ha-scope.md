@@ -31,11 +31,11 @@ underneath it — actually survives each of these failure modes is now
 tracked as an explicit, required final stage for **every** layer, not
 optional follow-up polish:
 
-- **Postgres**: `docs/postgres-ha-scope.md`'s new application-level
-  validation stage (added 2026-09-02) — cut the app over from the
-  standalone container to the Patroni cluster, then re-run at least one
-  representative failure scenario (primary kill) through the app's real
-  endpoints.
+- **Postgres**: **done (2026-09-02)** — `docs/postgres-ha-scope.md`'s
+  Stage 7 cut the app over from the standalone container to the Patroni
+  cluster and re-ran the primary-kill scenario 3/3 clean through the
+  app's real endpoints; HikariCP self-heals via
+  `PrimaryFailoverSQLExceptionOverride` with no restart needed.
 - **Redis**: `docs/redis-ha-scope.md`'s new final stage (added
   2026-09-02) — confirm the app's actual Redis client (whatever
   Spring Data Redis config it uses) is pointed at and correctly recovers

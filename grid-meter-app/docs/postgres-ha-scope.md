@@ -1,17 +1,19 @@
 # grid-meter-app — High-availability scope: PostgreSQL (Patroni)
 
-**Status (2026-09-02): Stages 0–6 complete; Stage 7 (application-level
-cutover and validation) Steps 1–2 done, Steps 3–4 remaining.**
-`SPRING_DATASOURCE_URL` now points at Traefik's `:55432` entrypoint, and
-real app traffic (login, meter create, reading ingest via Kafka, search)
-has been confirmed working against the Patroni cluster — see "Stage 7
-results" near the end of this doc for what was found (including a real,
-concrete instance of the "more than a one-line config change" risk this
-stage's own plan predicted). The standalone `postgres` container has not
-yet been retired, and no failure scenario has yet been re-run through
-the app's real endpoints — treat those as still open, not done by
-implication. This same gap applies to the Kafka and Redis passes too;
-see `docs/ha-scope.md`'s new standing lesson.
+**Status (2026-09-02): all 7 stages complete, including application-level
+cutover and validation.** `SPRING_DATASOURCE_URL` points at Traefik's
+`:55432` entrypoint; real app traffic has been confirmed working against
+the Patroni cluster, the standalone `postgres` container is retired, and
+a representative failure scenario (primary kill) was re-run 3/3 clean
+through the app's real endpoints, confirming HikariCP self-heals via
+`PrimaryFailoverSQLExceptionOverride` with no restart needed. See "Stage
+7 results" near the end of this doc for the full findings, including a
+real, concrete instance of the "more than a one-line config change" risk
+this stage's own plan predicted, and a genuine ambiguous-outcome finding
+(a write that committed server-side but whose response never reached the
+client). This same app-vs-infrastructure gap applied to the Kafka and
+Redis passes too; see `docs/ha-scope.md`'s standing lesson — Kafka was
+confirmed already clean, Redis's own Stage 6 remains open.
 
 ## Why this doc exists
 
@@ -1549,15 +1551,90 @@ standalone `postgres` container (confirmed absent), ruling out any
 dual-write confusion or stale routing.
 
 **Step 3 (retire the standalone `postgres` container) — deliberately not
-done yet**, per this stage's own sequencing (Step 3 is gated on Step 2
-being confirmed, and Step 4's failure-scenario re-test is cleaner to run
-while both paths still exist for comparison if anything unexpected
-happens).
+deferred at the time this was written**, per this stage's own sequencing
+(Step 3 was gated on Step 2 being confirmed, and Step 4's
+failure-scenario re-test was cleaner to run while both paths still
+existed for comparison if anything unexpected happened). **Done now,
+after Step 4 confirmed cutover works cleanly** — the standalone
+`postgres` container, its compose service definition, and its
+now-orphaned `postgres-data` volume are all removed. Confirmed the app
+stayed healthy (`/actuator/health` still `UP`) throughout the removal.
+One real snag: `docker compose rm -f postgres` silently no-opped
+(`no such service: postgres`) once the service definition was already
+removed from `docker-compose.yml` — compose no longer had anything to
+target by that name, even though the container itself was still running
+under Docker directly. Caught immediately by checking
+`docker volume rm`'s "volume is in use" error rather than assuming the
+`rm` had worked; the container needed stopping/removing directly via
+plain `docker stop`/`docker rm` instead of through compose.
 
 **Step 4 (re-run a representative failure scenario through the app
-itself) — not yet done.** This is what will actually test the
-`SQLExceptionOverride` fix above under real conditions, and is the step
-that determines whether this stage can be marked complete.
+itself) — done, 3/3 clean runs, holding this pass's own 3-run bar.**
+Built `load-tests/postgres-app-primary-failure-test.sh`: generates real,
+continuous `POST /api/v1/readings` traffic through the app (not direct
+SQL) at ~3.3 req/s throughout the whole outage, dynamically detects and
+kills the current leader, polls for the new leader at the infrastructure
+level the same way Stage 4 did, then keeps generating traffic for 20s
+past election to observe app-level recovery.
+
+| Run | Old leader → new | Infra RTO | Requests | Failed | Self-healed, no restart |
+|---|---|---|---|---|---|
+| 1 | patroni-2 → patroni-3 | 1806ms | 42 | 1 | Yes |
+| 2 | patroni-2 → patroni-3 | 1806ms | 28 | 2 (client-reported) | Yes |
+| 3 | patroni-3 → patroni-1 | 1632ms | 42 | 1 | Yes |
+
+**The `PrimaryFailoverSQLExceptionOverride` fix works as intended,
+confirmed rather than assumed**: in every run, HikariCP recovered
+without any application restart or manual intervention — a pooled
+connection to the freshly-demoted old leader got evicted and replaced
+automatically the moment a write against it hit Postgres' `25006`
+SQLState, and the very next write succeeded against the new primary via
+Traefik. Total real-world impact across all 3 runs: 1-2 failed requests
+out of 28-42 total, inside a single-digit-second window — not zero, but
+close to it, and self-recovering every time.
+
+**A genuine, interesting finding, not a script bug**: Run 2's client
+reported 2 failures (26 successes out of 28 requests), but the database
+itself contained 27 reading rows for that run's test meter — one more
+than the client believed succeeded. This means one write actually
+committed on the server side while its response never reached the
+client, almost certainly because the connection was severed mid-response
+by the container being stopped. **A real, practical implication**: this
+app's `POST /api/v1/readings` has no idempotency key, so a caller that
+blindly retries every failed request on this exact failure shape (write
+succeeds, response lost) risks creating a duplicate reading rather than
+safely retrying a request that never happened. Not fixed here — out of
+this stage's scope — but worth recording as a concrete, evidence-backed
+argument for an idempotency key if this app's ingestion contract is ever
+hardened past its current demo scope.
+
+**A real test-infrastructure bug found and fixed while building this
+script, worth recording per this project's standing "report unexpected
+things honestly" discipline**: an early version's background
+request-generator loop silently died after ~2 seconds instead of running
+the full ~24s window, while the outer script's own summary still printed
+a clean-looking result (7 total requests instead of ~30-40) — the exact
+"loop silently exits early, script reports success anyway" bug shape
+`docs/testing-strategy.md`'s fixed-sleep lesson already tracks, but from
+a new root cause: `set -e` was inherited into the `&`-backgrounded
+loop's subshell, so the first time `curl` returned non-zero (a real
+connection-refused during the failover window -- precisely the moment
+this test most needed data), `set -e` killed the whole loop instantly.
+The bug was introduced while fixing an unrelated cosmetic issue (a
+doubled `"000000"` status code in the log) that removed the loop's
+existing `|| echo "000"` guard without recognizing it was also the
+`set -e` guard. Caught by noticing the request count for one run was far
+too low for its duration rather than accepting the clean-looking summary
+at face value; that run was discarded and re-run after restoring the
+guard.
+
+**Stage 7 is now complete.** All four steps done: cutover, functional
+check, standalone container retired, and a representative failure
+scenario re-run 3/3 clean through the app's real endpoints. This closes
+the app-vs-infrastructure gap `docs/ha-scope.md`'s standing lesson named
+for Postgres specifically -- the validated Patroni/Consul topology is
+now what the application actually runs on, not infrastructure sitting
+next to it.
 
 ## Deliverables expected from this pass
 
@@ -1580,10 +1657,10 @@ that determines whether this stage can be marked complete.
    that role directly rather than a separate document, consistent with
    how this doc has been maintained throughout rather than written once
    at the end.
-4. Stage 7 (application-level cutover and validation) — **not started**.
-   Added 2026-09-02 after Stages 0–6's infrastructure-only validation
-   scope was recognized as insufficient on its own; see Stage 7's own
-   section above for the full checklist. This is now the one remaining
-   item standing between "topology validated" and "application actually
-   protected," and outranks every other open item in this doc
-   (resource-budget housekeeping, `CLAUDE.md`'s count, unpushed commits).
+4. Stage 7 (application-level cutover and validation) — **done**. Added
+   2026-09-02 after Stages 0–6's infrastructure-only validation scope
+   was recognized as insufficient on its own; see Stage 7's own section
+   above for the full checklist and results. Closes the gap standing
+   between "topology validated" and "application actually protected" —
+   the app now runs on the validated Patroni cluster, not next to it,
+   confirmed by 3 clean app-level failure-scenario runs.

@@ -414,3 +414,68 @@ overstated, same direction as Redis's own estimate-vs-real gap. No VM
 allocation increase needed. Full writeup in
 `docs/postgres-ha-scope.md`'s "Resource budget — finally re-measured
 against the real full topology" section.
+
+## Stage 7 — Application-level cutover and validation (complete, 3/3 clean)
+
+Six clean chaos-testing stages had validated the Patroni/Consul topology
+in isolation, but `SPRING_DATASOURCE_URL` still pointed at the
+standalone `postgres` container the whole time -- none of that
+protection was actually in the app's request path. Closed in four steps:
+
+1. **Cutover**: pointed `SPRING_DATASOURCE_URL` at Traefik's `:55432`
+   entrypoint. Needed more than a one-line change: the `gridmeter`
+   role/database never existed on the Patroni cluster (fixed live +
+   declared in `patroni.yml` for future bootstraps), the routing
+   registration was still the manual, explicitly-"not yet durable" spike
+   script (fixed with a new one-shot `postgres-primary-registrar`
+   compose service, verified against a genuine cold Consul teardown, not
+   just a restart), and HikariCP needed
+   `PrimaryFailoverSQLExceptionOverride` added to evict pooled
+   connections on Postgres' `25006` read-only-transaction SQLState so a
+   connection to a freshly-demoted node doesn't keep getting handed out.
+2. **Functional check**: real login, meter create, reading ingest via
+   Kafka, and search all confirmed working, with the row directly
+   verified present on `patroni-2` and absent from the standalone
+   container.
+3. **Retired the standalone `postgres` container**, its compose service,
+   and its `postgres-data` volume, after Step 4 confirmed cutover was
+   solid. One snag: `docker compose rm -f postgres` silently no-opped
+   once the service definition was already removed from the compose
+   file; the container needed stopping directly via plain `docker`
+   commands instead.
+4. **Re-ran a primary-kill scenario through the app's real endpoints**
+   (`load-tests/postgres-app-primary-failure-test.sh`), 3/3 clean:
+
+   | Run | Old leader → new | Infra RTO | Requests | Failed | Self-healed |
+   |---|---|---|---|---|---|
+   | 1 | patroni-2 → patroni-3 | 1806ms | 42 | 1 | Yes |
+   | 2 | patroni-2 → patroni-3 | 1806ms | 28 | 2 (client-reported) | Yes |
+   | 3 | patroni-3 → patroni-1 | 1632ms | 42 | 1 | Yes |
+
+   HikariCP recovered automatically every time, no restart needed.
+   Total impact: 1-2 failed requests out of 28-42, within a single-digit
+   second window.
+
+**A genuine finding, not a bug**: Run 2's DB had 27 reading rows for its
+test meter, but the client only counted 26 successes -- one write
+committed server-side with its response lost, almost certainly from the
+connection being severed mid-response by the container stopping. Real
+implication: `POST /api/v1/readings` has no idempotency key, so a naive
+client retry on this exact failure shape risks a duplicate write. Not
+fixed here (out of scope), but a concrete, evidence-backed argument for
+one if this app's ingestion contract is ever hardened.
+
+**A real script bug found and fixed while building the test**: an early
+version's background traffic-generator loop silently died after ~2s
+instead of running the full ~24s window (7 requests logged instead of
+~30-40), while the outer script's summary still looked clean. Root
+cause: fixing an unrelated cosmetic bug (a doubled `"000000"` status
+code) removed the loop's `|| echo "000"` guard without recognizing it
+was also what kept `set -e` (inherited into the `&`-backgrounded
+subshell) from killing the loop the instant `curl` hit a real
+connection-refused during the failover window. Caught by noticing one
+run's request count was implausibly low for its duration; that run was
+discarded and re-run after restoring the guard.
+
+Full writeup: `docs/postgres-ha-scope.md`'s "Stage 7 results" section.
+This closes all 7 stages of the staged Postgres/Patroni/Consul HA pass.

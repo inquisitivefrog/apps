@@ -94,7 +94,10 @@ services:
       # pipeline). Must be set here, not in application.yml — see comment there.
       MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"
     depends_on:
-      - postgres
+      - patroni-1
+      - patroni-2
+      - patroni-3
+      - postgres-primary-registrar
       - kafka-1
       - kafka-2
       - kafka-3
@@ -158,21 +161,12 @@ services:
     # Run multiple replicas with: docker compose up --scale api=2
     # Traefik's Docker provider auto-discovers and load balances across them.
 
-  postgres:
-    image: postgres:18.4
-    logging: *default-logging
-    environment:
-      POSTGRES_DB: gridmeter
-      POSTGRES_USER: gridmeter
-      POSTGRES_PASSWORD: gridmeter
-    volumes:
-      - postgres-data:/var/lib/postgresql
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-    networks:
-      - grid-meter
+  # The standalone `postgres` service (single instance, postgres-data volume) that used to sit
+  # here was retired here after docs/postgres-ha-scope.md's Stage 7 cutover was verified working
+  # end to end (3 clean app-level primary-failure runs, self-healing recovery, no unsafe
+  # promotion) -- api's SPRING_DATASOURCE_URL now points at the Patroni cluster below via
+  # Traefik's :55432 entrypoint exclusively, so keeping this container running alongside it would
+  # just be dead weight with no traffic ever reaching it.
 
   # Consul (Stage 0 of docs/postgres-ha-scope.md) -- Patroni's consensus-store backend, standing
   # this up ALONE first, before Postgres/Patroni touch it at all, per that doc's explicit
@@ -729,6 +723,5 @@ networks:
   grid-meter:
 
 volumes:
-  postgres-data:
   grafana-data:
 
