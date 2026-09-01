@@ -129,6 +129,60 @@ because nothing signals that anything went wrong — this is the same
 "fails open instead of loud" shape as the `timeout`/`gtimeout` case
 above, not a coincidence that it happened twice.
 
+**Never edit a script file while an invocation of it is still running.**
+Bash reads a script incrementally as execution proceeds, not all at once
+into memory — editing the file on disk mid-run can corrupt what the
+*already-running* process reads for the remainder of its execution, even
+though the file is syntactically correct both before and after the edit
+and passes a syntax check afterward. Hit while iterating on a Kafka
+chaos script: a fix was saved to disk while an earlier invocation of the
+same script was still executing in the background, and that invocation
+aborted mid-scenario with no indication the edit itself was the cause —
+it looked like a runtime failure in the script's own logic. The general
+rule: before modifying any script, confirm no background job is still
+executing that exact file, regardless of how confident the edit itself
+is.
+
+**A chaos/monitoring script's own observation point can be invalidated
+by the exact fault it's injecting, or by unrelated work elsewhere in the
+project — check both, not just one.** Found twice in the same
+investigation, two different mechanisms: a Kafka monitoring helper
+hardcoded its query target to a specific broker, and the first run that
+actually killed that broker had every poll during the outage silently
+query a dead container — producing a false "no leader elected" result
+that looked like a real failure but was actually the monitoring tool
+losing its own vantage point. Separately, a different check in the same
+script queried a standalone Postgres container that had been correctly
+retired by an unrelated pass earlier in the same session — a
+shared-infrastructure change with no visibility into what else referenced
+it by name. The general rule, covering both: any script that queries
+cluster/infrastructure state during a test needs a query path that
+survives the exact fault being injected (dynamically pick a surviving
+node, or route through a mechanism — a load balancer, service discovery
+— built to tolerate any single node's death), and before retiring any
+shared container or service, grep for its name across every other
+script/pass in the project, not just the one currently being worked on.
+
+**`grep -c PATTERN` exits non-zero when it finds zero matches, even
+though it still correctly prints `"0"` — a real trap under `set -e`/
+`pipefail`.** A count-based readiness check (`grep -c "^ip$"` counting
+known replicas) copied `set -euo pipefail` from a different script's
+pattern without checking it against this specific idiom. The first time
+the count was legitimately zero, the pipeline's non-zero exit fed
+straight into `-e` and killed the whole script silently, before its own
+`if [ "$COUNT" -ge N ]` check ever ran — indistinguishable from the
+script just hanging, with no error message pointing at the cause. Fixed
+by dropping `-e` to match a sibling script's already-proven, deliberate
+choice not to use it for exactly this class of readiness-polling logic,
+rather than auditing every command substitution for this one gotcha.
+General rule: `grep -c`, `grep -q`, and similar "exits non-zero on
+legitimate no-match" commands are common inside readiness-polling loops
+specifically because "not ready yet" is itself a normal, expected
+outcome — which is exactly the case `set -e` cannot distinguish from a
+real failure. Prefer `set -uo pipefail` (no `-e`) for scripts built
+around this kind of polling, with explicit `if`/`until` checks doing the
+control-flow work instead.
+
 ## Kubernetes and infrastructure-as-code pitfalls
 
 **A config language's comment syntax isn't universal — verify it per

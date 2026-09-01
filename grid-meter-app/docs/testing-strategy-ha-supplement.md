@@ -483,54 +483,93 @@ largely tested; see below per-scenario.**
   automatically with no data loss (verify `acks=all` and a replication
   factor > 1 are actually configured, not just present in a config file).
   This is the test that validates real fault tolerance, not just
-  replication existing on paper. **Status: done (2026-09-01), 3/3 clean
-  runs — holding this project's own 3-run bar for correctness findings.**
-  The original gap (`kafka-ha-demo.sh` Scenario 1 stopping `kafka-2`
-  unconditionally rather than the actual partition leader, with no real
-  RTO measurement) is closed. Getting there required fixing **three**
-  real bugs, not just retargeting the kill:
-  - **`cluster_state()` hardcoded its query target to `kafka-1`.** On the
-    first run that finally killed the actual partition leader (which
-    happened to be `kafka-1` that time), every poll during the outage
-    queried a now-dead container and silently found nothing — a false
-    "no leader elected" result indistinguishable from a real Kafka
-    failure, but actually the monitoring tool losing its own vantage
-    point. Fixed by having the script dynamically pick a surviving
-    broker to query (mirroring the witness pattern already used in
-    `postgres-primary-failure-test.sh`), rather than assuming any one
-    broker stays up.
-  - **Scenario 2's durability check queried the retired standalone
-    `postgres` container**, which no longer exists after this session's
-    earlier Postgres cutover work — every query silently failed
-    (`service "postgres" is not running`), corrupting the data-loss
-    accounting for an entire run.
-  - **Fixing that the obvious way (point at `patroni-1` directly) would
-    have recreated the exact `cluster_state()` bug in a new location** —
-    correct only because `patroni-1` happens to be primary today, wrong
-    the next time it isn't. Caught by Claude Chat before it shipped:
-    routed the query through Traefik's `:55432` entrypoint instead
-    (`docs/postgres-ha-scope.md`'s Patroni cutover), which already exists
-    specifically to solve "reach whichever node is currently correct."
-    That introduced one more real bug of its own — a TCP connection
-    through Traefik requires password auth per `patroni.yml`'s `pg_hba`
-    rules, unlike the local-socket connection a direct in-container
-    `psql` had been implicitly relying on — fixed with an explicit
-    `PGPASSWORD`.
+  replication existing on paper. **Status: done (2026-09-02), 3/3 valid
+  runs — superseding an earlier, incomplete single-run write-up of this
+  same fix.** The original gap (`kafka-ha-demo.sh` Scenario 1 stopping
+  `kafka-2` unconditionally regardless of whether it actually led any
+  partition the test's traffic used, and never measuring real RTO — just
+  assuming a fixed 5-second sleep was enough) is closed. With 3
+  partitions spread across all 3 brokers, the old unconditional-kill
+  approach risked silently testing nothing on any given run. Fixed
+  properly: the script now determines which partition a run's traffic
+  actually lands on (via an offset diff around a canary write), kills
+  that partition's real current leader, and measures genuine RTO by
+  polling concurrently with sending traffic.
 
-  **Real RTO measured across 3 valid runs, each killing a genuinely
-  different leader/partition combination**: 3.7s, 14.0s, and 15.5s — no
-  fixed pattern, reported honestly rather than smoothed into a single
-  number. 20/20 requests succeeded in every run (zero HTTP-level impact,
-  RF=3 working as intended), and Scenario 2's now-correctly-routed
-  durability check confirmed the expected real data loss (0 of 10
-  landed, matching `delivery.timeout.ms`'s 120s default expiring before
-  the 150s quorum-loss window ended) consistently across all 3 runs.
-  This is the first real, trustworthy time-to-new-leader number this
-  test has ever produced — the original Scenario 1 never measured one at
-  all, and any single run before all three bugs were fixed would have
-  been silently corrupted by one blind spot or another, regardless of
-  which broker actually got killed. Full transcripts:
-  `load-tests/vendor-bug-reports/kafka/runs/`.
+  **Getting there required fixing 3 real bugs, not just retargeting the
+  kill — each one worth recording on its own:**
+
+  1. **The monitoring helper's own hardcoded query target.**
+     `cluster_state()` hardcoded its query target to `kafka-1`; the
+     first run that actually killed `kafka-1` itself had every poll
+     during the outage silently query a dead container, producing a
+     false "no leader elected" result that looked like a real Kafka
+     failure but was actually the monitoring tool losing its own
+     vantage point. Fixed by having the script dynamically pick a
+     surviving broker to query rather than assume any specific one
+     stays up.
+  2. **Scenario 2's durability check was still querying the standalone
+     `postgres` container** — retired earlier in the same session
+     during the Postgres HA pass's own application-cutover work (see
+     `docs/postgres-ha-scope.md`'s Stage 7). A shared-infrastructure
+     retirement in one pass silently broke an unrelated verification
+     step in another; see `docs/cross-project-lessons.md` for the
+     general lesson this prompted about checking cross-pass references
+     before retiring shared containers.
+  3. **Fixing bug 2 by hardcoding the query to a specific `patroni-N`
+     container would have reintroduced bug 1's exact mistake in a new
+     location** — caught before landing, not after. Routed through
+     Traefik's `:55432` entrypoint instead (built and verified during
+     Postgres's own Stage 7, reused here rather than re-invented), which
+     always reaches whichever node is actually primary. That fix
+     surfaced one more real bug: the TCP connection through Traefik
+     needs password auth (`md5` in `pg_hba.conf`), which the original
+     local-socket connection never needed — fixed with `PGPASSWORD`,
+     matching the pattern already used elsewhere in the Postgres test
+     scripts. **Worth cross-referencing into `docs/postgres-ha-scope.md`
+     directly** — this is a Postgres/Traefik connection-behavior fact,
+     discovered incidentally in a Kafka test script rather than in
+     Postgres's own pass.
+
+  **Real RTO across all 3 valid runs**: 3.7s, 14.0s, and 15.5s. Zero
+  HTTP-level impact in all 3 runs (20/20 requests succeeded in every
+  run). **The variance itself is a real finding, not noise to average
+  away — and sharper than it first looks: checked directly against the
+  saved transcripts (not assumed), all 3 runs killed the same broker
+  (`kafka-1`)**, not just "some" — each run's baseline happened to show
+  `kafka-1` leading the partition the freshly-created test meter's key
+  landed on. Two of the three runs (the 3.7s and 15.5s ones) hit the
+  *same partition* too (partition 1), yet still produced a >4x RTO
+  spread with the identical broker and partition both held constant.
+  This rules out "different broker" or "different partition" as the
+  explanation for the variance by construction, not merely as an
+  unexamined possibility — whatever drives the spread has to be
+  something else (controller/replica state at the moment of failure,
+  timing relative to the periodic controller heartbeat, or similar),
+  stated as an open question rather than a confirmed mechanism, since
+  isolating the real cause would need dedicated instrumentation this
+  stage didn't build. This is the first real, trustworthy
+  time-to-new-leader number this test has ever produced; the original
+  Scenario 1 never measured one at all.
+
+  **Scenario 2's own result, now trustworthy for the first time since
+  it was pointed at a live target**: confirms real data loss when the
+  outage exceeds `delivery.timeout.ms`, via the Traefik-routed query —
+  see the Quorum-loss test entry below for the original finding this
+  reconfirms, now on solid footing rather than querying a retired
+  container.
+
+  **One incident worth keeping on record even though it produced no
+  real Kafka finding**: mid-investigation, editing the test script's
+  file while an earlier invocation of it was still executing corrupted
+  what that running process read for the remainder of its execution — a
+  bash mechanics issue (scripts are read incrementally as they run, not
+  loaded wholesale), not a logic bug in the script itself. The corrupted
+  run aborted mid-`Scenario 2` before it could restart the brokers it
+  had stopped, leaving the cluster genuinely degraded; found by checking
+  directly rather than assuming a clean exit meant a clean cluster, and
+  recovered by restarting the affected brokers before re-running clean.
+  See `docs/cross-project-lessons.md` for the general lesson.
 - **Quorum-loss test** — kill 2 of 3 controller-eligible brokers
   deliberately. The correct outcome is the cluster refusing to elect a
   leader or accept writes it can't safely commit — confirm it fails safe
@@ -564,55 +603,38 @@ pass is built, tested, and its own status log closed out") is arguably
 now satisfied — this is a new scope decision to make explicitly, not
 unfinished work from this pass.
 
-## Application-level validation: methodology needs confirming (added 2026-09-02)
+## Application-level validation: confirmed clean, no remediation needed (resolved 2026-09-02)
 
 **Found during the Postgres pass, applying here on inspection, not
-assumed.** `docs/ha-scope.md` now carries a standing lesson: Postgres's
+assumed.** `docs/ha-scope.md` carries a standing lesson: Postgres's
 6-stage HA pass validated the Patroni/Consul topology entirely via
 direct `psql`/`patronictl`, and never actually confirmed the application
 itself (real requests through Traefik → API → Kafka producer) survives
-any of the failure modes tested. Redis's pass has the same gap,
-confirmed directly (its chaos scripts drive and check state via
-`redis-cli` throughout). **Whether this Kafka doc has the same gap is
-genuinely unclear from this document alone and needs confirming, not
-assuming either way** — some of the language above is ambiguous: the
-rolling-maintenance test's "30/30 requests succeeded" could mean real
-HTTP requests through the app's actual ingest endpoint, or could mean
-30 messages sent via a direct producer script. These would be very
-different claims.
+any of the failure modes tested. Redis's pass had the same gap, confirmed
+directly (its chaos scripts drove and checked state via `redis-cli`
+throughout). Whether this Kafka doc had the same gap was genuinely
+unclear from the document alone and needed confirming, not assuming
+either way.
 
-**Action**: confirm, by checking `kafka-ha-demo.sh` and any related
-scripts directly, whether traffic during the failover/RTO test, the
-quorum-loss test, and the rolling-maintenance test was generated via
-the app's real `POST /api/v1/readings` endpoint (exercising the app's
-actual Spring Kafka producer, its real `acks`/`delivery.timeout.ms`
-config, and the full Traefik → API → Kafka path) or via a direct
-producer/consumer script bypassing the app entirely.
+**Resolved: checked `kafka-ha-demo.sh` directly rather than assumed.**
+Every scenario logs in for a real JWT and sends readings via
+authenticated `POST /api/v1/readings` through Traefik, exercising the
+app's actual Spring Kafka producer end to end — not a direct
+producer/consumer script bypassing the app. **Kafka's pass was ahead of
+both Postgres's and Redis's on this specific dimension from the start**,
+which is itself worth stating plainly rather than assumed to match the
+other two by default — the asymmetry across the three passes turned out
+to be real, not an oversight in how this doc was checked.
 
-- **If real app traffic was used**: this is good news worth recording
-  explicitly — it would mean Kafka's pass is ahead of both Postgres's
-  and Redis's on this specific dimension, and that fact is itself worth
-  stating plainly (an inconsistency in methodology across the three
-  passes is worth explaining, not leaving implicit) rather than assuming
-  parity with the other two layers by default.
-- **If a direct script was used instead**: this needs the same
-  remediation the other two layers now have — cutover confirmation (is
-  the app's Kafka producer already correctly configured against the
-  3-broker cluster, given `application.yml`'s `acks`/`max.block.ms`/
-  `delivery.timeout.ms` settings referenced throughout this doc were
-  clearly being checked against the app's real config already?), a
-  functional check, and at least one representative failure scenario
-  (the failover/RTO test is the best candidate, mirroring Postgres's
-  Stage 4 and Redis's Stage 4) re-run driving traffic through the app's
-  real ingest endpoint rather than a standalone script, checking what an
-  HTTP client actually observes during the measured RTO window — a
-  transparent retry-and-succeed, a `5xx`, or something else.
-
-Given `application.yml`'s own producer settings were already the target
-of this doc's `acks` finding, there's a reasonable chance the
-application's Kafka producer config was already the thing under test
-throughout — which would put this closer to Kafka already having
-partial application-level coverage than the other two layers start with.
-This needs confirming precisely rather than assumed in either
-direction, matching the exact discipline this whole document is built
-on.
+**Subsequent work (2026-09-02), separate from this methodology
+question**: the failover/RTO test's *rigor* still had real gaps even
+though its traffic generation was already app-real — Scenario 1 killed
+a fixed broker regardless of whether it led any partition in use, and
+never measured actual RTO. That work is written up in full under the
+"Failover / RTO test" entry above (3 real bugs found and fixed, 3 valid
+RTO measurements, Scenario 2's durability check repointed to a live
+target). Worth keeping these two findings distinct: this section
+confirms the test always exercised real app traffic; the RTO work above
+confirms the test now also targets the right broker and measures the
+right number. Both were real, independent gaps — closing one didn't
+imply the other was already closed.

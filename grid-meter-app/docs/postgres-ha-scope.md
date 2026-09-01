@@ -1491,6 +1491,18 @@ a failure of this stage).
 
 ## Stage 7 results (2026-09-02): all four steps complete — cutover needed more than a one-line config change, exactly as this stage's own plan flagged as a live possibility
 
+**Independent confirmation from a different pass (2026-09-02)**: this
+stage's own Step 1 asked whether Postgres's connection behavior changes
+against a TCP proxy versus a direct connection. It does, confirmed a
+second time via an unrelated source — Kafka's `kafka-ha-demo.sh` needed
+`PGPASSWORD` for its Traefik-routed durability check, something its
+original direct-socket connection to the standalone `postgres` container
+never required (`pg_hba.conf`'s `md5` rule applies to TCP connections,
+not the local socket). Same underlying fact this stage already found
+with HikariCP, reconfirmed from a completely different client. See
+`docs/testing-strategy-ha-supplement.md`'s "Failover / RTO test" entry
+for the full account of how it was found there.
+
 **Step 1 (cutover) — done, but surfaced a real gap this stage's plan
 didn't anticipate.** `SPRING_DATASOURCE_URL` now points at
 `jdbc:postgresql://traefik:55432/gridmeter`. Before the URL change would
