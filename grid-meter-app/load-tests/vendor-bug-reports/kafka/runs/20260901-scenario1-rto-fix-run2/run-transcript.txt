@@ -1,0 +1,136 @@
+
+================================================================
+Setup: login + create a test meter
+================================================================
+Test meter: 96e3d191-add1-4738-8e4e-0b6ab6159223
+
+================================================================
+Baseline cluster state (all 3 brokers up)
+================================================================
+Topic: readings	TopicId: StQtSrO9TJanIJct9JW57A	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 2	Replicas: 2,3,1	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 1	Replicas: 3,1,2	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+
+================================================================
+SCENARIO 1: Tolerate the ACTUAL partition leader's loss (dynamically determined, real RTO measured)
+================================================================
+docs/testing-strategy-ha-supplement.md flagged this as still open: the original version of
+this scenario stopped kafka-2 unconditionally, regardless of whether kafka-2 actually led any
+partition this test's traffic uses -- with 3 partitions spread across all 3 brokers (each
+partition has its own leader) and messages keyed by meterId, a fixed broker choice risks
+silently testing nothing at all if this run's meter happens to hash to a partition kafka-2
+doesn't lead. It also never measured real RTO, just a fixed 5s sleep before sending traffic.
+
+Determining which partition THIS meter's traffic actually lands on, via an offset diff around
+a canary write, rather than assuming or hashing it ourselves (Kafka's own partitioner is the
+only source of truth for this).
+Canary reading HTTP status: 201
+This meter's traffic lands on partition 2
+Current leader of partition 2: broker 1 (kafka-1)
+Witness broker for state queries during the outage (guaranteed to survive): kafka-2
+
+Killing kafka-1 -- the broker THIS test's traffic actually depends on, not an
+assumed one -- and measuring real RTO (polling for a new leader) concurrently with sending
+traffic, so some of it genuinely spans the live election window rather than only running
+after recovery is already confirmed.
+ Container grid-meter-app-kafka-1-1 Stopping 
+ Container grid-meter-app-kafka-1-1 Stopped 
+  -> 20 succeeded, 0 failed (of 20)
+New leader of partition 2: broker 2 -- measured RTO: 14028ms (real, polled -- not assumed)
+--- cluster state with kafka-1 down ---
+Topic: readings	TopicId: StQtSrO9TJanIJct9JW57A	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 2	Replicas: 2,3,1	Isr: 2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 3	Replicas: 3,1,2	Isr: 2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 2	Replicas: 1,2,3	Isr: 2,3	Elr: 	LastKnownElr: 
+ Container grid-meter-app-kafka-1-1 Starting 
+ Container grid-meter-app-kafka-1-1 Started 
+Waiting for kafka-1 to rejoin and catch up...
+Topic: readings	TopicId: StQtSrO9TJanIJct9JW57A	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 2	Replicas: 2,3,1	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 3	Replicas: 3,1,2	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 2	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+
+================================================================
+SCENARIO 2: Two-broker quorum loss (kafka-2 AND kafka-3 stopped, 150s)
+================================================================
+Below the 2-of-3 majority; min.insync.replicas=2 cannot be satisfied with 1 broker up.
+Readings for this meter before scenario 2: 21
+ Container grid-meter-app-kafka-2-1 Stopping 
+ Container grid-meter-app-kafka-3-1 Stopping 
+ Container grid-meter-app-kafka-3-1 Stopped 
+ Container grid-meter-app-kafka-2-1 Stopped 
+  -> 10 succeeded, 0 failed (of 10)
+Holding quorum loss for 147s more (total ~150s) so
+delivery.timeout.ms has a chance to actually expire before brokers come back...
+--- Checking Postgres and api logs BEFORE restoring brokers (still below quorum) ---
+Readings landed while still below quorum: 0 (of the 10 sent)
+api log lines mentioning delivery/timeout errors during the outage:
+api-1  | Caused by: org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | Caused by: org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | Caused by: org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | Caused by: org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | Caused by: org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+api-1  | org.apache.kafka.common.errors.TimeoutException: Expiring 10 record(s) for readings-2:120001 ms has passed since batch creation
+ Container grid-meter-app-kafka-3-1 Starting 
+ Container grid-meter-app-kafka-2-1 Starting 
+ Container grid-meter-app-kafka-3-1 Started 
+ Container grid-meter-app-kafka-2-1 Started 
+Waiting for kafka-2/kafka-3 to rejoin and catch up...
+Topic: readings	TopicId: StQtSrO9TJanIJct9JW57A	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 1	Replicas: 2,3,1	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 1	Replicas: 3,1,2	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 
+Additional readings that landed in the real readings table AFTER recovery: 0
+Total readings from the 10 sent during outage that ever landed in readings: 0 of 10
+
+================================================================
+SCENARIO 3: Rolling maintenance (restart all 3 brokers, one at a time)
+================================================================
+--- Restarting kafka-1 ---
+ Container grid-meter-app-kafka-1-1 Restarting 
+ Container grid-meter-app-kafka-1-1 Started 
+Sending traffic now -- NOT waiting for full ISR rejoin first (see comment above for why)
+  -> 10 succeeded, 0 failed (of 10)
+Measured: kafka-1 fully rejoined ISR on all partitions at t+17s after restart (test sent traffic at t+8s, before this measurement)
+--- Restarting kafka-2 ---
+ Container grid-meter-app-kafka-2-1 Restarting 
+ Container grid-meter-app-kafka-2-1 Started 
+Sending traffic now -- NOT waiting for full ISR rejoin first (see comment above for why)
+  -> 10 succeeded, 0 failed (of 10)
+Measured: kafka-2 fully rejoined ISR on all partitions at t+17s after restart (test sent traffic at t+8s, before this measurement)
+--- Restarting kafka-3 ---
+ Container grid-meter-app-kafka-3-1 Restarting 
+ Container grid-meter-app-kafka-3-1 Started 
+Sending traffic now -- NOT waiting for full ISR rejoin first (see comment above for why)
+  -> 10 succeeded, 0 failed (of 10)
+Measured: kafka-3 fully rejoined ISR on all partitions at t+17s after restart (test sent traffic at t+8s, before this measurement)
+
+================================================================
+Results
+================================================================
+Scenario 1 (actual partition leader loss, partition 2, kafka-1 -> 2):
+  20 succeeded, 0 failed (of 20); measured RTO: 14028ms
+  PASS: zero impact from the actual leader's loss, as RF=3 promises.
+Scenario 2 (two-broker quorum loss, 150s):
+  HTTP level:     10 succeeded, 0 failed (of 10) -- NOT the real evidence, see below.
+  Durability:     0 of 10 landed while still below quorum; 0 more landed after recovery.
+  REAL DATA LOSS: 10 reading(s) never reached the readings table --
+  delivery.timeout.ms (undeclared default: 120000ms) expired before quorum was restored.
+  Accepted per docs/resilience-scope.md's redo-path decision: a simulated meter reading has
+  no real downstream consequence if lost, so this is observed (deliveryFailureCounter, the
+  'reading delivery failures' alert) rather than prevented via an outbox+reconciler.
+Scenario 3 (rolling maintenance):        30 succeeded, 0 failed (of 30)
+  PASS: zero downtime across the full rolling restart.
+
+================================================================
+Final cluster state
+================================================================
+Topic: readings	TopicId: StQtSrO9TJanIJct9JW57A	PartitionCount: 3	ReplicationFactor: 3	Configs: min.insync.replicas=2,unclean.leader.election.enable=false
+	Topic: readings	Partition: 0	Leader: 2	Replicas: 2,3,1	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 1	Leader: 1	Replicas: 3,1,2	Isr: 1,2,3	Elr: 	LastKnownElr: 
+	Topic: readings	Partition: 2	Leader: 1	Replicas: 1,2,3	Isr: 1,2,3	Elr: 	LastKnownElr: 

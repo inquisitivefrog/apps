@@ -483,14 +483,54 @@ largely tested; see below per-scenario.**
   automatically with no data loss (verify `acks=all` and a replication
   factor > 1 are actually configured, not just present in a config file).
   This is the test that validates real fault tolerance, not just
-  replication existing on paper. **Status: partial.** The existing
-  `kafka-ha-demo.sh` Scenario 1 stops `kafka-2` unconditionally rather
-  than specifically targeting the partition leader, and does not measure
-  actual time-to-new-leader. Running this test's own stated verification
-  step for real (see "Status update" above) is what surfaced both the
-  `acks` gap (now fixed) and the KAFKA-19148 upstream finding (now
-  tracked via the sentinel test above). **Still open**: re-run against
-  the actual partition leader specifically, with real RTO measurement.
+  replication existing on paper. **Status: done (2026-09-01), 3/3 clean
+  runs — holding this project's own 3-run bar for correctness findings.**
+  The original gap (`kafka-ha-demo.sh` Scenario 1 stopping `kafka-2`
+  unconditionally rather than the actual partition leader, with no real
+  RTO measurement) is closed. Getting there required fixing **three**
+  real bugs, not just retargeting the kill:
+  - **`cluster_state()` hardcoded its query target to `kafka-1`.** On the
+    first run that finally killed the actual partition leader (which
+    happened to be `kafka-1` that time), every poll during the outage
+    queried a now-dead container and silently found nothing — a false
+    "no leader elected" result indistinguishable from a real Kafka
+    failure, but actually the monitoring tool losing its own vantage
+    point. Fixed by having the script dynamically pick a surviving
+    broker to query (mirroring the witness pattern already used in
+    `postgres-primary-failure-test.sh`), rather than assuming any one
+    broker stays up.
+  - **Scenario 2's durability check queried the retired standalone
+    `postgres` container**, which no longer exists after this session's
+    earlier Postgres cutover work — every query silently failed
+    (`service "postgres" is not running`), corrupting the data-loss
+    accounting for an entire run.
+  - **Fixing that the obvious way (point at `patroni-1` directly) would
+    have recreated the exact `cluster_state()` bug in a new location** —
+    correct only because `patroni-1` happens to be primary today, wrong
+    the next time it isn't. Caught by Claude Chat before it shipped:
+    routed the query through Traefik's `:55432` entrypoint instead
+    (`docs/postgres-ha-scope.md`'s Patroni cutover), which already exists
+    specifically to solve "reach whichever node is currently correct."
+    That introduced one more real bug of its own — a TCP connection
+    through Traefik requires password auth per `patroni.yml`'s `pg_hba`
+    rules, unlike the local-socket connection a direct in-container
+    `psql` had been implicitly relying on — fixed with an explicit
+    `PGPASSWORD`.
+
+  **Real RTO measured across 3 valid runs, each killing a genuinely
+  different leader/partition combination**: 3.7s, 14.0s, and 15.5s — no
+  fixed pattern, reported honestly rather than smoothed into a single
+  number. 20/20 requests succeeded in every run (zero HTTP-level impact,
+  RF=3 working as intended), and Scenario 2's now-correctly-routed
+  durability check confirmed the expected real data loss (0 of 10
+  landed, matching `delivery.timeout.ms`'s 120s default expiring before
+  the 150s quorum-loss window ended) consistently across all 3 runs.
+  This is the first real, trustworthy time-to-new-leader number this
+  test has ever produced — the original Scenario 1 never measured one at
+  all, and any single run before all three bugs were fixed would have
+  been silently corrupted by one blind spot or another, regardless of
+  which broker actually got killed. Full transcripts:
+  `load-tests/vendor-bug-reports/kafka/runs/`.
 - **Quorum-loss test** — kill 2 of 3 controller-eligible brokers
   deliberately. The correct outcome is the cluster refusing to elect a
   leader or accept writes it can't safely commit — confirm it fails safe
@@ -576,20 +616,3 @@ partial application-level coverage than the other two layers start with.
 This needs confirming precisely rather than assumed in either
 direction, matching the exact discipline this whole document is built
 on.
-
-**Confirmed (2026-09-02): real app traffic was used throughout, not a
-direct producer script.** Checked `kafka-ha-demo.sh` directly — every
-scenario's `send_readings` helper first calls `POST
-/api/v1/auth/login` for a real JWT, then sends every reading as an
-authenticated `POST http://localhost/api/v1/readings` request through
-Traefik on port 80, exercising the full real path (Traefik → API →
-Spring Kafka producer, with the app's actual `acks`/`delivery.timeout.ms`
-config) end to end. There is no direct producer/consumer script anywhere
-in this test's traffic path. **Kafka's pass is confirmed ahead of both
-Postgres's and Redis's on this specific dimension** — no remediation
-stage is needed here the way the other two layers now have; the
-existing failover/RTO/quorum-loss/rolling-maintenance results already
-reflect what a real HTTP client observes, not an infrastructure-only
-proxy for it. Recording this explicitly rather than leaving the
-methodology question open, since resolving it took one direct check
-against the script rather than a new test run.

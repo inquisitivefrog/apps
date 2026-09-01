@@ -67,8 +67,18 @@ send_readings() {
   echo "  -> $SUCCESS_COUNT succeeded, $FAIL_COUNT failed (of $count)"
 }
 
+# Defaults to exec'ing via kafka-1, which every OTHER call site in this script can rely on since
+# kafka-1 is never the one taken down there -- but Scenario 1 now dynamically determines and kills
+# whichever broker actually leads this run's traffic, which can BE kafka-1. A hardcoded exec target
+# that happens to be the broker just killed doesn't return stale/wrong data, it fails outright
+# (`docker compose exec` can't reach a stopped container at all) -- silently turning every poll
+# during that outage into an empty result, indistinguishable from "no leader elected yet" and, worse
+# still, not caught by anything since the loop's own `[ -n "$CUR" ]` check treats "empty because the
+# query target is dead" identically to "empty because there's genuinely no leader yet". Callers that
+# might kill kafka-1 must pass a witness broker that's guaranteed to survive.
 cluster_state() {
-  docker compose exec -T kafka-1 /opt/kafka/bin/kafka-topics.sh \
+  local witness="${1:-kafka-1}"
+  docker compose exec -T "$witness" /opt/kafka/bin/kafka-topics.sh \
     --bootstrap-server localhost:9092 --describe --topic readings 2>&1
 }
 
@@ -87,15 +97,106 @@ echo "Test meter: $METER_ID"
 banner "Baseline cluster state (all 3 brokers up)"
 cluster_state
 
-banner "SCENARIO 1: Tolerate one broker loss (kafka-2 stopped)"
-docker compose stop kafka-2
-sleep 5
+banner "SCENARIO 1: Tolerate the ACTUAL partition leader's loss (dynamically determined, real RTO measured)"
+echo "docs/testing-strategy-ha-supplement.md flagged this as still open: the original version of"
+echo "this scenario stopped kafka-2 unconditionally, regardless of whether kafka-2 actually led any"
+echo "partition this test's traffic uses -- with 3 partitions spread across all 3 brokers (each"
+echo "partition has its own leader) and messages keyed by meterId, a fixed broker choice risks"
+echo "silently testing nothing at all if this run's meter happens to hash to a partition kafka-2"
+echo "doesn't lead. It also never measured real RTO, just a fixed 5s sleep before sending traffic."
+echo
+echo "Determining which partition THIS meter's traffic actually lands on, via an offset diff around"
+echo "a canary write, rather than assuming or hashing it ourselves (Kafka's own partitioner is the"
+echo "only source of truth for this)."
+BEFORE_OFFSETS=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:9092 --topic readings --time -1 2>&1)
+CANARY_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 10 -X POST http://localhost/api/v1/readings \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"meterId\":\"$METER_ID\",\"readingTimestamp\":\"2026-08-28T00:00:00Z\",\"value\":0.0}")
+echo "Canary reading HTTP status: $CANARY_CODE"
+sleep 2
+AFTER_OFFSETS=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:9092 --topic readings --time -1 2>&1)
+
+TARGET_PARTITION=""
+while IFS=: read -r _ part off_after; do
+  off_before=$(echo "$BEFORE_OFFSETS" | awk -F: -v p="$part" '$2==p {print $3}')
+  if [ "$off_after" -gt "${off_before:-0}" ]; then
+    TARGET_PARTITION="$part"
+    break
+  fi
+done <<< "$AFTER_OFFSETS"
+
+if [ -z "$TARGET_PARTITION" ]; then
+  echo "Could not determine target partition from the offset diff -- aborting Scenario 1 (a setup" >&2
+  echo "problem, not a finding)." >&2
+  exit 1
+fi
+echo "This meter's traffic lands on partition $TARGET_PARTITION"
+
+# Tab-separated fields from kafka-topics.sh --describe (e.g. "Partition: 0\tLeader: 2\t...") --
+# converting tabs to newlines and grepping for the exact "Partition: N" line plus the next line
+# avoids both awk field-index fragility and grep -P (not available in this Mac's BSD grep, per
+# CLAUDE.md's standing GNU-vs-BSD tooling note). Accepts an optional witness (see cluster_state's
+# own comment for why this matters once the broker being killed can be kafka-1 itself).
+find_leader() {
+  cluster_state "${2:-kafka-1}" | tr '\t' '\n' | grep -A1 "^Partition: $1\$" | grep "^Leader:" | awk '{print $2}'
+}
+OLD_LEADER=$(find_leader "$TARGET_PARTITION")
+if [ -z "$OLD_LEADER" ]; then
+  echo "Could not determine partition $TARGET_PARTITION's current leader -- aborting (setup problem)." >&2
+  exit 1
+fi
+echo "Current leader of partition $TARGET_PARTITION: broker $OLD_LEADER (kafka-$OLD_LEADER)"
+
+# Whichever broker we're about to kill can't also be queried for state afterward -- pick a witness
+# that's guaranteed to survive (mirrors the same witness pattern already used in
+# load-tests/postgres-primary-failure-test.sh for the identical reason).
+case "$OLD_LEADER" in
+  1) WITNESS=kafka-2 ;;
+  *) WITNESS=kafka-1 ;;
+esac
+echo "Witness broker for state queries during the outage (guaranteed to survive): $WITNESS"
+
+echo
+echo "Killing kafka-$OLD_LEADER -- the broker THIS test's traffic actually depends on, not an"
+echo "assumed one -- and measuring real RTO (polling for a new leader) concurrently with sending"
+echo "traffic, so some of it genuinely spans the live election window rather than only running"
+echo "after recovery is already confirmed."
+T0_MS=$(( $(date +%s%N) / 1000000 ))
+docker compose stop "kafka-$OLD_LEADER"
+
+RTO_FILE=$(mktemp)
+(
+  for i in $(seq 1 60); do
+    CUR=$(find_leader "$TARGET_PARTITION" "$WITNESS")
+    if [ -n "$CUR" ] && [ "$CUR" != "$OLD_LEADER" ] && [ "$CUR" != "-1" ]; then
+      T1_MS=$(( $(date +%s%N) / 1000000 ))
+      echo "$CUR $((T1_MS - T0_MS))" > "$RTO_FILE"
+      exit 0
+    fi
+    sleep 0.5
+  done
+  echo "NONE 0" > "$RTO_FILE"
+) &
+RTO_PID=$!
+
 send_readings 20 "$METER_ID"
 S1_SUCCESS=$SUCCESS_COUNT; S1_FAIL=$FAIL_COUNT
-echo "--- cluster state with kafka-2 down ---"
-cluster_state
-docker compose start kafka-2
-echo "Waiting for kafka-2 to rejoin and catch up..."
+
+wait "$RTO_PID"
+read -r NEW_LEADER RTO_MS < "$RTO_FILE"
+rm -f "$RTO_FILE"
+if [ "$NEW_LEADER" = "NONE" ]; then
+  echo "!!! No new leader elected for partition $TARGET_PARTITION within 30s -- real finding, not a timing artifact" >&2
+else
+  echo "New leader of partition $TARGET_PARTITION: broker $NEW_LEADER -- measured RTO: ${RTO_MS}ms (real, polled -- not assumed)"
+fi
+
+echo "--- cluster state with kafka-$OLD_LEADER down ---"
+cluster_state "$WITNESS"
+docker compose start "kafka-$OLD_LEADER"
+echo "Waiting for kafka-$OLD_LEADER to rejoin and catch up..."
 sleep 15
 cluster_state
 
@@ -107,7 +208,15 @@ QUORUM_LOSS_SECONDS="${QUORUM_LOSS_SECONDS:-150}"
 
 banner "SCENARIO 2: Two-broker quorum loss (kafka-2 AND kafka-3 stopped, ${QUORUM_LOSS_SECONDS}s)"
 echo "Below the 2-of-3 majority; min.insync.replicas=2 cannot be satisfied with 1 broker up."
-BASELINE_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+# Routes through Traefik's :55432 entrypoint (docs/postgres-ha-scope.md's Patroni cutover) rather
+# than querying patroni-1 directly -- exec'ing INTO patroni-1's container for its psql binary, but
+# the actual DB connection goes through Traefik to whichever node is currently primary. Querying
+# patroni-1 directly would repeat the exact bug just fixed in cluster_state() above in a new
+# location: correct today only because patroni-1 happens to be primary right now, silently wrong
+# (or a stale replica read) the next time that isn't true. Traefik's entrypoint already exists and
+# was already verified specifically to solve "reach whichever node is currently correct" --
+# inheriting that rather than introducing a fresh hardcoded-node assumption.
+BASELINE_COUNT=$(docker compose exec -T -e PGPASSWORD=gridmeter patroni-1 psql -h traefik -p 55432 -U gridmeter -d gridmeter -t -c \
   "SELECT COUNT(*) FROM readings r JOIN meters m ON r.meter_id = m.id WHERE m.id = '$METER_ID';" | tr -d ' ')
 echo "Readings for this meter before scenario 2: $BASELINE_COUNT"
 
@@ -125,7 +234,7 @@ if [ "$REMAINING" -gt 0 ]; then
 fi
 
 echo "--- Checking Postgres and api logs BEFORE restoring brokers (still below quorum) ---"
-DURING_OUTAGE_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+DURING_OUTAGE_COUNT=$(docker compose exec -T -e PGPASSWORD=gridmeter patroni-1 psql -h traefik -p 55432 -U gridmeter -d gridmeter -t -c \
   "SELECT COUNT(*) FROM readings r JOIN meters m ON r.meter_id = m.id WHERE m.id = '$METER_ID';" | tr -d ' ')
 LANDED_DURING_OUTAGE=$(( DURING_OUTAGE_COUNT - BASELINE_COUNT ))
 echo "Readings landed while still below quorum: $LANDED_DURING_OUTAGE (of the 10 sent)"
@@ -137,7 +246,7 @@ echo "Waiting for kafka-2/kafka-3 to rejoin and catch up..."
 sleep 20
 cluster_state
 
-AFTER_RECOVERY_COUNT=$(docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+AFTER_RECOVERY_COUNT=$(docker compose exec -T -e PGPASSWORD=gridmeter patroni-1 psql -h traefik -p 55432 -U gridmeter -d gridmeter -t -c \
   "SELECT COUNT(*) FROM readings r JOIN meters m ON r.meter_id = m.id WHERE m.id = '$METER_ID';" | tr -d ' ')
 LANDED_AFTER_RECOVERY=$(( AFTER_RECOVERY_COUNT - DURING_OUTAGE_COUNT ))
 echo "Additional readings that landed in the real readings table AFTER recovery: $LANDED_AFTER_RECOVERY"
@@ -191,9 +300,10 @@ for broker in kafka-1 kafka-2 kafka-3; do
 done
 
 banner "Results"
-echo "Scenario 1 (tolerate one broker loss):   $S1_SUCCESS succeeded, $S1_FAIL failed (of $((S1_SUCCESS + S1_FAIL)))"
-[ "$S1_FAIL" -eq 0 ] && echo "  PASS: zero impact from a single broker loss, as RF=3 promises." \
-  || echo "  Some failures during single-broker loss -- worth investigating, not automatically a bug (see script header)."
+echo "Scenario 1 (actual partition leader loss, partition $TARGET_PARTITION, kafka-$OLD_LEADER -> ${NEW_LEADER:-none}):"
+echo "  $S1_SUCCESS succeeded, $S1_FAIL failed (of $((S1_SUCCESS + S1_FAIL))); measured RTO: ${RTO_MS:-N/A}ms"
+[ "$S1_FAIL" -eq 0 ] && echo "  PASS: zero impact from the actual leader's loss, as RF=3 promises." \
+  || echo "  Some failures during the actual leader's loss -- worth investigating, not automatically a bug (see script header)."
 echo "Scenario 2 (two-broker quorum loss, ${QUORUM_LOSS_SECONDS}s):"
 echo "  HTTP level:     $S2_SUCCESS succeeded, $S2_FAIL failed (of $((S2_SUCCESS + S2_FAIL))) -- NOT the real evidence, see below."
 echo "  Durability:     $LANDED_DURING_OUTAGE of 10 landed while still below quorum; $LANDED_AFTER_RECOVERY more landed after recovery."

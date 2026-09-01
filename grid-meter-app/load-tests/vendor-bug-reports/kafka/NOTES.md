@@ -4,6 +4,12 @@
 (Finding 2). This file is an index into `runs/` below, not a duplicate of
 that analysis — read the doc for the actual theory and evidence chain.
 
+**Note**: `runs/20260901-scenario1-rto-fix-run{1,2,3}/` in this same
+directory are from a separate, unrelated fix (Scenario 1's real
+leader-targeting + RTO measurement) — see
+`docs/testing-strategy-ha-supplement.md`'s "Multi-node testing goals"
+section for that narrative, not this file.
+
 **Filing status (2026-08-29)**: JIRA account requested, pending approval.
 Not yet filed. Evidence-gathering continuing in the meantime.
 
