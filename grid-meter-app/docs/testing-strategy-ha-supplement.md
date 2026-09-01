@@ -523,3 +523,73 @@ ahead of that scope decision being made. **Note (2026-08-28)**:
 pass is built, tested, and its own status log closed out") is arguably
 now satisfied — this is a new scope decision to make explicitly, not
 unfinished work from this pass.
+
+## Application-level validation: methodology needs confirming (added 2026-09-02)
+
+**Found during the Postgres pass, applying here on inspection, not
+assumed.** `docs/ha-scope.md` now carries a standing lesson: Postgres's
+6-stage HA pass validated the Patroni/Consul topology entirely via
+direct `psql`/`patronictl`, and never actually confirmed the application
+itself (real requests through Traefik → API → Kafka producer) survives
+any of the failure modes tested. Redis's pass has the same gap,
+confirmed directly (its chaos scripts drive and check state via
+`redis-cli` throughout). **Whether this Kafka doc has the same gap is
+genuinely unclear from this document alone and needs confirming, not
+assuming either way** — some of the language above is ambiguous: the
+rolling-maintenance test's "30/30 requests succeeded" could mean real
+HTTP requests through the app's actual ingest endpoint, or could mean
+30 messages sent via a direct producer script. These would be very
+different claims.
+
+**Action**: confirm, by checking `kafka-ha-demo.sh` and any related
+scripts directly, whether traffic during the failover/RTO test, the
+quorum-loss test, and the rolling-maintenance test was generated via
+the app's real `POST /api/v1/readings` endpoint (exercising the app's
+actual Spring Kafka producer, its real `acks`/`delivery.timeout.ms`
+config, and the full Traefik → API → Kafka path) or via a direct
+producer/consumer script bypassing the app entirely.
+
+- **If real app traffic was used**: this is good news worth recording
+  explicitly — it would mean Kafka's pass is ahead of both Postgres's
+  and Redis's on this specific dimension, and that fact is itself worth
+  stating plainly (an inconsistency in methodology across the three
+  passes is worth explaining, not leaving implicit) rather than assuming
+  parity with the other two layers by default.
+- **If a direct script was used instead**: this needs the same
+  remediation the other two layers now have — cutover confirmation (is
+  the app's Kafka producer already correctly configured against the
+  3-broker cluster, given `application.yml`'s `acks`/`max.block.ms`/
+  `delivery.timeout.ms` settings referenced throughout this doc were
+  clearly being checked against the app's real config already?), a
+  functional check, and at least one representative failure scenario
+  (the failover/RTO test is the best candidate, mirroring Postgres's
+  Stage 4 and Redis's Stage 4) re-run driving traffic through the app's
+  real ingest endpoint rather than a standalone script, checking what an
+  HTTP client actually observes during the measured RTO window — a
+  transparent retry-and-succeed, a `5xx`, or something else.
+
+Given `application.yml`'s own producer settings were already the target
+of this doc's `acks` finding, there's a reasonable chance the
+application's Kafka producer config was already the thing under test
+throughout — which would put this closer to Kafka already having
+partial application-level coverage than the other two layers start with.
+This needs confirming precisely rather than assumed in either
+direction, matching the exact discipline this whole document is built
+on.
+
+**Confirmed (2026-09-02): real app traffic was used throughout, not a
+direct producer script.** Checked `kafka-ha-demo.sh` directly — every
+scenario's `send_readings` helper first calls `POST
+/api/v1/auth/login` for a real JWT, then sends every reading as an
+authenticated `POST http://localhost/api/v1/readings` request through
+Traefik on port 80, exercising the full real path (Traefik → API →
+Spring Kafka producer, with the app's actual `acks`/`delivery.timeout.ms`
+config) end to end. There is no direct producer/consumer script anywhere
+in this test's traffic path. **Kafka's pass is confirmed ahead of both
+Postgres's and Redis's on this specific dimension** — no remediation
+stage is needed here the way the other two layers now have; the
+existing failover/RTO/quorum-loss/rolling-maintenance results already
+reflect what a real HTTP client observes, not an infrastructure-only
+proxy for it. Recording this explicitly rather than leaving the
+methodology question open, since resolving it took one direct check
+against the script rather than a new test run.

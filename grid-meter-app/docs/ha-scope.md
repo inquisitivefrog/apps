@@ -1,5 +1,66 @@
 # grid-meter-app — High-availability scope (data tier)
 
+**Standing lesson, found 2026-09-02 during the Postgres pass, applying
+retroactively to Kafka and Redis too — read this before treating any
+layer's chaos-testing results as meaning the application is protected.**
+
+Every pass under this doc so far (Kafka fully, Redis fully, Postgres
+fully) validated **infrastructure-level correctness**: does the cluster
+itself (brokers, Sentinel, Patroni/Consul) fail over, elect a leader,
+and refuse unsafe promotions correctly, tested via direct clients
+(`redis-cli`, `psql`/`patronictl`, admin APIs) or synthetic
+producer/consumer scripts. None of the three passes' core chaos-testing
+work confirmed that **the running application** — real requests through
+Traefik → API → the relevant data-tier layer, using the app's actual
+connection pool, producer config, or cache client — is actually
+protected by any of this. For Postgres specifically, this was found
+concretely: `SPRING_DATASOURCE_URL` still points at the original
+standalone `postgres` container throughout all 6 stages of that pass;
+the fully-validated Patroni cluster was never in the application's
+request path at all. See `docs/postgres-ha-scope.md`'s "Real, still-open
+gap" section and its new application-level validation stage for the
+full account.
+
+**This is a structural gap in how all three passes were scoped, not a
+one-off Postgres mistake** — the same direct-client methodology was used
+throughout Kafka's and Redis's chaos scripts too (`kafka-ha-demo.sh`,
+`redis-*.sh`, both driving traffic or checking state via
+broker/Sentinel-native tools rather than the app's own endpoints).
+Confirming whether the *application* — not just the infrastructure
+underneath it — actually survives each of these failure modes is now
+tracked as an explicit, required final stage for **every** layer, not
+optional follow-up polish:
+
+- **Postgres**: `docs/postgres-ha-scope.md`'s new application-level
+  validation stage (added 2026-09-02) — cut the app over from the
+  standalone container to the Patroni cluster, then re-run at least one
+  representative failure scenario (primary kill) through the app's real
+  endpoints.
+- **Redis**: `docs/redis-ha-scope.md`'s new final stage (added
+  2026-09-02) — confirm the app's actual Redis client (whatever
+  Spring Data Redis config it uses) is pointed at and correctly recovers
+  through Sentinel-driven failover, not just that `redis-cli`/Sentinel
+  themselves behave correctly.
+- **Kafka**: **confirmed clean, no remediation needed (2026-09-02)** —
+  checked `kafka-ha-demo.sh` directly rather than assuming either way;
+  every scenario logs in for a real JWT and sends readings via
+  authenticated `POST /api/v1/readings` through Traefik, exercising the
+  app's actual Spring Kafka producer end to end. Kafka's pass is ahead
+  of both Postgres's and Redis's on this specific dimension — see
+  `docs/testing-strategy-ha-supplement.md`'s "Application-level
+  validation" section for the full confirmation.
+
+**Why this matters more than it might look**: a chaos-testing pass that
+proves infrastructure resilience but never confirms the application
+actually uses that infrastructure can produce a false sense of security
+that's worse than not testing at all — six stages of clean Postgres
+results, for instance, could easily be (mis)read as "the app's data tier
+is HA," when until cutover happens, the app has exactly the same
+single-point-of-failure exposure it always had. Treat "does the app
+itself survive this" as the actual deliverable of each pass, with
+infrastructure-level correctness as a necessary but not sufficient
+precondition for it — not the other way around.
+
 ## Why this doc exists
 
 Chaos testing (`load-tests/chaos-demo.sh`) validated the single-instance

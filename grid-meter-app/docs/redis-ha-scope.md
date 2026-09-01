@@ -1,5 +1,14 @@
 # grid-meter-app — High-availability scope: Redis (Sentinel)
 
+**Status (2026-09-02): Stages 1–5 complete, infrastructure validated
+clean throughout — but Stage 6 (application-level cutover and
+validation) has not been started.** Whether the app's actual Redis
+client is even Sentinel-aware hasn't been confirmed live. See "Stage 6 —
+Application-level cutover and validation" below before treating Stages
+1–5's clean results as meaning the app's caching layer is currently
+protected. Same gap found (and detailed) in the Postgres pass; see
+`docs/ha-scope.md`'s new standing lesson.
+
 ## Why this doc exists
 
 `docs/ha-scope.md` scoped this project's HA work to Kafka first and
@@ -487,6 +496,77 @@ deliverable per "Deliverables expected from this pass" below: this
 results narrative itself, now folded into this doc rather than left only
 in the evidence archive's `NOTES.md`.
 
+**Status (2026-09-02): a 6th stage is now added, and it is not yet
+started — see `docs/ha-scope.md`'s new standing lesson.** Every check
+above (Stages 1–5) verified Sentinel/Redis cluster behavior directly via
+`redis-cli` and Sentinel's own admin commands. None of them confirmed
+that the **application** — its actual Spring Data Redis client
+configuration — is even using Sentinel-aware failover at all, as
+opposed to a direct, fixed `host:port` connection to a single Redis
+container that would have no idea a failover ever happened. This is the
+same category of gap found in the Postgres pass (`SPRING_DATASOURCE_URL`
+never cut over to the Patroni cluster) — found there first, but not
+specific to Postgres.
+
+### Stage 6 — Application-level cutover and validation: confirm the app's real Redis client survives a Sentinel-driven failover
+
+**Not yet started.**
+
+**Step 1 — Check the live config first, don't assume.** Confirm exactly
+how the app currently connects to Redis — likely
+`spring.data.redis.host`/`port` pointing at a single fixed container
+(the pre-Sentinel setup), or possibly already reconfigured toward
+Sentinel awareness by an unrelated change since this pass began. Check
+the actual running config (`docker compose exec api env | grep -i
+redis`, or the equivalent in `application.yml`/`docker-compose.yml`),
+not a memory of what it was set to originally.
+
+**Step 2 — Cutover, if Step 1 confirms it's needed.** Reconfigure the
+app's Redis client to be Sentinel-aware — for Spring Data Redis with
+Lettuce (the default), this means a `RedisSentinelConfiguration`
+pointing at all 3 Sentinel nodes and the configured master name, not a
+direct host/port to whichever container happens to be primary today.
+This is architecturally different from the Postgres cutover (a
+TCP-proxy entrypoint) — here the client itself talks to Sentinel to
+discover the current master, so there's no separate routing layer to
+point at the way Traefik's `:55432` entrypoint served that role for
+Postgres. Confirm this distinction rather than assuming the same
+proxy-based pattern transfers.
+
+**Step 3 — Basic functional check.** Exercise whatever the app actually
+does with Redis in normal operation (per `architecture.md`'s data flow —
+Redis as a cache of the latest reading per meter, written by the Service
+layer on ingest, read back by the dashboard) against the Sentinel-aware
+connection. Confirm both the write and the read path work, not just
+that the API starts cleanly.
+
+**Step 4 — Re-run a representative failure scenario through the app
+itself.** Stage 4's primary-failure scenario (Findings A and B, both
+already fixed and re-verified at the infrastructure level) is the right
+candidate. Generate real load against the app's actual ingest endpoint
+while killing the Redis primary, and check:
+- Does the app's Lettuce/Jedis client transparently reconnect to the
+  newly-promoted primary once Sentinel completes failover, or does it
+  need an application restart — a real, specific risk direct
+  `redis-cli` testing can't surface, since it doesn't hold a persistent
+  client-side connection pool the way the app's Redis client does.
+- What does a real request actually experience during Sentinel's
+  failover window (already measured at the infrastructure level in
+  Stage 4) — does the app-level read/write silently succeed via
+  automatic reconnect, error out and require a caller retry, or hang?
+- Does anything in the app's own Redis client configuration
+  (connection/command timeouts, retry policy) need tuning now that a
+  real Sentinel failover mechanism exists underneath it — the same kind
+  of re-tuning question `docs/ha-scope.md` already flagged for Postgres's
+  HikariCP `connection-timeout`.
+
+**Step 5 — Hold this to the same 3-run bar** applied to Stage 4 and
+Stage 5 above.
+
+**Step 6 — Document findings with the same discipline as every other
+stage in this doc**: real numbers, explicit confirmed-not-assumed
+checks, and honest reporting of anything unexpected.
+
 ## What NOT to do in this pass
 
 - **Do not build Redis Cluster (sharding).** That's a capacity mechanism
@@ -533,3 +613,7 @@ the same discipline that caught this correction.
    section appended here — capturing what Stages 3–5 actually found,
    including any surprises, using the same "state what was tested, what
    was found, what's confirmed vs. inferred" discipline as the Kafka doc
+4. Stage 6 (application-level cutover and validation) — **not started**.
+   Added 2026-09-02 after the same gap was found in the Postgres pass;
+   see Stage 6's own section above and `docs/ha-scope.md`'s new standing
+   lesson. Outranks any remaining housekeeping in this doc.
