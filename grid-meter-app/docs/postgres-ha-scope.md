@@ -1645,6 +1645,70 @@ too low for its duration rather than accepting the clean-looking summary
 at face value; that run was discarded and re-run after restoring the
 guard.
 
+## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
+
+Re-executed after the intervening bootstrap-hook investigation (the
+`post_bootstrap` fix, plus the two follow-up replica-timing teardowns)
+specifically to confirm none of that work regressed app-level
+primary-failure resilience. It didn't — but the re-run surfaced a real
+finding of its own, not just a clean confirmation.
+
+| Run | Old → new leader | Infra RTO | App RTO | Failed |
+|---|---|---|---|---|
+| 1 | `patroni-1` → `patroni-2` | 1.8s | 9ms | 1/42 |
+| 2 | `patroni-2` → `patroni-3` | 1.6s | 5.7s | 1/57 |
+| 3 | `patroni-3` → `patroni-2` | 1.9s | 308ms | 2/28 |
+
+All three nodes cycled through as leader across the three runs; every
+run self-healed with no application or pool restart, consistent with
+the original Stage 7 finding.
+
+**"App RTO" is a new, more granular metric than the original Stage 7
+pass measured** — the original write-up reported self-healing as
+binary ("yes/no restart needed"); this re-run timed how long the app's
+own connection pool actually took to start succeeding again, separate
+from Patroni's infrastructure-level election time.
+
+**That separation is exactly what surfaces the real finding here: App
+RTO and Infra RTO are not tightly coupled, and treating the fast,
+consistent Infra RTO (1.6–1.9s across all 3 runs) as a proxy for real
+client-facing recovery time would be wrong.** App RTO ranged from 9ms to
+5.7s — roughly a 600x spread — and in Run 2, the app took **over 3x
+longer to recover than Patroni took to elect the new leader in the same
+run**. This is the same underlying shape as Redis's Lettuce/Sentinel
+finding (`docs/redis-ha-scope.md`'s Stage 6: a client library's own
+reconnect timing is a separate clock from the coordinator's promotion
+timing, and the two don't necessarily move together) — now confirmed a
+second time, in a different data-tier layer. **Not explained here, and
+should not be assumed away**: what specifically made Run 2's pool
+recovery take over 3 seconds when Run 1's took 9 milliseconds is an open
+question — plausible candidates include exactly when in HikariCP's own
+validation/eviction cycle the failure landed relative to the next actual
+write attempt (since `PrimaryFailoverSQLExceptionOverride` only fires on
+a real `25006` error from an active write, not proactively), but this is
+a hypothesis, not a confirmed mechanism, matching this project's own
+standard for not overclaiming an explanation that wasn't actually
+isolated and tested.
+
+**Run 3 independently reproduced the exact phantom-success pattern from
+the original Stage 7 finding** — 26 client-reported successes against
+27 real database rows. This is a genuinely valuable confirming data
+point, not a repeat of the same bug report: it shows the gap
+`docs/idempotency-scope.md` was written to address is still live and
+current after a substantial, unrelated round of Patroni work, not
+something that happened to get fixed as a side effect along the way.
+The idempotency design's own case for existing is now backed by two
+independent reproductions, not one.
+
+**Update (2026-09-02): this gap is now closed.** `docs/idempotency-scope.md`'s
+design has been implemented and live-verified — see that doc's
+"Implementation results" section for the full account, including a
+separate, unrelated regression it surfaced and fixed along the way
+(Redis-Sentinel test connectivity, broken since Redis's own Stage 6
+cutover and unnoticed until this work needed a clean full-suite run).
+
+Full evidence: `load-tests/vendor-bug-reports/postgres/NOTES.md`.
+
 ## Bootstrap-hook follow-up verification (2026-09-02): the hook was actually broken, not just unverified
 
 **This confirms the caution stated above was warranted, not excessive —
@@ -1782,29 +1846,6 @@ next to it. **The bootstrap-hook follow-up above closes the one caveat
 left open when this stage was first written** — the hook is now
 genuinely verified against a real cold bootstrap, not merely declared
 and assumed.
-
-**Re-executed in full afterward (2026-09-01), specifically because the
-underlying cluster had been torn down and rebuilt multiple times since
-Stage 7 was first verified** (the `post_bootstrap` fix itself, plus two
-follow-up replica-timing tests) — re-confirming the app-level failure
-scenario still holds after all of that, rather than assuming a fix
-verified once stays valid through later, unrelated changes to the same
-infrastructure. 3/3 clean, each run killing a different node (all three
-cycled through as leader across the three runs):
-
-| Run | Old → new leader | Infra RTO | App RTO | Requests | Failed |
-|---|---|---|---|---|---|
-| 1 | patroni-1 → patroni-2 | 1832ms | 9ms | 42 | 1 |
-| 2 | patroni-2 → patroni-3 | 1622ms | 5657ms | 57 | 1 |
-| 3 | patroni-3 → patroni-2 | 1868ms | 308ms | 28 | 2 |
-
-Self-healed with no app/pool restart in every run, consistent with the
-original Stage 7 results. Run 3 reproduced the same phantom-success
-pattern found in the original pass (26 client-reported successes, 27
-actual rows in the database) — the exact gap `docs/idempotency-scope.md`
-now exists to close, seen again here as a live, current confirmation
-that the gap is real and still present, not something that was
-somehow already fixed by the unrelated Patroni work in between.
 
 ## Deliverables expected from this pass
 

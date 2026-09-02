@@ -1,6 +1,7 @@
 package com.gridmeter.api.support;
 
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -15,8 +16,16 @@ import org.testcontainers.utility.DockerImageName;
  * @Container}) and shared across every subclass in this JVM run — the standard "singleton
  * container" pattern, since the per-class start/stop lifecycle those annotations impose would tear
  * a container down after the first test class and break the next one. Ryuk reaps them at JVM exit.
+ *
+ * <p>{@code @ActiveProfiles("test")} excludes application.yml's "!test"-gated Sentinel block, so
+ * RedisAutoConfiguration falls through to plain standalone mode using the host/port registered
+ * below against this class's single Redis container -- Sentinel mode isn't satisfiable here (no
+ * Sentinel container is started), and would otherwise win unconditionally the moment ANY
+ * spring.data.redis.sentinel.* key is present anywhere in the merged environment, regardless of
+ * this class's own host/port override. See that block's own comment for the full incident.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@ActiveProfiles("test")
 public abstract class ComponentTestSupport {
 
     protected static final PostgreSQLContainer<?> POSTGRES =

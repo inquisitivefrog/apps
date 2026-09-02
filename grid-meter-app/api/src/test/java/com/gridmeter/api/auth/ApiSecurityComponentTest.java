@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.client.RestTestClient;
@@ -26,9 +27,17 @@ import org.testcontainers.utility.DockerImageName;
  * the classpath via spring-test, no new dependency needed. Redis IS containerized here (unlike the
  * plain smoke test) because /actuator/health's real status depends on it — the health check would
  * otherwise report DOWN/503 with no Redis reachable, which isn't what this test is verifying.
+ *
+ * <p>{@code @ActiveProfiles("test")}: see {@link com.gridmeter.api.support.ComponentTestSupport}'s
+ * identical annotation for why -- this class predates that fix and has its own separate
+ * Testcontainers setup rather than extending ComponentTestSupport, so it needed the same
+ * annotation applied directly. Without it, application.yml's "!test"-gated Sentinel block would be
+ * active, and the health check below would report DOWN/503 trying to reach a nonexistent Sentinel
+ * instead of this class's own plain Redis container.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 class ApiSecurityComponentTest {
 
     @Container

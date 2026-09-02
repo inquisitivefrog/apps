@@ -3,6 +3,7 @@ package com.gridmeter.api.reading;
 import io.restassured.RestAssured;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -17,9 +18,15 @@ import org.testcontainers.utility.DockerImageName;
  * this follows. Real Kafka (via Testcontainers, not embedded/mocked) is required here specifically
  * because {@link ReadingApiTestBase}'s read-after-write tests exercise the actual async ingest
  * path (POST -> Kafka -> consumer -> Postgres), not just the HTTP layer in isolation.
+ *
+ * <p>{@code @ActiveProfiles("test")}: see {@link com.gridmeter.api.support.ComponentTestSupport}'s
+ * identical annotation for why -- application.yml's "!test"-gated Sentinel block would otherwise
+ * be active here too, since this class has its own separate Testcontainers Redis rather than
+ * extending ComponentTestSupport.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 class ReadingApiComponentTest extends ReadingApiTestBase {
 
     @Container

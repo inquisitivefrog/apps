@@ -40,4 +40,9 @@ public class Reading {
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    // Enforces docs/idempotency-scope.md's actual guarantee (a unique DB constraint, not the
+    // Redis fast-path) -- see V7__add_idempotency_key_to_readings.sql.
+    @Column(name = "idempotency_key", nullable = false)
+    private String idempotencyKey;
 }

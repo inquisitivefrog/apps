@@ -3,6 +3,7 @@ package com.gridmeter.api.meter;
 import io.restassured.RestAssured;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -19,9 +20,15 @@ import org.testcontainers.utility.DockerImageName;
  * existing precedent for HTTP-level tests in this suite. Runs via Surefire (`mvn test`), blocking
  * every push, with no external environment to stand up. See {@link MeterApiIT} for the black-box
  * counterpart against a real deployed stack.
+ *
+ * <p>{@code @ActiveProfiles("test")}: see {@link com.gridmeter.api.support.ComponentTestSupport}'s
+ * identical annotation for why -- application.yml's "!test"-gated Sentinel block would otherwise
+ * be active here too, since this class has its own separate Testcontainers Redis rather than
+ * extending ComponentTestSupport.
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 class MeterApiComponentTest extends MeterApiTestBase {
 
     @Container

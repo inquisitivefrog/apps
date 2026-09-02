@@ -379,8 +379,12 @@ Spring Boot 4 project specifically.
   without copy-pasting it five times and letting them drift).
 - The main Thread Group then runs `POST /readings` — the endpoint JMeter
   hammers per `docs/api-and-data-model.md` — using the Authorization header
-  set from the login fragment's Property and a `meterId` drawn from the
-  CSV pool.
+  set from the login fragment's Property, a `meterId` drawn from the CSV
+  pool, and a fresh `Idempotency-Key: ${__UUID()}` per request (see
+  `docs/idempotency-scope.md`) — `${__UUID()}` re-evaluates on every
+  sample the same way `${__Random(...)}`/`${__time(...)}` already do in
+  the request body, so each POST gets its own key rather than one shared
+  per thread.
 
 ## Gates (`check-thresholds.sh`)
 

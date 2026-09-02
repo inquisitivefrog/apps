@@ -599,9 +599,29 @@ Full evidence: `load-tests/vendor-bug-reports/redis/NOTES.md`.
 (Stages 1–5) and application (Stage 6) both now validated, matching the
 Postgres pass's own infrastructure-plus-application closure.**
 
+**Follow-up, found later (2026-09-02): this stage's own cutover commit
+(`1cbf040`) silently broke every component test's Redis connectivity,
+unnoticed until unrelated idempotency work needed a clean full-suite
+run.** Once `spring.data.redis.sentinel.master` became non-null, Spring
+Boot's autoconfiguration always builds a Sentinel-mode connection,
+overriding `ComponentTestSupport`'s attempt to point tests at the
+standalone Testcontainers Redis instead — every component test's Redis
+write had been failing against a nonexistent `localhost:26379` Sentinel
+since this commit landed, with nothing catching it in the meantime.
+Fixed via a `!test`-profile gate in `application.yml`; confirmed live
+afterward that production Sentinel behavior was completely undisturbed
+by the fix. See `docs/idempotency-scope.md`'s "Implementation results"
+section for the full account. Worth naming precisely: this is the same
+category of gap `docs/ha-scope.md`'s standing lesson already
+tracks — a change made for one real purpose silently breaking something
+else with no visibility into the dependency — just surfacing in the
+test suite this time instead of production traffic.
+
 ### Stage 6 — Application-level cutover and validation: confirm the app's real Redis client survives a Sentinel-driven failover — **done, see results above**
 
-**Not yet started.**
+**Completed — see "Stage 6 results" above for what was actually found.
+The steps below are the original plan, preserved for the record of what
+was intended and executed, not a currently-open task list.**
 
 **Step 1 — Check the live config first, don't assume.** Confirm exactly
 how the app currently connects to Redis — likely

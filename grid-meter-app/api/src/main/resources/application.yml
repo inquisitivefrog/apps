@@ -104,21 +104,6 @@ spring:
       properties:
         spring.json.trusted.packages: com.gridmeter.api.reading
 
-  data:
-    redis:
-      # Sentinel-aware, not a fixed host:port -- closes docs/redis-ha-scope.md's Stage 6 gap
-      # (the app-vs-infrastructure gap docs/ha-scope.md's standing lesson also named for
-      # Postgres): Stages 1-5 validated Sentinel/Redis failover directly via redis-cli, but the
-      # app's own client was still a fixed connection to the `redis` container specifically, with
-      # no idea a failover could ever happen. Lettuce (the default client) discovers the current
-      # master by asking the Sentinels, and subscribes to their pubsub for +switch-master events,
-      # so it re-points itself automatically when Sentinel promotes a replica -- no separate
-      # routing/proxy layer needed the way Postgres needed Traefik + Consul Catalog, since
-      # Sentinel awareness lives in the client itself here.
-      sentinel:
-        master: ${SPRING_REDIS_SENTINEL_MASTER:mymaster}
-        nodes: ${SPRING_REDIS_SENTINEL_NODES:localhost:26379}
-
 logging:
   pattern:
     # Appends customerId (set into MDC by JwtAuthenticationFilter, see docs/multi-tenancy-scope.md)
@@ -223,3 +208,35 @@ grid-meter:
       # SPRING_DATASOURCE_PASSWORD is set explicitly there rather than relying on this default.
       secret: ${GRID_METER_JWT_SECRET:4H+9b+HAJnUJhWU+mEKE09Onq9J4VzpLkSG3zL4pvAs=}
       expiration-minutes: 60
+
+---
+# Sentinel-aware, not a fixed host:port -- closes docs/redis-ha-scope.md's Stage 6 gap (the
+# app-vs-infrastructure gap docs/ha-scope.md's standing lesson also named for Postgres): Stages
+# 1-5 validated Sentinel/Redis failover directly via redis-cli, but the app's own client was still
+# a fixed connection to the `redis` container specifically, with no idea a failover could ever
+# happen. Lettuce (the default client) discovers the current master by asking the Sentinels, and
+# subscribes to their pubsub for +switch-master events, so it re-points itself automatically when
+# Sentinel promotes a replica -- no separate routing/proxy layer needed the way Postgres needed
+# Traefik + Consul Catalog, since Sentinel awareness lives in the client itself here.
+#
+# Gated behind "!test" (active everywhere EXCEPT ComponentTestSupport's @ActiveProfiles("test")
+# component tests), not applied unconditionally: Spring Boot's relaxed config binding builds a
+# non-null RedisProperties.Sentinel the moment ANY spring.data.redis.sentinel.* key is present
+# ANYWHERE in the merged environment, regardless of value -- which makes RedisAutoConfiguration
+# choose Sentinel mode unconditionally over the standalone host/port ComponentTestSupport tries to
+# register via a real Testcontainers Redis. This silently broke every component test touching
+# Redis (found while building docs/idempotency-scope.md's tests): every write failed trying to
+# reach a Sentinel at localhost:26379, which doesn't exist in the test environment, since
+# ComponentTestSupport only starts a single plain Redis container. This app's own Sentinel/failover
+# behavior is validated separately, against a real docker-compose stack via redis-cli/chaos
+# scripts (docs/redis-ha-scope.md) -- not by this Testcontainers-based component-test layer, whose
+# job is exercising the app's own logic against real dependencies, not re-proving Sentinel itself.
+spring:
+  config:
+    activate:
+      on-profile: "!test"
+  data:
+    redis:
+      sentinel:
+        master: ${SPRING_REDIS_SENTINEL_MASTER:mymaster}
+        nodes: ${SPRING_REDIS_SENTINEL_NODES:localhost:26379}

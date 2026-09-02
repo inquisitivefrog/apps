@@ -1,5 +1,30 @@
 # grid-meter-app — Idempotency scope: `POST /api/v1/readings`
 
+**Status (2026-09-02): implemented and live-verified, including the
+JMeter companion work.** Built exactly as designed below — required
+`Idempotency-Key` header, Redis fast path, DB constraint as the real
+guarantee — with 70/70 tests green and live confirmation against the
+real running stack that the two layers divide labor correctly (Redis
+caught the one live duplicate test before Kafka ever saw it). All 7
+affected `.jmx` files (6 profiles plus the shared `warmup.jmx`
+fragment — `provision-meters.jmx` only posts to `/meters` and needed no
+change) now generate a fresh `${__UUID()}` per request via their shared
+`HeaderManager`, confirmed via a live run of every profile at 0.00%
+error rate. See "Implementation results" near the end of this doc for
+the full account, including an unrelated regression found and fixed
+along the way.
+
+**Earlier status, preserved for the record**: the motivating gap was
+independently reconfirmed before this was built. A Postgres Stage 7
+re-run (executed after unrelated Patroni bootstrap-hook work,
+specifically to confirm that work hadn't regressed anything) reproduced
+the identical phantom-success pattern a second time, on a fresh run —
+26 client-reported successes against 27 real database rows. This wasn't
+a repeat report of the same original finding; it confirmed the gap was
+still live and current, not something the intervening Postgres work
+happened to fix as a side effect. See `docs/postgres-ha-scope.md`'s
+"Stage 7 re-verification" section for the full account.
+
 ## Why this doc exists
 
 Found during Postgres HA Stage 7's application-level primary-kill
@@ -100,14 +125,15 @@ API/JMeter-only, so this is really just JMeter and Bruno in practice).
 
 **(b) — the real guarantee.** New column `idempotency_key` on
 `readings` (`VARCHAR`, not nullable once this ships), unique index,
-added via `V7__add_idempotency_key_to_readings.sql` — **V7, not V5**:
-checked the actual migration directory rather than assumed, and `V5`/`V6`
-are already taken (`create_reading_outbox_table` /
-`drop_reading_outbox_table`, the outbox pattern `resilience-scope.md`
-built and later retired). Flyway requires strictly unique, sequential
-version numbers; reusing `V5` would either collide outright or fail
-checksum validation against the version already applied to every
-existing environment. The idempotency key travels with
+added via `V7__add_idempotency_key_to_readings.sql` — confirmed against
+the real migration directory, not assumed: `V1`–`V4` are the original
+meters/readings/users/customers tables, `V5` and `V6` are the outbox
+pattern's own full lifecycle (`create_reading_outbox_table` then
+`drop_reading_outbox_table`, matching `resilience-scope.md`'s account of
+building it, measuring it, and retiring it), leaving `V7` as the
+genuinely next-free version as of this doc. Still worth re-confirming
+against the real directory at implementation time if anything else
+lands in between. The idempotency key travels with
 the event through Kafka (part of the published message, not looked up
 separately) so the consumer has it at insert time. On a unique-
 constraint violation during insert: log it and discard — this is an
@@ -220,6 +246,95 @@ gap was found:**
   real proof this fix closes the gap it was found by — the same test
   that discovered the problem becomes the test that confirms it's
   fixed, rather than a new, separately-argued test standing in for it.
+
+## Implementation results (2026-09-02): built and live-verified, matching the design as written
+
+Built exactly as specified above — required `Idempotency-Key` header,
+Redis `SETNX` fast path (fail-open on Redis errors), the unique DB
+constraint as the actual guarantee, duplicate inserts discarded without
+crashing the Kafka consumer.
+
+**Test results, reported by layer per this doc's own testing section
+above, not as one undifferentiated "tests pass":**
+
+- **Unit** (`ReadingServiceIdempotencyTest`, 3 tests): new-key publishes
+  normally; duplicate-key skips republishing to Kafka; Redis throwing
+  on the `SETNX` call still results in the event being published
+  (fail-open confirmed, not just coded).
+- **Component** (`ReadingIdempotencyComponentTest`, real
+  Postgres/Kafka/Redis via Testcontainers, 2 tests): a duplicate request
+  produces exactly one row; concurrent identical requests confirm the
+  DB constraint — not the Redis check — is the actual backstop, per this
+  doc's own emphasis on testing that the two layers are doing different
+  jobs, not redundant copies of the same one.
+- **Black-box** (`ReadingApiTestBase`, 2 new tests): missing header →
+  `400`; duplicate key → both requests `201`, one row.
+- **Full suite, after fixing the unrelated regression below**: 70/70
+  green — not just the new tests passing in isolation.
+
+**Live-verified against the real running stack** (Patroni cluster,
+Kafka cluster, Sentinel-backed Redis — not a test double for any of
+them): `V7` migration applied cleanly; missing header correctly returns
+`400`; a genuine duplicate submission returns `201` twice with exactly
+one row in Postgres; and the application log confirms the **Redis fast
+path caught the duplicate before it ever reached Kafka** — the DB
+constraint never had to fire, which is exactly the intended division of
+labor between the two layers, observed actually happening rather than
+assumed from the design doc.
+
+**A pre-existing, unrelated regression found and fixed along the way,
+flagged and confirmed before fixing rather than silently patched**:
+Redis's own Stage 6 cutover (`docs/redis-ha-scope.md`, commit `1cbf040`,
+"Cut app over to Sentinel-aware Redis client") had silently broken every
+component test's Redis connectivity. Root cause: once
+`spring.data.redis.sentinel.master` is non-null, Spring Boot's
+autoconfiguration always builds a Sentinel-mode connection, ignoring
+`ComponentTestSupport`'s attempt to override `spring.data.redis.host`/
+`port` toward the test's standalone Testcontainers Redis — so every
+component test's Redis write had been trying, and failing, to reach a
+Sentinel at `localhost:26379`, which doesn't exist in the test
+environment. **This had gone unnoticed since that commit landed** —
+exactly the shape of gap `docs/ha-scope.md`'s standing lesson already
+tracks (a change made for one purpose silently breaking something else
+with no visibility into the dependency), just surfacing in the test
+suite this time rather than production traffic. Fixed via a
+`!test`-profile gate in `application.yml`, then **confirmed live
+afterward that production Sentinel behavior was completely
+undisturbed** by the fix — the right verification step, since a
+test-scoped fix that leaks into production behavior would be a worse
+outcome than the regression it was fixing.
+
+**Companion work, per this doc's own "required companion work" note**:
+`docs/api-and-data-model.md` updated with the new Idempotency section
+(matching the contract block specified above), and Bruno's
+`ingest-reading.bru` updated to generate a per-run unique key (matching
+its existing `serialNumber` pattern) — full collection re-verified
+clean (15/15 requests, 27/27 assertions) against the live stack.
+
+**JMeter, closed out (2026-09-02), after checking in explicitly on the
+approach rather than rushing it in alongside the rest of this work**:
+7 files needed the header — `steady-state.jmx`, `ramp-up.jmx`,
+`rapid-spike.jmx`, `gentle-spike.jmx`, `soak.jmx`,
+`misconfigured-burst.jmx`, and the shared `common/warmup.jmx` fragment
+they all include. `common/provision-meters.jmx` was checked and
+confirmed to only POST `/meters`, not `/readings` — no change needed
+there despite matching an early, looser grep for the string "readings"
+(present only in a comment). Each of the 7 files' `POST /readings`
+sampler is covered by a shared thread-group-level (or, for `warmup.jmx`,
+sampler-level) `HeaderManager` alongside the existing `Authorization`/
+`Content-Type` headers — added a third header there,
+`Idempotency-Key: ${__UUID()}`, JMeter's built-in function that
+re-evaluates fresh on every request the same way `${__Random(...)}` and
+`${__time(...)}` already do in the same sampler's body, rather than once
+per thread (which would have made every request after a thread's first
+one a detected duplicate). Verified live: `smoke-test.sh`'s full run of
+all 5 named profiles (which also exercises `warmup.jmx` via each
+profile's setUp) at 0.00% error rate, plus a direct short run of
+`misconfigured-burst.jmx` (not part of `smoke-test.sh`, run separately)
+also at 0.00% error rate — all 7 files confirmed working, not just
+believed fixed from reading the XML. This closes the "required companion
+work" note above in full; nothing from this doc's original scope remains
+outstanding.
 
 ## Explicitly deferred
 

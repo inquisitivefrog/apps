@@ -13,6 +13,7 @@ import com.gridmeter.api.meter.MeterRepository;
 import com.gridmeter.api.reading.dto.ReadingRequest;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
@@ -33,6 +36,7 @@ class ReadingServiceTest {
 
     private MeterRepository meterRepository;
     private KafkaTemplate<Object, Object> kafkaTemplate;
+    private RedisTemplate<String, Object> redisTemplate;
     private SimpleMeterRegistry meterRegistry;
     private ReadingService readingService;
     private ListAppender<ILoggingEvent> logAppender;
@@ -41,9 +45,20 @@ class ReadingServiceTest {
     void setUp() {
         meterRepository = mock(MeterRepository.class);
         kafkaTemplate = mock(KafkaTemplate.class);
+        redisTemplate = mock(RedisTemplate.class);
+        ValueOperations<String, Object> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // Default: every idempotency key looks new, so existing tests (none of which are about
+        // idempotency behavior) exercise the normal publish path unless a test overrides this.
+        when(valueOperations.setIfAbsent(anyString(), any(), any(Duration.class))).thenReturn(true);
         meterRegistry = new SimpleMeterRegistry();
         readingService = new ReadingService(
-                mock(ReadingRepository.class), meterRepository, kafkaTemplate, "readings", meterRegistry);
+                mock(ReadingRepository.class),
+                meterRepository,
+                kafkaTemplate,
+                redisTemplate,
+                "readings",
+                meterRegistry);
 
         logAppender = new ListAppender<>();
         logAppender.start();
@@ -65,7 +80,8 @@ class ReadingServiceTest {
                 CompletableFuture.failedFuture(new RuntimeException("Expiring record(s): delivery.timeout.ms exceeded"));
         when(kafkaTemplate.send(anyString(), any(), any())).thenReturn(failedFuture);
 
-        ReadingEvent event = readingService.ingest(new ReadingRequest(meterId, readingTimestamp, value));
+        ReadingEvent event =
+                readingService.ingest(new ReadingRequest(meterId, readingTimestamp, value), UUID.randomUUID().toString());
 
         assertThat(event.meterId()).isEqualTo(meterId);
         assertThat(meterRegistry.get("reading.delivery.failures").counter().count()).isEqualTo(1.0);
@@ -85,7 +101,7 @@ class ReadingServiceTest {
         when(kafkaTemplate.send(anyString(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
 
-        readingService.ingest(new ReadingRequest(meterId, Instant.now(), BigDecimal.TEN));
+        readingService.ingest(new ReadingRequest(meterId, Instant.now(), BigDecimal.TEN), UUID.randomUUID().toString());
 
         // The counter is registered eagerly in the constructor (so it always appears on
         // /actuator/prometheus, even at zero, rather than only after the first-ever failure) --

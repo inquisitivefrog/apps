@@ -6,15 +6,18 @@ import com.gridmeter.api.reading.dto.ReadingRequest;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.resilience.annotation.Retryable;
@@ -31,9 +34,15 @@ public class ReadingService {
 
     private static final Logger log = LoggerFactory.getLogger(ReadingService.class);
 
+    // docs/idempotency-scope.md: 24h TTL, matching typical Stripe-style windows -- no
+    // session-length justification needed, just "long enough that a client's own retry logic has
+    // certainly given up by then".
+    private static final Duration IDEMPOTENCY_KEY_TTL = Duration.ofHours(24);
+
     private final ReadingRepository readingRepository;
     private final MeterRepository meterRepository;
     private final KafkaTemplate<Object, Object> kafkaTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;
     private final String readingsTopic;
     private final Counter deliveryFailureCounter;
 
@@ -41,11 +50,13 @@ public class ReadingService {
             ReadingRepository readingRepository,
             MeterRepository meterRepository,
             KafkaTemplate<Object, Object> kafkaTemplate,
+            RedisTemplate<String, Object> redisTemplate,
             @Value("${grid-meter.kafka.readings-topic}") String readingsTopic,
             MeterRegistry meterRegistry) {
         this.readingRepository = readingRepository;
         this.meterRepository = meterRepository;
         this.kafkaTemplate = kafkaTemplate;
+        this.redisTemplate = redisTemplate;
         this.readingsTopic = readingsTopic;
         // Exported as reading_delivery_failures_total on /actuator/prometheus (Micrometer's
         // Prometheus naming convention: dots -> underscores, "_total" appended for counters).
@@ -95,7 +106,7 @@ public class ReadingService {
             maxRetries = 2,
             delay = 200,
             multiplier = 2)
-    public ReadingEvent ingest(ReadingRequest request) {
+    public ReadingEvent ingest(ReadingRequest request, String idempotencyKey) {
         if (!meterRepository.existsById(request.meterId())) {
             throw new ResourceNotFoundException("Meter not found: " + request.meterId());
         }
@@ -104,7 +115,22 @@ public class ReadingService {
                 request.meterId(),
                 request.readingTimestamp(),
                 Instant.now(),
-                request.value());
+                request.value(),
+                idempotencyKey);
+
+        // docs/idempotency-scope.md's fast path (a): a cheap Redis check that avoids republishing
+        // an already-seen event to Kafka at all. This is a latency/Kafka-noise optimization on top
+        // of the real guarantee, not a second attempt at it -- (b), the unique constraint the async
+        // consumer enforces on insert (see ReadingEventConsumer), is what actually guarantees "no
+        // second row" independent of timing, Redis availability, or how close together two retries
+        // land. If this check disagrees with (b) (a narrow race slips a duplicate past this SETNX),
+        // (b) wins; this path never overrides it.
+        if (!shouldPublish(idempotencyKey)) {
+            log.info("Idempotency key {} already seen -- not republishing to Kafka, returning the "
+                    + "original result", idempotencyKey);
+            return event;
+        }
+
         // send() is fire-and-forget from the caller's perspective (ingest() returns before this
         // resolves), but the returned Future's outcome was previously discarded entirely -- a real
         // Kafka quorum-loss test (150s outage, exceeding the delivery.timeout.ms client default of
@@ -136,6 +162,22 @@ public class ReadingService {
                     }
                 });
         return event;
+    }
+
+    // docs/idempotency-scope.md's SETNX fast path: true means "not seen before, go ahead and
+    // publish"; false means "already seen, skip republishing to Kafka". Redis unavailable ->
+    // fail open (returns true) rather than blocking ingest on a cache being down -- the real
+    // guarantee is the unique DB constraint in ReadingEventConsumer, not this check.
+    private boolean shouldPublish(String idempotencyKey) {
+        String key = "idempotency:" + idempotencyKey;
+        try {
+            Boolean isNew = redisTemplate.opsForValue().setIfAbsent(key, "1", IDEMPOTENCY_KEY_TTL);
+            return Boolean.TRUE.equals(isNew);
+        } catch (DataAccessException ex) {
+            log.warn("Redis unavailable while checking idempotency key {} -- failing open and "
+                    + "publishing anyway (see docs/idempotency-scope.md)", idempotencyKey, ex);
+            return true;
+        }
     }
 
     public Reading findById(UUID id) {

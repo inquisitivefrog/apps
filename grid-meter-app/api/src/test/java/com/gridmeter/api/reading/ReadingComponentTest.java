@@ -85,7 +85,8 @@ class ReadingComponentTest extends ComponentTestSupport {
         Meter meter = createMeter();
         Instant readingTimestamp = Instant.parse("2026-08-11T06:00:00Z");
         ReadingEvent event = readingService.ingest(
-                new ReadingRequest(meter.getId(), readingTimestamp, new BigDecimal("42.500")));
+                new ReadingRequest(meter.getId(), readingTimestamp, new BigDecimal("42.500")),
+                UUID.randomUUID().toString());
 
         Reading persisted = awaitPersisted(event.id());
         assertThat(persisted.getMeterId()).isEqualTo(meter.getId());
@@ -106,7 +107,7 @@ class ReadingComponentTest extends ComponentTestSupport {
     void ingest_unknownMeterId_throwsNotFound() {
         ReadingRequest request = new ReadingRequest(UUID.randomUUID(), Instant.now(), BigDecimal.TEN);
 
-        assertThatThrownBy(() -> readingService.ingest(request))
+        assertThatThrownBy(() -> readingService.ingest(request, UUID.randomUUID().toString()))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
@@ -114,9 +115,11 @@ class ReadingComponentTest extends ComponentTestSupport {
     void search_filtersByMeterIdAndValueRange() {
         Meter meter = createMeter();
         ReadingEvent low = readingService.ingest(
-                new ReadingRequest(meter.getId(), Instant.parse("2026-08-01T00:00:00Z"), new BigDecimal("10.000")));
+                new ReadingRequest(meter.getId(), Instant.parse("2026-08-01T00:00:00Z"), new BigDecimal("10.000")),
+                UUID.randomUUID().toString());
         ReadingEvent high = readingService.ingest(
-                new ReadingRequest(meter.getId(), Instant.parse("2026-08-02T00:00:00Z"), new BigDecimal("90.000")));
+                new ReadingRequest(meter.getId(), Instant.parse("2026-08-02T00:00:00Z"), new BigDecimal("90.000")),
+                UUID.randomUUID().toString());
         awaitPersisted(low.id());
         awaitPersisted(high.id());
 
@@ -139,9 +142,11 @@ class ReadingComponentTest extends ComponentTestSupport {
         Meter defaultCustomerMeter = createMeter();
         Meter otherCustomerMeter = createMeter(createOtherCustomer());
         ReadingEvent defaultCustomerReading = readingService.ingest(new ReadingRequest(
-                defaultCustomerMeter.getId(), Instant.parse("2026-08-03T00:00:00Z"), distinctiveValue));
+                defaultCustomerMeter.getId(), Instant.parse("2026-08-03T00:00:00Z"), distinctiveValue),
+                UUID.randomUUID().toString());
         ReadingEvent otherCustomerReading = readingService.ingest(new ReadingRequest(
-                otherCustomerMeter.getId(), Instant.parse("2026-08-04T00:00:00Z"), distinctiveValue));
+                otherCustomerMeter.getId(), Instant.parse("2026-08-04T00:00:00Z"), distinctiveValue),
+                UUID.randomUUID().toString());
         awaitPersisted(defaultCustomerReading.id());
         awaitPersisted(otherCustomerReading.id());
 
@@ -167,7 +172,7 @@ class ReadingComponentTest extends ComponentTestSupport {
     void delete_removesReading() {
         Meter meter = createMeter();
         ReadingEvent event = readingService.ingest(
-                new ReadingRequest(meter.getId(), Instant.now(), BigDecimal.ONE));
+                new ReadingRequest(meter.getId(), Instant.now(), BigDecimal.ONE), UUID.randomUUID().toString());
         awaitPersisted(event.id());
 
         readingService.delete(event.id());

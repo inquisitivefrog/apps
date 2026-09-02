@@ -63,6 +63,7 @@ abstract class ReadingApiTestBase {
 
     private String ingestReading(String meterId, String value) {
         return authenticated()
+                .header("Idempotency-Key", UUID.randomUUID().toString())
                 .body("""
                         {"meterId":"%s","readingTimestamp":"2026-08-11T06:00:00Z","value":%s}
                         """.formatted(meterId, value))
@@ -85,6 +86,7 @@ abstract class ReadingApiTestBase {
         String meterId = createMeter();
 
         authenticated()
+                .header("Idempotency-Key", UUID.randomUUID().toString())
                 .body("""
                         {"meterId":"%s","readingTimestamp":"2026-08-11T06:00:00Z","value":42.5}
                         """.formatted(meterId))
@@ -100,6 +102,7 @@ abstract class ReadingApiTestBase {
     @Test
     void ingest_unknownMeterId_returns404() {
         authenticated()
+                .header("Idempotency-Key", UUID.randomUUID().toString())
                 .body("""
                         {"meterId":"%s","readingTimestamp":"2026-08-11T06:00:00Z","value":42.5}
                         """.formatted(UUID.randomUUID()))
@@ -112,6 +115,7 @@ abstract class ReadingApiTestBase {
     @Test
     void ingest_missingRequiredField_returns400() {
         authenticated()
+                .header("Idempotency-Key", UUID.randomUUID().toString())
                 .body("""
                         {"readingTimestamp":"2026-08-11T06:00:00Z","value":42.5}
                         """)
@@ -120,6 +124,63 @@ abstract class ReadingApiTestBase {
                 .then()
                 .statusCode(400)
                 .body("error", equalTo("Bad Request"));
+    }
+
+    @Test
+    void ingest_missingIdempotencyKeyHeader_returns400() {
+        String meterId = createMeter();
+
+        authenticated()
+                .body("""
+                        {"meterId":"%s","readingTimestamp":"2026-08-11T06:00:00Z","value":42.5}
+                        """.formatted(meterId))
+                .when()
+                .post("/readings")
+                .then()
+                .statusCode(400)
+                .body("error", equalTo("Bad Request"));
+    }
+
+    // Black-box counterpart to ReadingIdempotencyComponentTest's
+    // duplicateKey_sameRequestSentTwice_exactlyOneRowPersisted, per docs/idempotency-scope.md's
+    // "API (REST Assured / Bruno)" testing-implications entry: both requests return 201 (a
+    // duplicate is normal traffic, not a client error), but a follow-up search shows exactly one
+    // row -- the two-layer design's actual, observable guarantee from a client's perspective.
+    @Test
+    void ingest_sameIdempotencyKeyTwice_bothReturn201ButOnlyOneRowPersists() {
+        String meterId = createMeter();
+        String idempotencyKey = UUID.randomUUID().toString();
+        String body = """
+                {"meterId":"%s","readingTimestamp":"2026-08-11T06:00:00Z","value":77.500}
+                """.formatted(meterId);
+
+        authenticated()
+                .header("Idempotency-Key", idempotencyKey)
+                .body(body)
+                .when()
+                .post("/readings")
+                .then()
+                .statusCode(201);
+        authenticated()
+                .header("Idempotency-Key", idempotencyKey)
+                .body(body)
+                .when()
+                .post("/readings")
+                .then()
+                .statusCode(201);
+
+        // during(): must STAY at exactly 1 across the whole poll window, not just reach it --
+        // same reasoning as ReadingIdempotencyComponentTest's identical use of during().
+        await().atMost(Duration.ofSeconds(15))
+                .pollInterval(Duration.ofMillis(200))
+                .during(Duration.ofSeconds(3))
+                .untilAsserted(() -> authenticated()
+                        .queryParam("meterId", meterId)
+                        .when()
+                        .get("/readings")
+                        .then()
+                        .statusCode(200)
+                        .body("content.size()", equalTo(1)));
     }
 
     @Test

@@ -10,6 +10,14 @@ post {
   auth: inherit
 }
 
+headers {
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+script:pre-request {
+  bru.setVar("idempotencyKey", "idem-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+}
+
 body:json {
   {
     "meterId": "{{meterId}}",
@@ -35,4 +43,10 @@ docs {
   CLAUDE.md it's JWT-gated like every other /api/v1/** route, even
   though it's machine-to-machine ingestion. Sets `readingId`, reused
   below.
+
+  Idempotency-Key is required (docs/idempotency-scope.md) -- generated
+  fresh each run in the pre-request script, same "unique per run" pattern
+  as meters/Create Meter's serialNumber, so re-running this request back
+  to back is always treated as a new, distinct reading rather than a
+  detected duplicate.
 }

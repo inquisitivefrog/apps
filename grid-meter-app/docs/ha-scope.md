@@ -68,6 +68,19 @@ was "check this everywhere," not "assume this everywhere," and checking
 rather than assuming is what surfaced Kafka as the one layer that didn't
 need remediation.
 
+**A further, related instance found later (2026-09-02), worth naming as
+the same pattern rather than a separate story**: Redis's own Stage 6
+cutover commit silently broke every component test's Redis
+connectivity, unnoticed for a real stretch of time because nothing had
+run the full test suite against it since. Same underlying shape as this
+whole lesson — a change made for one real purpose, invisible to
+something else that depended on the prior state — just surfacing in the
+test suite instead of production traffic this time, and found only
+because unrelated idempotency work happened to need a clean full-suite
+run. See `docs/redis-ha-scope.md`'s Stage 6 follow-up and
+`docs/idempotency-scope.md`'s "Implementation results" for the full
+account.
+
 **Why this matters more than it might look**: a chaos-testing pass that
 proves infrastructure resilience but never confirms the application
 actually uses that infrastructure can produce a false sense of security

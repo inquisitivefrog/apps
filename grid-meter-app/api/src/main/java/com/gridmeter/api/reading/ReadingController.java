@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,9 +37,15 @@ public class ReadingController {
         this.paginationProperties = paginationProperties;
     }
 
+    // docs/idempotency-scope.md: required, not optional -- an optional header would just
+    // reintroduce the exact ambiguity this feature exists to close for any client that doesn't
+    // bother sending it. Spring's default MissingRequestHeaderException handling covers the
+    // rejection itself; GlobalExceptionHandler maps it to this API's own ApiError shape.
     @PostMapping
-    public ResponseEntity<ReadingResponse> ingest(@Valid @RequestBody ReadingRequest request) {
-        ReadingEvent event = readingService.ingest(request);
+    public ResponseEntity<ReadingResponse> ingest(
+            @Valid @RequestBody ReadingRequest request,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        ReadingEvent event = readingService.ingest(request, idempotencyKey);
         return ResponseEntity.created(URI.create("/api/v1/readings/" + event.id()))
                 .body(ReadingResponse.from(event));
     }
