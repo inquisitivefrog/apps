@@ -5,6 +5,10 @@
 target/
 *.class
 
+# Python (load-tests/ scripts)
+__pycache__/
+*.pyc
+
 # IDE
 .idea/
 *.iml

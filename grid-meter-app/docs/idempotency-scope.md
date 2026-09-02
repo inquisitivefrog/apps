@@ -1,18 +1,19 @@
 # grid-meter-app — Idempotency scope: `POST /api/v1/readings`
 
-**Status (2026-09-02): implemented and live-verified, including the
-JMeter companion work.** Built exactly as designed below — required
-`Idempotency-Key` header, Redis fast path, DB constraint as the real
-guarantee — with 70/70 tests green and live confirmation against the
-real running stack that the two layers divide labor correctly (Redis
-caught the one live duplicate test before Kafka ever saw it). All 7
-affected `.jmx` files (6 profiles plus the shared `warmup.jmx`
-fragment — `provision-meters.jmx` only posts to `/meters` and needed no
-change) now generate a fresh `${__UUID()}` per request via their shared
-`HeaderManager`, confirmed via a live run of every profile at 0.00%
-error rate. See "Implementation results" near the end of this doc for
-the full account, including an unrelated regression found and fixed
-along the way.
+**Status (2026-09-02): implemented, live-verified, and fully closed —
+no remaining companion work.** Built exactly as designed below —
+required `Idempotency-Key` header, Redis fast path, DB constraint as
+the real guarantee — with 70/70 tests green and live confirmation
+against the real running stack that the two layers divide labor
+correctly (Redis caught the one live duplicate test before Kafka ever
+saw it). JMeter's 8 load-test plans, the one piece of companion work
+originally left deferred, are now fixed too — `${__UUID()}` added to
+each plan's shared `HeaderManager`, confirmed to re-evaluate per
+request (not once per thread, which would have silently defeated the
+fix), and live-verified via `smoke-test.sh` at 0.00% errors across all
+5 named profiles plus a direct run of `misconfigured-burst.jmx`. See
+"Implementation results" near the end of this doc for the full account,
+including an unrelated regression found and fixed along the way.
 
 **Earlier status, preserved for the record**: the motivating gap was
 independently reconfirmed before this was built. A Postgres Stage 7
@@ -311,30 +312,32 @@ outcome than the regression it was fixing.
 its existing `serialNumber` pattern) — full collection re-verified
 clean (15/15 requests, 27/27 assertions) against the live stack.
 
-**JMeter, closed out (2026-09-02), after checking in explicitly on the
-approach rather than rushing it in alongside the rest of this work**:
-7 files needed the header — `steady-state.jmx`, `ramp-up.jmx`,
-`rapid-spike.jmx`, `gentle-spike.jmx`, `soak.jmx`,
-`misconfigured-burst.jmx`, and the shared `common/warmup.jmx` fragment
-they all include. `common/provision-meters.jmx` was checked and
-confirmed to only POST `/meters`, not `/readings` — no change needed
-there despite matching an early, looser grep for the string "readings"
-(present only in a comment). Each of the 7 files' `POST /readings`
-sampler is covered by a shared thread-group-level (or, for `warmup.jmx`,
-sampler-level) `HeaderManager` alongside the existing `Authorization`/
-`Content-Type` headers — added a third header there,
-`Idempotency-Key: ${__UUID()}`, JMeter's built-in function that
-re-evaluates fresh on every request the same way `${__Random(...)}` and
-`${__time(...)}` already do in the same sampler's body, rather than once
-per thread (which would have made every request after a thread's first
-one a detected duplicate). Verified live: `smoke-test.sh`'s full run of
-all 5 named profiles (which also exercises `warmup.jmx` via each
-profile's setUp) at 0.00% error rate, plus a direct short run of
-`misconfigured-burst.jmx` (not part of `smoke-test.sh`, run separately)
-also at 0.00% error rate — all 7 files confirmed working, not just
-believed fixed from reading the XML. This closes the "required companion
-work" note above in full; nothing from this doc's original scope remains
-outstanding.
+~~**Explicitly deferred, by deliberate choice, not oversight**: JMeter's
+8 load-test plans (steady-state, ramp-up, both spike variants, soak,
+provisioning) all still POST to `/readings` without the new header and
+will now fail with `400`. Fixing them requires per-request unique-key
+generation, not a static header value — real, non-trivial work, checked
+in on explicitly before deferring rather than left as a silent gap. This
+is the one piece of "required companion work" not yet done; the load
+tests should not be assumed runnable until this lands.~~
+
+**Resolved (2026-09-02).** `${__UUID()}` added to the shared
+`HeaderManager` in all 7 affected files (steady-state, ramp-up,
+rapid-spike, gentle-spike, soak, `misconfigured-burst.jmx`, and the
+shared `warmup.jmx` fragment — `provision-meters.jmx` needed no change,
+since it only ever `POST`s to `/meters`). **Confirmed to re-evaluate per
+request, not once per thread** — the detail that actually mattered here,
+since a thread-scoped or static key would have silently defeated the
+fix by producing colliding keys across a thread's own repeated requests
+(or across threads, in the static case), matching how `${__Random}`/
+`${__time}` already behave in the same sampler bodies rather than
+introducing a new evaluation pattern. Live-verified via
+`smoke-test.sh`: all 5 named profiles clean at `0.00%` errors, plus a
+direct run of `misconfigured-burst.jmx` (which has its own
+self-contained `setUp` — login + provisioning — separate from the
+shared profiles) also clean. `load-tests/README.md` updated to document
+the new required header. **No companion work remains outstanding from
+this doc's scope.**
 
 ## Explicitly deferred
 

@@ -1043,6 +1043,20 @@ decision's conditional acceptance needs revisiting.
 
 ## Stage 6 results (2026-09-01): PASS, 3/3 clean, one run per possible surviving-agent combination — the system genuinely fails safe
 
+**Correction (2026-09-02): the table below was wrong, and the "paired-agent"
+mechanism narrative that originally followed it (removed here, see
+"Stage 6 self-demotion timing: paired-agent hypothesis retested and
+refuted" further down) was built on those wrong numbers.** The original
+version of this table claimed leader `patroni-3` in all 3 runs with
+self-demotion times 12326ms / ~15000ms / ~3000ms. Neither the leader
+identity nor the timings match this stage's own cited raw evidence
+(`load-tests/vendor-bug-reports/postgres/runs/20260901-stage6-run*.txt`,
+which agree exactly with `NOTES.md`'s independently-written summary —
+two sources agreeing with each other, both disagreeing with this doc).
+`12326` does not appear anywhere in the raw evidence at all. Corrected
+below directly from the raw transcripts, not from memory of what this
+table used to say.
+
 Ran using direct `pg_is_in_recovery()` polling on each of the 3 nodes
 independently, per this stage's own methodology note above — never
 `patronictl` or any other Consul-derived view, since `consistent` reads
@@ -1053,9 +1067,22 @@ starting and ending as expected.
 
 | Run | Surviving agent | Primary | Self-demoted at | Unsafe promotion |
 |---|---|---|---|---|
-| 1 | `consul-3` | `patroni-3` | 12326ms | No |
-| 2 | `consul-1` | `patroni-3` | ~15000ms | No |
-| 3 | `consul-2` | `patroni-3` | ~3000ms | No |
+| 1 | `consul-3` | `patroni-2` | 3000ms | No |
+| 2 | `consul-1` | `patroni-3` | 10000ms | No |
+| 3 | `consul-2` | `patroni-2` | 10000ms | No |
+
+**Worth flagging explicitly, not just silently correcting**: these
+self-demotion times are themselves coarser than they look — the test
+script's own monitoring loop sampled `pg_is_in_recovery()` at irregular,
+widening checkpoints (0ms, 3000ms, 7000ms, 10000ms, 14000ms, ...), so
+"self-demoted at 10000ms" really means "still primary at the 7000ms
+checkpoint, no longer primary at the 10000ms checkpoint" — the true
+event could have happened anywhere in that 3-second window, not at
+exactly 10000ms. Two of three runs landing on exactly the same
+checkpoint value (10000ms) is itself a hint that checkpoint granularity,
+not the underlying mechanism, may be doing some of the work here — see
+the retest below, which polls at a much finer interval specifically to
+stop relying on checkpoint-quantized numbers.
 
 **The critical safety property held perfectly across all 3 runs**:
 Consul correctly refused the `consistent` operation immediately (real
@@ -1067,20 +1094,331 @@ unbounded outage is the correct safe behavior here, not a defect, and
 no run showed anything resembling a bounded recovery (which would have
 been the alarming result, not the reassuring one).
 
-**A real, interesting nuance found, refining Stage 5's ~15–20s
-self-demotion estimate rather than contradicting it**: self-demotion
+**A hypothesized mechanism was floated here originally ("self-demotion
 speed depends on whether the primary's own paired Consul agent is among
-the two killed. Run 1 and Run 2 (the primary's own agent survived but
-couldn't reach quorum) took 12.3s and ~15s — in line with Stage 5's
-range. Run 3 (the primary's own agent, `consul-3`, was killed directly)
-took only ~3s. The mechanism is precise: an immediate connection
-failure to a dead agent is detected faster than a live-but-quorumless
-agent that still accepts and processes the request before failing at
-the raft layer. Worth remembering as a general shape for any future
-Consul-backed HA testing in this project: "the agent is gone" and "the
-agent is alive but the cluster it's part of has no quorum" are
-different failure signals with different detection latencies, not
-interchangeable versions of "Consul is down."
+the two killed") — see "Stage 6 self-demotion timing: paired-agent
+hypothesis retested and refuted" further down for why it doesn't hold
+up.** Using the corrected table above: Run 1 (leader `patroni-2`, its
+own agent `consul-2` killed) took 3000ms; Run 2 (leader `patroni-3`, its
+own agent `consul-3` killed) took 10000ms — the *same* condition as
+Run 1, yet a 3x difference in outcome; Run 3 (leader `patroni-2`, its
+own agent `consul-2` survives) took 10000ms, indistinguishable from
+Run 2 despite being the theory's *other* condition. The three original
+runs, correctly read, already contradict the theory rather than
+motivating it — see the dedicated section below for the controlled
+retest this prompted and what it actually found.
+
+## Stage 6 self-demotion timing: paired-agent hypothesis retested and refuted (2026-09-02)
+
+**Verdict: refuted as originally stated.** The dramatic ~3s-vs-12–15s
+split does not exist. A real, small, consistently-replicated effect
+does exist in the same direction the original theory predicted, but at
+roughly a tenth the claimed magnitude — nothing that would have changed
+any operational conclusion this doc has drawn from the earlier estimate.
+
+**Method, addressing every gap the original test had:**
+- `load-tests/postgres-consul-self-demotion-timing-test.py` (new,
+  Python rather than bash specifically to sidestep this project's own
+  standing GNU-vs-BSD `date` timing lesson — see
+  `docs/testing-strategy.md` — for a measurement this precision-
+  sensitive). Polls the leader's own `pg_is_in_recovery()` via real
+  `time.time()` at ~90ms resolution (measured live), not the original
+  script's whole-second bash `SECONDS` builtin, which quantized every
+  prior result to a 1-second boundary and can by itself explain why 2 of
+  the original 3 runs landed on exactly `10000ms`.
+- Captures the leader's own DEBUG-level Patroni log for the whole test
+  window (`docker compose logs -f --since <kill-instant>` — `--since` is
+  required, not cosmetic: without it, a follow starts by dumping the
+  *entire* historical backlog first, confirmed live at 24,000+ lines for
+  2 seconds of "follow" time, which would let an old, unrelated failure
+  line from an earlier test in this session falsely match as "this
+  trial's" mechanism line).
+- 3 repeats of each condition, alternating which non-paired agent is
+  the third kill target in the "own agent killed" condition, per this
+  project's standing "don't repeat the identical specific case across
+  all iterations" discipline.
+- **A real bug found and fixed mid-investigation**: the first full run's
+  restore-and-settle step considered the cluster "ready for the next
+  trial" as soon as `patronictl list` succeeded and showed *some* node
+  as Leader — not confirming that specific node had actually finished
+  its own recovery transition. Result: 2 of 3 "different"-condition
+  trials in that run measured `~0.24s` with no prior "still primary"
+  sample at all — the next trial's kill landed on a leader still
+  mid-recovery from the *previous* trial, not a fresh failure. Fixed by
+  additionally requiring the reported leader's own
+  `pg_is_in_recovery()` to read `f` before declaring the cluster ready;
+  the "different" condition was then re-run clean. Worth naming as the
+  same category as this project's fixed-sleep-races-unbounded-readiness
+  lesson (`docs/testing-strategy.md`) — a different concrete shape (a
+  *readiness check* trusting a stale/coarse signal, not a fixed sleep),
+  but the same underlying discipline: confirm the actual condition
+  before proceeding, don't trust a plausible-looking proxy for it.
+
+**Confirmed live, not assumed**: `loop_wait: 10`, `retry_timeout: 10`,
+`ttl: 30` (`patronictl show-config`).
+
+**Results — precise mechanism-level timestamps, not polling-lag-inflated
+ones.** Patroni logs an exact, unambiguous decision line —
+`demoting self because DCS is not accessible and I was a leader` —
+timestamped against this project's own confirmed-UTC container clock
+(`date -u` == `date` on these containers, checked once live before
+trusting it) and directly comparable to the kill instant. This is more
+precise than the external polling loop, which necessarily lags the
+internal decision by however long the subsequent recovery-state flip
+takes to become externally observable (the gap between the two metrics
+below, consistently ~1–1.4s across all 6 trials, is itself a small,
+sensible finding: the observable effect always trails the internal
+decision by about that much, not zero and not variable).
+
+| Condition | Run | Own agent killed | `demoting self` offset | External poll `demoted_at` |
+|---|---|---|---|---|
+| own | 1 | Yes | 17.435s | 18.551s |
+| own | 2 | Yes | 16.932s | 18.129s |
+| own | 3 | Yes | 17.099s | 18.210s |
+| different | 1 | No | 18.817s | 19.921s |
+| different | 2 | No | 17.796s | 18.987s |
+| different | 3 | No | 18.150s | 19.329s |
+
+**The two conditions separate, barely, and in the predicted direction —
+but the gap is roughly a tenth of the original claim.** Own-agent-killed:
+16.9–17.4s (all 3 runs). Different-agent-killed: 17.8–18.8s (all 3
+runs). The bands don't overlap across 3 repeats each, which is a real
+signal at this sample size, not nothing — but the actual gap (own's max
+17.435s vs different's min 17.796s: **0.36s**; comparing averages,
+**~1.1s**) is nowhere close to the originally-claimed ~9–12s gap between
+a ~3s and a ~12–15s band. Both conditions land in the same rough
+15-second window, not in dramatically different regimes.
+
+**Mechanism-level instrumentation directly confirms two genuinely
+different underlying failures, exactly as the original theory
+described qualitatively** — just not with the timing consequence it
+predicted:
+- **Own agent killed**: Patroni's Consul client gets a
+  `NameResolutionError` — `Failed to resolve 'consul-2'` — repeated
+  roughly once per second. This is `docker compose stop`'s actual
+  behavior: a stopped container's hostname stops resolving via Docker's
+  embedded DNS. This is *not* the "instant TCP connection refused" the
+  original theory assumed — it's a DNS failure with its own real,
+  repeated retry/backoff cost, which is exactly why this condition isn't
+  anywhere near instant either.
+- **Different agent killed (own agent alive, no quorum)**: Patroni's
+  client connects successfully, then hits a `ReadTimeoutError` (`read
+  timeout=3.33s`) waiting for a response, followed by a real Consul-side
+  error once a response does arrive: `500 Raft leader not found in
+  server lookup mapping` — the local agent is up and answering, but
+  can't complete the request without a raft leader to consult, exactly
+  as originally described.
+- **Both conditions converge on the identical final decision line**
+  (`demoting self because DCS is not accessible...`) at closely similar
+  absolute times, meaning whichever specific low-level error Patroni
+  hits first, the actual gating factor for *when it gives up* is
+  something else — most plausibly an accumulated retry/backoff budget
+  Patroni exhausts before calling `demote()`, not the speed of the very
+  first failure signal. This wasn't isolated further (would need reading
+  Patroni's own retry-loop source, not just its logs) — stated as the
+  most plausible explanation given what was directly observed, not a
+  confirmed root cause.
+
+**`loop_wait`-multiple confound, checked as requested: not a clean fit,
+but not ruled out as a contributor either.** 16.9–18.8s isn't close to
+any single multiple of `loop_wait` (10s, 20s, 30s) — it sits ~7–9s past
+one multiple and ~1–3s short of the next, not neatly on either. That
+rules out the *simplest* version of the polling-cycle confound (times
+simply parked at a fixed `loop_wait` boundary), but doesn't rule out a
+subtler version where part of the ~17–19s figure is "up to one
+`loop_wait` cycle before the periodic check even runs, plus a real
+retry/backoff cost on top" — consistent with, though not proof of, the
+retry-budget explanation above.
+
+**Bottom line for anyone relying on the original estimate**: nothing
+downstream of the original ~3–15s figure needs revisiting — the real
+range (~17–19s to the internal decision, ~18–20s to external
+observability) is still comfortably within Traefik's observed
+stuck-routing behavior and well under `ttl: 30`'s outer bound, so no
+operational conclusion in this doc changes. What changes is confidence
+in the *specific mechanism* previously stated: "connection-refused is
+dramatically faster than accept-then-fail" is not supported: both paths
+take a broadly similar, non-trivial amount of time, for the sensible
+reason that neither low-level failure (DNS resolution failure, TCP
+read timeout) is actually instant once real retry/backoff behavior is
+accounted for.
+
+Raw evidence: `load-tests/results/self-demotion-timing-results-loopwait10-{own,different}.json`,
+plus the per-trial captured DEBUG logs alongside them.
+
+## Self-demotion timing, part 2 (2026-09-02): the actual mechanism, read from Patroni's own source, then confirmed empirically by varying the real knobs
+
+The analysis above establishes *what* happens (both conditions land in
+the same rough window) but only guesses at *why* ("most plausibly an
+accumulated retry/backoff budget... not isolated further"). Rather than
+run more chaos trials at the same fixed config, the higher-leverage next
+step — same move that resolved the `bootstrap.users` question earlier in
+this investigation (docs/postgres-ha-scope.md's bootstrap-hook section)
+— was reading Patroni 4.1.5's actual source
+(`/opt/patroni-venv/lib/python3.13/site-packages/patroni/{dcs/consul.py,ha.py,utils.py}`
+inside the running container) to find the real mechanism, then varying
+`loop_wait`/`retry_timeout` live to confirm the source-derived model
+empirically. Worth doing before production, not just academically
+interesting: this is exactly the kind of mechanism a future on-call
+engineer needs during a real Consul-related outage, not something to
+leave as an inferred guess.
+
+**The complete call chain, traced through the actual source (not
+inferred from logs):**
+1. Patroni's periodic HA loop (`ha.py`'s `run_cycle`/`_run_cycle`) calls
+   `get_cluster()` on every iteration, spaced `loop_wait` seconds apart.
+2. That eventually calls `Consul.retry()` (`dcs/consul.py`), which wraps
+   the actual Consul KV read in a `Retry` object
+   (`patroni/utils.py`) constructed with
+   `deadline=config['retry_timeout']`, `max_delay=1`, `max_tries=-1` —
+   i.e., retry indefinitely with backoff capped at 1s between attempts,
+   until `retry_timeout` seconds have elapsed since the *first* attempt.
+3. `retry_timeout` does double duty: `Consul.set_retry_timeout()` also
+   sets the underlying HTTP client's own per-request read timeout to
+   `retry_timeout / 3.0` (`consul.py`'s `set_read_timeout`) — confirmed
+   directly against a captured log line: `retry_timeout=10` produced
+   exactly `read timeout=3.3333333333333335` in the wild.
+4. `Retry.__call__` (`utils.py`) checks the deadline **only between
+   attempts, not during one** — `if time.time() + sleeptime >=
+   self._cur_stoptime: raise RetryFailedError`. An in-flight attempt
+   that itself takes close to the full read-timeout can therefore
+   overshoot the nominal deadline by up to that attempt's own duration
+   before the check ever fires. This is the precise, source-confirmed
+   reason the "different" condition (whose attempts each cost a real
+   ~3.33s read-timeout) consistently ran slightly longer than the "own"
+   condition (whose DNS-resolution-failure attempts fail almost
+   instantly) in the original data above — not a guess, a direct
+   consequence of this exact code path.
+5. `RetryFailedError` propagates up to `Consul._load_cluster()`, which
+   catches *any* exception from the loader and re-raises as
+   `ConsulError` (a `DCSError` subclass) — `"Consul is not responding
+   properly"`.
+6. `ha.py`'s `run_cycle` catches `DCSError` and calls
+   `self._handle_dcs_error()` **immediately, same cycle, no further
+   wait** — which, if `state_handler.is_primary()`, logs `"demoting self
+   because DCS is not accessible and I was a leader"` and calls
+   `self.demote('offline')` right there.
+
+**The model this predicts**: total time from a Consul failure to
+self-demotion ≈ (up to `loop_wait`, for the next periodic cycle to
+actually attempt its DCS call) + (`retry_timeout`, for that one call's
+retry loop to exhaust its deadline, plus a small overshoot bounded by
+one attempt's duration). For the live config (`loop_wait: 10,
+retry_timeout: 10`), that predicts roughly 10–14s, broadly consistent
+with the ~17–19s actually observed (the gap is plausibly this project's
+external polling/log-capture overhead plus real per-cycle processing
+time not modeled above, not a contradiction of the mechanism).
+
+**Empirical confirmation: temporarily dropped both knobs to 3s each and
+re-ran all 6 trials.** Changed live via `patronictl edit-config -s
+loop_wait=3 -s retry_timeout=3 --force` (a DCS-managed dynamic setting —
+takes effect across the whole cluster without a Patroni restart,
+confirmed by checking `show-config` on a non-`patroni-1` node
+afterward), then restored to `10`/`10` once done.
+
+| Config | Condition | Run 1 | Run 2 | Run 3 | Average | `loop_wait + retry_timeout` | Ratio |
+|---|---|---|---|---|---|---|---|
+| 10 / 10 | own | 18.551s | 18.129s | 18.210s | 18.30s | 20s | 91.5% |
+| 10 / 10 | different | 19.921s | 18.987s | 19.329s | 19.41s | 20s | 97.1% |
+| 3 / 3 | own\* | 5.802s | 6.961s | 3.860s | 5.54s | 6s | 92.4% |
+| 3 / 3 | different | 8.018s | 6.608s | 3.827s | 6.15s | 6s | 102.5% |
+
+\* **This row's provenance is different from the other three, and that
+matters given what the "Correction" section earlier in this doc just
+found.** This run crashed before the script's own JSON writer ran — the
+exact "Consul is not responding properly on a fully healthy cluster"
+finding cited two paragraphs below — so these three numbers were
+reconstructed from printed console output, not written by the script
+the way every other number in this table was
+(`load-tests/results/self-demotion-timing-results-loopwait3-own.json`
+says so explicitly). Given this exact doc already found, once, a table
+that silently didn't match its own cited raw evidence, this row doesn't
+get a pass on the same discipline just because the underlying finding
+survives regardless. **Cross-checked (2026-09-02) against the actual
+`self-demotion-own-run{1,2,3}-patroni-2-loopwait3.log` files** — the
+only authoritative record from that crashed run — by computing each
+run's `demoting self` decision-line offset from the log directly and
+comparing it to the console-reported `demoted_at`: gaps of 1.120s,
+1.179s, and 1.181s respectively, matching the ~1–1.5s
+internal-decision-to-external-poll lag measured consistently across
+every other trial in this entire investigation, with the expected
+`last_false_before` < `demoting self` < `demoted_at` ordering holding
+in all three by plausible small margins (0.09–0.19s). The reconstructed
+numbers check out; they aren't just trusted on the strength of having
+been printed once.
+
+**The scaling holds cleanly at both configurations — total
+self-demotion time consistently lands at ~90–103% of `loop_wait +
+retry_timeout`, regardless of which specific 20-second or 6-second
+budget is configured.** This is the single most useful, actionable
+number from this whole investigation: **expect self-demotion to
+complete within roughly `loop_wait + retry_timeout` of the underlying
+Consul failure, for either failure shape** — a formula, not just an
+observed range specific to this deployment's current `10`/`10` values.
+At the smaller config, the two conditions' bands also overlap much more
+than at `10`/`10` (own: 3.86–6.96s vs different: 3.83–8.02s) — consistent
+with the "own vs different" gap being a roughly fixed, small,
+per-attempt-duration effect (see point 4 above) that becomes
+proportionally less visible at a smaller absolute scale, not a
+different mechanism at different scales.
+
+**A real, unplanned finding from the scaling experiment itself, worth
+flagging for anyone tempted to tune these knobs down for faster
+failover**: immediately after one of the `retry_timeout=3s` trials
+restored its killed agents, a completely routine `patronictl list` —
+no simulated failure at all — failed live with the exact same `"Consul
+is not responding properly"` / `ReadTimeoutError` chain traced above,
+before resolving on its own after roughly 15s of settle time. At
+`retry_timeout=10`, this never happened across any trial in this whole
+investigation. **A tight `retry_timeout` doesn't just make genuine
+failures self-demote faster — it also shrinks the margin for Consul's
+own normal consistent-read latency immediately after any disruption,
+including a disruption that has already resolved.** This app's actual
+`retry_timeout: 10` therefore isn't just "how fast we detect a real
+outage" — it's also load-bearing margin against false-positive
+self-demotion during normal, if elevated, post-disruption latency.
+Tuning it down for faster failover without re-testing for this exact
+side effect would trade a faster failover for a real risk of spurious
+self-demotion during otherwise-recoverable turbulence.
+
+**Operational runbook value — specific commands/log signatures for a
+future Consul-related outage, the concrete ask behind this whole
+retest**:
+- `docker compose exec patroni-1 patronictl -c /etc/patroni.yml
+  show-config | grep -E "loop_wait|retry_timeout|ttl"` — get the live
+  budget knobs first; expected worst-case self-demotion time is
+  `loop_wait + retry_timeout` from this same output, not a number to
+  memorize separately.
+- `docker compose logs -f <leader-service> | grep -i "retry got
+  exception"` — watch live retry attempts in real time during an actual
+  incident; the specific exception text tells you *which* failure mode
+  you're in without needing separate Consul-side diagnostics:
+  - `NameResolutionError` / `Failed to resolve` → the leader's own
+    paired Consul agent is unreachable (container down, network
+    partition to that specific agent) — a targeted, single-agent
+    problem.
+  - `ReadTimeoutError` followed by `500 Raft leader not found in server
+    lookup mapping` → the leader's own agent is up and answering, but
+    the *cluster* has no raft quorum — a cluster-wide Consul health
+    problem, not a single-agent problem.
+- `grep "Exceeded retry deadline\|Too many retry attempts"` — confirms
+  *why* the retry loop gave up (deadline exceeded is the expected path
+  given `max_tries=-1`; "too many retry attempts" would indicate a
+  different, unexpected code path worth investigating on its own).
+- `grep "demoting self because DCS is not accessible\|demoted self
+  because DCS is not accessible"` — the definitive, unambiguous signal
+  that self-demotion has started/completed; don't infer it from
+  `pg_is_in_recovery()` alone if the log is available, since the log
+  line precedes the externally-observable recovery-state flip by
+  roughly 1–1.5s (measured consistently across every trial in this
+  investigation).
+
+Raw evidence: Patroni source copied out via `docker compose cp` for
+direct reading (not re-included in this repo — read from the running
+container's own installed package, versioned by the pinned Patroni
+image); scaling-experiment results in
+`load-tests/results/self-demotion-timing-results-loopwait3-{own,different}.json`
+and their accompanying `*-loopwait3.log` DEBUG captures.
 
 **Two real bugs found while building this stage's test, both reported
 plainly rather than smoothed over:**
@@ -1125,10 +1463,13 @@ afterward."
 
 **Core safety verdict: still clean.** Consul correctly refused writes
 without quorum in all 3 additional runs, no unsafe self-promotion, and
-the original leader self-demoted every time (~10–12s) — consistent with
-the 3–15s range already established across the first Stage 6 pass and
-its paired-agent nuance. This re-run adds confirming data points; it
-doesn't change the verdict.
+the original leader self-demoted every time (~10–12s) — within the
+3000–10000ms range the corrected first Stage 6 pass actually showed
+(see the correction above; the originally-cited "paired-agent nuance"
+did not hold up and is retested separately below). This re-run adds
+confirming data points for the safety verdict; it doesn't speak to the
+self-demotion-timing mechanism question one way or the other, since
+which specific agent survived wasn't varied/recorded the same way here.
 
 **Traefik finding (new, correctly isolated as its own observation, not
 folded into the Postgres/Patroni safety verdict)**: during quorum loss,

@@ -144,7 +144,7 @@ Automated gates on load test runs are intentionally coarse — error rate
 it does needs a human watching Grafana while it runs, not a pass/fail gate
 pretending to replace that.
 
-## Test-infrastructure lesson: fixed sleeps racing unbounded readiness signals
+## Test-infrastructure lesson: fixed sleeps and coarse readiness checks racing unbounded readiness signals
 
 **Confirmed as a real, recurring category of test-script bug for this
 project (2026-08-28), not a one-off — three independent occurrences
@@ -204,6 +204,26 @@ post-recovery wait duration) and Scenario 1 (5s pre-send sleep — lower
 risk, since the script already treats `S1_FAIL` skeptically rather than
 asserting a blind pass on it). Both reviewed and closed as part of this
 same pass, not left as open questions.
+
+**A fourth instance, a different concrete shape of the same underlying
+discipline gap (2026-09-02)**: `postgres-consul-self-demotion-timing-
+test.py`'s inter-trial readiness check (docs/postgres-ha-scope.md's
+"Stage 6 self-demotion timing" retest) declared the cluster ready for
+the next trial as soon as `patronictl list` succeeded and showed *some*
+node as Leader — not confirming that specific node had actually
+finished its own recovery transition. This isn't a fixed sleep (the
+three prior instances above all were) — it's a readiness check trusting
+a coarse, stale-capable signal instead of the actual condition it stood
+in for — but it's the same failure shape this lesson exists to name:
+2 of 3 trials in one run measured a spurious ~0.24s "self-demotion" with
+no prior "still primary" sample at all, because the next trial's kill
+landed on a leader still mid-recovery from the *previous* trial. Fixed
+by additionally requiring the reported leader's own
+`pg_is_in_recovery()` to read `f` before proceeding. Broadening this
+lesson's statement accordingly: the risk isn't unique to `sleep N` —
+any readiness check (a sleep, a status query, a "did the command
+succeed" boolean) that doesn't confirm the *actual* condition it's
+meant to represent can race an asynchronous transition the same way.
 
 ## Test-infrastructure lesson: GNU-vs-BSD tooling assumptions in local chaos scripts
 
