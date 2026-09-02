@@ -51,6 +51,7 @@ echo "Meter: $METER_ID"
 banner "Baseline write (confirms pipeline healthy before the test)"
 curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost/api/v1/readings \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:00Z","value":1.111}'
 
 # kafka-2 currently leads all 3 partitions (a side effect of an earlier test in this session,
@@ -86,6 +87,7 @@ WRITE_START=$(now_ms)
 for i in $(seq 1 60); do
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 -X POST http://localhost/api/v1/readings \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
     -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:0'"$i"'Z","value":2.'"$i"'}')
   if [ "$HTTP_CODE" == "201" ]; then
     echo "First successful write returned HTTP 201 after $(( $(now_ms) - WRITE_START ))ms of retrying"

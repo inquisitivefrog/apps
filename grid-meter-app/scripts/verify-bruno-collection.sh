@@ -97,6 +97,7 @@ check "meters/Update Meter: status updated" "MAINTENANCE" "$updated_status"
 # --- readings/Ingest Reading ---
 ingest_response=$(curl -s -X POST "$API/readings" "${AUTH_HEADER[@]}" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -d "{\"meterId\":\"$meter_id\",\"readingTimestamp\":\"2026-01-01T12:00:00Z\",\"value\":42.5}")
 reading_id=$(extract_json_field "$ingest_response" id)
 reading_meter_id=$(extract_json_field "$ingest_response" meterId)
@@ -113,8 +114,19 @@ status=$(curl -s -o /dev/null -w '%{http_code}' "${AUTH_HEADER[@]}" "$API/readin
 check "readings/Search Readings: 200" 200 "$status"
 
 # --- readings/Get Reading ---
-get_reading_response=$(curl -s "${AUTH_HEADER[@]}" "$API/readings/$reading_id")
-returned_reading_id=$(extract_json_field "$get_reading_response" id)
+# POST /readings returns 201 before the async Kafka -> consumer -> Postgres write actually
+# lands (architecture.md's data flow), so this polls for the real condition (the row existing)
+# rather than assuming a fixed delay is enough -- same discipline as this project's Awaitility-
+# based Java tests (awaitPersisted helpers) and its standing "poll for the actual readiness
+# condition" testing-strategy.md lesson, applied here in plain curl since this script has no
+# Awaitility available.
+returned_reading_id=""
+for _ in $(seq 1 20); do
+  get_reading_response=$(curl -s "${AUTH_HEADER[@]}" "$API/readings/$reading_id")
+  returned_reading_id=$(extract_json_field "$get_reading_response" id)
+  [ "$returned_reading_id" = "$reading_id" ] && break
+  sleep 0.5
+done
 check "readings/Get Reading: id matches" "$reading_id" "$returned_reading_id"
 
 # --- readings/Reject PUT Reading (405) ---

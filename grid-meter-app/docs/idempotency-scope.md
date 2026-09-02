@@ -1,19 +1,25 @@
 # grid-meter-app — Idempotency scope: `POST /api/v1/readings`
 
-**Status (2026-09-02): implemented, live-verified, and fully closed —
-no remaining companion work.** Built exactly as designed below —
-required `Idempotency-Key` header, Redis fast path, DB constraint as
-the real guarantee — with 70/70 tests green and live confirmation
-against the real running stack that the two layers divide labor
-correctly (Redis caught the one live duplicate test before Kafka ever
-saw it). JMeter's 8 load-test plans, the one piece of companion work
-originally left deferred, are now fixed too — `${__UUID()}` added to
-each plan's shared `HeaderManager`, confirmed to re-evaluate per
-request (not once per thread, which would have silently defeated the
-fix), and live-verified via `smoke-test.sh` at 0.00% errors across all
-5 named profiles plus a direct run of `misconfigured-burst.jmx`. See
-"Implementation results" near the end of this doc for the full account,
-including an unrelated regression found and fixed along the way.
+**Status (2026-09-02): implemented and live-verified. Companion work was
+declared closed twice, and was wrong both times** — see "Implementation
+results" near the end of this doc for the full account, including two
+unrelated regressions found and fixed along the way. Built exactly as
+designed below — required `Idempotency-Key` header, Redis fast path, DB
+constraint as the real guarantee — with 70/70 tests green and live
+confirmation against the real running stack that the two layers divide
+labor correctly (Redis caught the one live duplicate test before Kafka
+ever saw it). JMeter's 5 load-test plans plus the shared `warmup.jmx`
+fragment got `${__UUID()}` added to their `HeaderManager`s and were
+live-verified via `smoke-test.sh` at 0.00% errors. **That first
+closure note was itself wrong**: it covered JMeter and Bruno — the two
+clients this doc's own design section named explicitly — but missed 6
+more shell scripts across `load-tests/` and `scripts/` that also POST
+directly to `/readings` and were never tracked as "clients of this
+endpoint" the way JMeter/Bruno were. Found only because actually
+running one of them (`load-tests/kafka-ha-demo.sh`, for an unrelated
+Kafka RTO fix) hit the `400` directly. All 6 are now fixed too — see
+"Implementation results" for the specific list and the general lesson
+this is worth taking away.
 
 **Earlier status, preserved for the record**: the motivating gap was
 independently reconfirmed before this was built. A Postgres Stage 7
@@ -336,8 +342,57 @@ introducing a new evaluation pattern. Live-verified via
 direct run of `misconfigured-burst.jmx` (which has its own
 self-contained `setUp` — login + provisioning — separate from the
 shared profiles) also clean. `load-tests/README.md` updated to document
-the new required header. **No companion work remains outstanding from
-this doc's scope.**
+the new required header.
+
+~~**No companion work remains outstanding from this doc's scope.**~~
+
+**Wrong (2026-09-02) — a second, larger gap in the same shape, found
+after this doc had already declared companion work closed twice.**
+While validating an unrelated Kafka RTO fix, running
+`load-tests/kafka-ha-demo.sh` hit an immediate `400` on its very first
+`POST /readings` call. A repo-wide `grep -rl "readings"` (not scoped to
+`load-tests/`, per a Chat review that asked directly whether the first,
+`load-tests/`-scoped sweep had actually been exhaustive) found **6 more
+scripts** that POST directly to `/readings` and had never been touched:
+`load-tests/kafka-ha-demo.sh`, `load-tests/kafka-acks-gap-repro.sh`,
+`load-tests/kafka-leader-failover-rto.sh`,
+`load-tests/postgres-app-primary-failure-test.sh`,
+`load-tests/redis-app-primary-failure-test.sh`, and
+`scripts/verify-bruno-collection.sh`. All 6 fixed the same way (a fresh
+`Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')`
+header per call site, matching Bruno's own pattern) and reconfirmed live
+— `kafka-ha-demo.sh` run twice end to end (all 3 scenarios, exit 0 both
+times) and `verify-bruno-collection.sh` run to a clean "All checks
+passed."
+
+**Worth naming precisely why this survived one whole closure pass
+already, since it's a real, generalizable gap-shape and not just a
+missed script**: the original companion-work sweep was scoped to
+*known, documented API clients* — JMeter and Bruno, the two named
+explicitly in this doc's own "Required, not optional" section above and
+in `load-tests/README.md`. These 6 scripts are ad hoc chaos/investigation
+tooling that accumulated across this project's whole HA testing effort
+without ever being tracked as "a client of `POST /readings`" in that
+same sense — nobody was maintaining a list they'd have been checked
+against. **A breaking API change's companion-work audit needs to be
+scoped to "everything in the repo that actually calls this endpoint"
+(a grep), not to "the clients we remember/have documented as clients"
+— those are different sets, and the gap between them is exactly where
+this hid, twice.** This is close kin to
+`docs/cross-project-lessons.md`'s existing entry about checking
+cross-pass references before retiring shared infrastructure (a change
+in one place, silent blast radius across scripts nobody was tracking as
+dependents) — same shape, a breaking API change instead of a retired
+container this time.
+
+**A second, unrelated bug caught fixing the first**:
+`scripts/verify-bruno-collection.sh`'s own `readings/Get Reading` check
+had no wait for the async Kafka→Postgres write before asserting —
+pre-existing, not something today's fix introduced, just surfaced by
+actually running the script rather than trusting the diff. Fixed with a
+poll loop (up to 20 × 0.5s) for the real condition, matching this
+project's own standing "poll for the actual readiness condition, don't
+assume a fixed delay" lesson (`docs/testing-strategy.md`).
 
 ## Explicitly deferred
 

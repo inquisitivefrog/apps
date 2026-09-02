@@ -163,6 +163,31 @@ node, or route through a mechanism — a load balancer, service discovery
 shared container or service, grep for its name across every other
 script/pass in the project, not just the one currently being worked on.
 
+**Same shape, different trigger: a breaking API-contract change's own
+"who else calls this" audit needs to be a grep across the whole repo,
+not a check against the endpoint's documented/remembered client list.**
+Making an existing endpoint's header/parameter required (an idempotency
+key on a POST endpoint) was closed out as "companion work done" after
+updating the two *documented* clients (a JMeter load-test suite, a
+Bruno API collection) — twice, in fact, the closure note was declared
+complete and was wrong both times. What actually broke: six ad hoc
+shell scripts, accumulated piecemeal across an unrelated multi-week HA
+testing effort, that also called the endpoint directly but had never
+been tracked as "a client of it" the way the two documented ones had.
+Found only because one of the six happened to get run for an unrelated
+reason and hit the new `400` directly — not because the audit caught
+it. The general rule: "which clients call this endpoint" and "which
+clients are we remembering/documenting as clients" are different sets
+whenever ad hoc scripts can call a shared endpoint directly, and a
+breaking-change audit that only checks the second set will look
+complete while missing real callers. Before declaring a breaking
+API/interface change's companion work finished, grep the whole repo for
+literal calls to it (a URL path, a function name, an RPC method) rather
+than working from a remembered or documented client list, and re-run
+that grep again before the *second* time you're tempted to declare it
+closed, too — closing it once wrong doesn't make the second closure
+trustworthy by default.
+
 **`grep -c PATTERN` exits non-zero when it finds zero matches, even
 though it still correctly prints `"0"` — a real trap under `set -e`/
 `pipefail`.** A count-based readiness check (`grep -c "^ip$"` counting

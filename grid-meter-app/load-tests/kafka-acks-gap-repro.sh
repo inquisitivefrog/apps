@@ -59,6 +59,7 @@ echo "$BEFORE"
 banner "Sending one baseline reading (value=100.001) to discover this meter's target partition"
 curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost/api/v1/readings \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:00Z","value":100.001}'
 sleep 2
 AFTER=$(partition_offsets)
@@ -96,6 +97,7 @@ banner "Sending the marked reading (value=999.999) while followers are down"
 SEND_START=$(python3 -c "import time; print(int(time.time()*1000))")
 HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 15 -X POST http://localhost/api/v1/readings \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:01Z","value":999.999}')
 SEND_END=$(python3 -c "import time; print(int(time.time()*1000))")
 SEND_MS=$(( SEND_END - SEND_START ))

@@ -132,6 +132,7 @@ send_requests_loop() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 -X POST http://localhost/api/v1/readings \
       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
       -d "{\"meterId\":\"$METER_ID\",\"readingTimestamp\":\"2026-09-01T00:01:${sec}Z\",\"value\":${i}.0}" \
       2>/dev/null || echo "000")
     code="${code: -3}"

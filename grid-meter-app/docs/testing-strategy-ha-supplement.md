@@ -485,7 +485,12 @@ largely tested; see below per-scenario.**
   This is the test that validates real fault tolerance, not just
   replication existing on paper. **Status: done (2026-09-02), 3/3 valid
   runs — superseding an earlier, incomplete single-run write-up of this
-  same fix.** The original gap (`kafka-ha-demo.sh` Scenario 1 stopping
+  same fix. Its RTO-variance finding below was itself retested
+  (2026-09-02) and substantially revised: the leading "controller
+  failover" hypothesis was refuted, and most of the original variance
+  turned out to be the test harness's own JVM-spawn overhead, not a
+  Kafka-internal mechanism — see "RTO variance retest" below for the
+  full account.** The original gap (`kafka-ha-demo.sh` Scenario 1 stopping
   `kafka-2` unconditionally regardless of whether it actually led any
   partition the test's traffic used, and never measuring real RTO — just
   assuming a fixed 5-second sleep was enough) is closed. With 3
@@ -551,6 +556,286 @@ largely tested; see below per-scenario.**
   stage didn't build. This is the first real, trustworthy
   time-to-new-leader number this test has ever produced; the original
   Scenario 1 never measured one at all.
+
+  **RTO variance retest (2026-09-02): the leading hypothesis (KRaft
+  controller failover) is refuted — and the real explanation for most
+  of the original variance turned out to be the test harness itself,
+  not Kafka.** Chat proposed a specific, testable mechanism: a
+  partition-only leader reassignment is fast because the controller
+  already has fresh metadata, but if the killed broker was *also* the
+  active KRaft controller, that failure triggers controller failover
+  (a Raft-quorum re-election among the 3 voters) before the partition
+  election can even proceed — plausibly explaining a multi-second gap
+  hiding inside one measured "RTO" number.
+
+  Built `load-tests/kafka-controller-failover-rto-test.py` to test this
+  directly: per trial, check the live KRaft controller
+  (`kafka-metadata-quorum.sh describe --status`) and the per-partition
+  leader map (`kafka-topics.sh --describe`), pick a partition whose
+  leader either is or isn't the current controller (both occur
+  naturally given this cluster's steady-state ~1-partition-per-broker
+  leadership spread), kill that broker, and read the actual election
+  timestamp from TRACE-level `controller.log`
+  (`docker-compose.kafka-debug.yml`, the same overlay built during the
+  unclean-election investigation) rather than inferring it from an
+  external poll.
+
+  **A serious measurement bug found before trusting the first full
+  run**: the obvious way to poll for "has a new leader been elected
+  yet" is calling `kafka-topics.sh --describe` in a loop — which is
+  exactly what both this new script's first draft *and* the original
+  `kafka-ha-demo.sh` Scenario 1 do. Timed directly: **a single
+  `kafka-topics.sh` invocation costs ~0.96s, almost entirely JVM
+  startup**, not the Kafka round-trip itself. `kafka-ha-demo.sh`'s
+  polling loop (`for i in $(seq 1 60); do CUR=$(find_leader ...); ...;
+  sleep 0.5; done`) therefore actually polls at roughly a 1.5s cadence
+  (0.96s call + 0.5s sleep), not the apparent 0.5s — meaning the
+  original 3713ms/14028ms/15476ms figures are best read as "however
+  many ~1.5s-costly iterations it took to notice the change," not a
+  continuous, fine-grained measurement of anything Kafka-internal. This
+  is the same category of bug as the Postgres self-demotion
+  investigation's whole-second `SECONDS`-builtin quantization
+  (`docs/postgres-ha-scope.md`) — a coarse instrument masquerading as
+  fine-grained — just a variable-cost-per-iteration version rather than
+  a fixed quantization, which is exactly why it went unnoticed until
+  someone timed a single call directly instead of trusting the loop's
+  apparent resolution. Also found and fixed a second, smaller instance
+  of a named pattern from this same doc's own history: this new
+  script's `get_controller()` initially hardcoded its query target to
+  `kafka-1`, the identical "monitoring helper's own hardcoded query
+  target" mistake as this Scenario's original bug 1 above, and it broke
+  for the identical reason (failing exactly when `kafka-1` is the
+  broker just killed).
+
+  Rebuilt the measurement around tailing `controller.log` directly
+  (`docker compose exec kafka-N tail -c +OFFSET -f ...`, matching the
+  `--since`-anchored live-tail approach already proven in the Postgres
+  self-demotion script) and reading the actual
+  `partition change for readings-N ... leader: OLD -> NEW` line's own
+  timestamp — a real internal-decision measurement, not a polling
+  artifact.
+
+  ~~| Condition | Run 1 | Run 2 | Run 3 | Internal RTO band |
+  |---|---|---|---|---|
+  | Controller killed | 0.612s | 0.612s | 0.616s | 0.612–0.616s |
+  | Non-controller killed | 0.616s | 0.619s | 0.662s | 0.616–0.662s |~~
+
+  **Correction (2026-09-02): this table was itself wrong, found by a
+  Chat review that refused to accept "topology variance" as an
+  explanation for a 5x discrepancy against `kafka-ha-demo.sh`'s own
+  production measurements (0.155s/0.115s) and insisted on the raw
+  evidence instead.** The investigation script above had its own
+  measurement bug — the same *category* of bug this whole stage was
+  built to eliminate (a clock started at the wrong moment), just one
+  level subtler than the JVM-per-call cost already found and fixed.
+  `run_trial()` captured **two separate timestamps**: `kill_dt`, taken
+  immediately on entering the function — *before* starting the two
+  tail-watcher processes (each a `docker-exec`-based `get_log_size()`
+  call plus a `Popen` spawn) and *before* an explicit `time.sleep(0.3)`
+  — and `kill_wall_time`, taken correctly immediately before the real
+  `docker compose stop`. The primary RTO calculation was passed the
+  early, wrong one (`kill_dt`); `kill_wall_time` was computed correctly
+  but only ever used for the secondary `external_confirm_s` metric.
+
+  **A second review pass caught a real overclaim in how this fix was
+  first reported, worth recording precisely rather than quietly
+  correcting**: the first write-up said the gap was "measured directly
+  at ~250ms for the tail-setup alone," but that figure actually came
+  from timing a *different* script's own setup phase
+  (`kafka-partition-rto.py`'s `main()`-to-tails-attached window), not
+  this function's own `kill_dt`-to-`kill_wall_time` gap — an isolated
+  component estimate presented as if it were the measured total. A
+  bare `time.sleep(0.3)` alone is already 300ms of that figure; the
+  two `Popen` spawns for the surviving brokers' `tail -f` processes
+  plausibly add more on top (this exact investigation already
+  established that `docker exec`/JVM-adjacent calls are not free — the
+  `kafka-topics.sh` ~0.96s finding above is the direct precedent) — so
+  ~250ms was never going to fully account for a ~460–550ms observed
+  gap, and calling it "essentially the entire gap" wasn't yet earned by
+  what had actually been measured. **Instrumented the real thing
+  directly** (a temporary diagnostic printing the elapsed time from
+  the exact point `kill_dt` used to be captured to where
+  `kill_wall_time` is captured now, in this same function, not a
+  proxy): **0.471s, 0.474s, 0.475s, 0.483s, 0.471s, 0.471s** across 6
+  trials — a tight band, and it matches the per-run difference between
+  the old buggy bands and the corrected ones below (0.457–0.548s,
+  computed run-by-run) closely enough to close the arithmetic for real
+  this time, not merely plausibly.
+
+  Fixed by removing the early timestamp entirely and using the single,
+  correctly-timed `kill_wall_time` (converted to the same
+  timezone-aware `datetime` the log-matching code needs) for the actual
+  RTO calculation. Re-ran the full 3×3 with the fix, twice — the second
+  pass is also where the elapsed-time diagnostic above was measured,
+  so both the fix and its own explanation share the same evidence:
+
+  | Condition | Pass 1: Run 1 | Run 2 | Run 3 | Pass 2: Run 1 | Run 2 | Run 3 | Internal RTO band (n=6) |
+  |---|---|---|---|---|---|---|---|
+  | Controller killed | 0.155s | 0.138s | 0.142s | 0.167s | 0.151s | 0.153s | 0.138–0.167s |
+  | Non-controller killed | 0.143s | 0.115s | 0.114s | 0.112s | 0.110s | 0.106s | 0.106–0.143s |
+
+  **This directly cross-validates against `kafka-ha-demo.sh`'s own
+  production measurements, not just against itself.** Three real
+  `kafka-ha-demo.sh` Scenario 1 runs exist in total: `0.155s` and
+  `0.115s` from before controller-identity reporting was added to that
+  script (their condition isn't known — reported honestly as unknown
+  rather than assumed), and `0.119s` from the run immediately after,
+  which explicitly confirmed and printed `killed broker was the active
+  controller: no` (non-controller condition). All three values —
+  `0.155s`, `0.115s`, `0.119s` — fall inside or immediately adjacent to
+  the corrected bands above (controller 0.138–0.167s, non-controller
+  0.106–0.143s), and the one run with a confirmed condition lands
+  exactly inside its matching band. The investigation script's bug was
+  real and the production port (`kafka-partition-rto.py`) was correct
+  all along — confirmed by checking the actual numbers and the actual
+  condition against each other, not by assuming either script was
+  right.
+
+  **Verdict: refuted, and now on solid footing.** The two conditions
+  remain statistically indistinguishable — 0.138–0.167s vs.
+  0.106–0.143s overlap directly — just at roughly a tenth the
+  previously-reported (and now known-wrong) absolute scale. Whether the
+  killed broker was the active KRaft controller has no measurable
+  effect on the real partition-reassignment decision time in this
+  3-broker cluster. The original variance (3.7s vs. 14–15.5s) reflects
+  neither this mechanism nor, it turns out, a mechanism worth ~0.6s
+  either — most of it was the test harness's own JVM-spawn cost in the
+  original script, compounded by this investigation's own early-clock
+  bug in its own retest, both now found and fixed in turn.
+
+  **The secondary finding is upgraded from "single-sample, not yet
+  confirmed" to a real, now three-times-replicated result** (12 total
+  trials across the two corrected RTO passes plus the original
+  RTO-buggy-but-`external_confirm_s`-clean pass, since this metric
+  always used `kill_wall_time` and was never affected by the timing
+  bug above): controller-killed
+  `external_confirm_s` — pass 1 (original): 4.137s / 13.927s / 6.668s;
+  pass 2 (corrected RTO, first run): 13.764s / 13.965s / 14.952s;
+  pass 3 (corrected RTO, second run, the same pass the elapsed-time
+  diagnostic above came from): 12.407s / 6.757s / 12.301s. Non-controller-killed,
+  same three passes: 3.801s / 3.741s / 3.737s; 3.712s / 3.788s / 3.816s;
+  3.997s / 3.721s / 3.804s. **Every single controller-killed sample
+  (9 of 9) exceeds every single non-controller-killed sample (9 of 9)**
+  — the non-controller band is consistently tight (3.71–4.00s across
+  all three passes), while the controller band is wider and more
+  variable (4.14–14.95s) but never once dips into non-controller range.
+  Three independent passes showing the same non-overlapping ordering,
+  even with real variability in the controller band's own width, is
+  stronger confirmation than this project's usual three-repeat bar
+  asks for on a single pass. This is
+  strong, replicated evidence that the internal decision (~0.14s,
+  statistically identical either way) and how quickly that decision
+  becomes visible to a *freshly bootstrapping* client are genuinely
+  separate things — the second one, plausibly because other brokers'
+  local metadata caches need to sync with a brand-new controller rather
+  than merely receive a forwarded update from an already-stable one,
+  carries a real, ~4x, controller-identity-correlated cost. Not the
+  mechanism originally proposed (that was about the internal election,
+  now shown equally fast either way), but a genuine, now properly
+  confirmed one all the same.
+
+  **On Chat's ordered follow-up candidates (ISR catch-up lag, then
+  GC-pause noise, only if controller identity didn't explain it)**:
+  still neither has been tested. Controller identity didn't explain the
+  *internal* mechanism, but it wasn't a dead end either — it surfaced a
+  different, now well-confirmed correlation (external visibility)
+  instead. ISR catch-up lag and GC-pause noise remain open, untested
+  candidates for whatever drives the external-visibility split
+  specifically, not the original internal-RTO question, which this
+  stage now closes twice over — once on the mechanism, once on trusting
+  the numbers that closed it.
+
+  Raw evidence: `load-tests/kafka-controller-failover-rto-test.py`;
+  `load-tests/results/kafka-controller-failover-rto-results.json` and
+  its per-trial `controller.log` slices (pass 2/corrected only — this
+  fixed filename scheme meant re-running the script a second time for
+  the elapsed-time diagnostic silently overwrote pass 1's raw log
+  files with pass 1's own condition/run numbering; pass 1's numbers
+  survive only as the quoted terminal transcript above, not as
+  separately archived files — worth naming as a real gap in this
+  investigation's own archival discipline, not glossed over just
+  because the numbers themselves were already captured in prose);
+  `load-tests/results/*-BUGGY-early-kill-dt*`
+  and `load-tests/results/*-CONTAMINATED-jvm-poll-overhead*` (both
+  earlier, wrong full runs, kept and clearly labeled rather than
+  deleted, as the evidence for their respective measurement-bug
+  findings); `load-tests/results/kafka-ha-demo-scenario1-*/` (one
+  archived production run — the `0.119s` one, run after this evidence
+  archival was added to the script; the earlier `0.155s`/`0.115s`
+  production runs predate it and survive only in this doc's own prose,
+  same archival gap named above); per-trial `controller.log` slices
+  alongside the investigation results.
+
+  **The fix was carried back into `kafka-ha-demo.sh` itself, not left in
+  the disposable investigation script (2026-09-02, flagged by a Chat
+  review before this was considered done)**: the finding above is about
+  the *actual production test script* — the one that runs on every
+  normal invocation, not a one-off — so leaving it unfixed would have
+  meant every future run kept producing the same kind of misleading
+  numbers this investigation just spent real effort explaining. New
+  `load-tests/kafka-partition-rto.py`, a reusable version of the
+  investigation script's log-tail measurement (same technique, generalized
+  into a small CLI: watches the surviving brokers' `controller.log` for
+  the specific partition's leader-change decision and reports RTO from
+  that timestamp). `kafka-ha-demo.sh`'s Scenario 1 now calls it instead
+  of the JVM-cost-dominated `kafka-topics.sh` polling loop.
+
+  **The debug overlay is a required, hard-checked prerequisite for
+  Scenario 1, not documented-but-skippable** — deliberately stricter
+  than the unclean-election scripts' own precedent (which treat it as
+  optional/best-effort evidence on top of an otherwise-valid test),
+  because here the log-based read *is* the measurement itself, not
+  bonus context. A check at the very top of Scenario 1 greps the live
+  `log4j2.yaml` for `org.apache.kafka.controller` at `DEBUG`/`TRACE`
+  and `exit 1`s with the exact command to fix it if not — before the
+  scenario disturbs anything (the canary write, the kill) — rather than
+  silently falling back to the old, misleading polling method.
+  `kafka-partition-rto.py` carries an identical check of its own as a
+  second line of defense. This was a real decision point, not an
+  afterthought: the alternative (permanently raising the stock,
+  always-on Kafka logging config to avoid needing the overlay at all)
+  was considered and explicitly declined, matching this project's own
+  minimal-scope ethos already applied elsewhere (the outbox pattern
+  built, measured, and retired rather than kept "just in case";
+  observability-only tenancy instead of full isolation) — a capability
+  this rarely needed doesn't justify a permanent production-adjacent
+  config change.
+
+  **Two real bugs found getting this working end to end, both fixed
+  before trusting the result:**
+  1. **A timing-direction bug**: the kill-instant signal was originally
+     written to the handoff file *after* `docker compose stop` returned,
+     not before issuing it — producing a genuinely negative measured RTO
+     (`-2.804s`) on the first real run. Root cause: Kafka's own
+     SIGTERM-triggered controlled shutdown can relinquish partition
+     leadership *while* `docker compose stop` is still waiting for the
+     container to fully exit, so the real decision can be logged before
+     the stop command ever returns. Fixed by writing the signal
+     immediately before issuing the stop, matching the investigation
+     script's own correct ordering (`kill_wall_time = time.time()`
+     captured right before `docker compose stop`, not after).
+  2. **A stale-variable bug in the final results summary**: after
+     renaming the RTO variable from `RTO_MS` to `RTO_S` throughout the
+     scenario, one reference in the script's own end-of-run "Results"
+     section was missed, so a fully correct `0.155s` measurement mid-run
+     still printed `measured RTO: N/Ams` in the final summary — the
+     exact kind of thing that's easy to miss without actually running
+     the script to completion rather than trusting the diff. Both fixed
+     and reconfirmed via two full end-to-end runs (`0.155s` and
+     `0.115s`), including the corrected final summary line.
+
+  **A separate, unrelated regression caught and fixed along the way**:
+  this session's earlier idempotency-key work
+  (`docs/idempotency-scope.md`) made `Idempotency-Key` a required header
+  on `POST /readings`, and every load-tests `.sh` script that posts
+  readings directly (not through JMeter/Bruno, which were already fixed)
+  had been missed — `kafka-ha-demo.sh`, `kafka-acks-gap-repro.sh`,
+  `kafka-leader-failover-rto.sh`, `postgres-app-primary-failure-test.sh`,
+  and `redis-app-primary-failure-test.sh` would all have started failing
+  with `400`s on their very next run. Found only because actually running
+  `kafka-ha-demo.sh` to validate this fix hit it directly. Fixed across
+  all 8 call sites in all 5 scripts, not just the one that happened to be
+  under test.
 
   **Scenario 2's own result, now trustworthy for the first time since
   it was pointed at a live target**: confirms real data loss when the

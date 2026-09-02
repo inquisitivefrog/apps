@@ -20,7 +20,21 @@
 # load-tests/ scripts' visual-evidence convention, not an oversight.
 #
 # Prerequisites: full stack up (docker compose up -d) with the 3-broker Kafka cluster already
-# applied (docker-compose.yml's kafka-1/kafka-2/kafka-3 -- see docs/ha-scope.md).
+# applied (docker-compose.yml's kafka-1/kafka-2/kafka-3 -- see docs/ha-scope.md). Scenario 1's RTO
+# measurement ALSO requires the kafka-debug overlay to be up first:
+#   docker compose -f docker-compose.yml -f docker-compose.kafka-debug.yml up -d
+# -- required, not optional, since 2026-09-02 (see docs/testing-strategy-ha-supplement.md's "RTO
+# variance retest"): the previous kafka-topics.sh-polling-based measurement was found to mostly
+# reflect the test harness's own ~1s-per-call JVM startup cost, not real Kafka election time.
+# Scenario 1 now reads the actual election decision from TRACE-level controller.log instead
+# (load-tests/kafka-partition-rto.py) and fails fast with a clear message if that logging isn't
+# active, rather than silently falling back to the imprecise method it replaces. NOTE: bringing
+# the debug overlay up recreates all 3 Kafka broker containers, which have no persistent volume in
+# this compose setup -- this wipes topic data and requires the api service to be restarted
+# afterward to recreate the readings topic with its real 3-partition/RF-3 config (auto-topic-
+# creation otherwise produces a 1-partition topic that defeats this scenario's whole purpose):
+#   docker compose -f docker-compose.yml -f docker-compose.kafka-debug.yml up -d
+#   docker compose restart api
 #
 # Usage: load-tests/kafka-ha-demo.sh
 set -uo pipefail
@@ -55,6 +69,7 @@ send_readings() {
     local sec; sec=$(printf "%02d" $((i % 60)))
     code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 -X POST http://localhost/api/v1/readings \
       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+      -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
       -d "{\"meterId\":\"$meter_id\",\"readingTimestamp\":\"2026-08-28T00:01:${sec}Z\",\"value\":${i}.0}")
     if [ "$code" = "201" ]; then
       SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
@@ -98,6 +113,20 @@ banner "Baseline cluster state (all 3 brokers up)"
 cluster_state
 
 banner "SCENARIO 1: Tolerate the ACTUAL partition leader's loss (dynamically determined, real RTO measured)"
+# Fail fast, before disturbing anything, if the debug overlay isn't active -- required since
+# 2026-09-02 for real RTO measurement (see this script's own prerequisites comment up top and
+# docs/testing-strategy-ha-supplement.md's "RTO variance retest"). Checked directly against the
+# live config rather than assumed, matching this project's own standing discipline.
+if ! docker compose exec -T kafka-1 grep -A1 '"org.apache.kafka.controller"' /opt/kafka/config/log4j2.yaml 2>/dev/null \
+    | grep -q 'DEBUG\|TRACE'; then
+  echo "!!! kafka-debug overlay not active on kafka-1 -- Scenario 1's RTO measurement requires it" >&2
+  echo "    (org.apache.kafka.controller must be at DEBUG or TRACE level). Bring it up first:" >&2
+  echo "      docker compose -f docker-compose.yml -f docker-compose.kafka-debug.yml up -d" >&2
+  echo "      docker compose restart api   # recreates the readings topic with 3 partitions/RF 3 --" >&2
+  echo "      # the overlay wipes broker data (no persistent Kafka volume in this compose setup)" >&2
+  echo "    See this script's own header comment for the full explanation." >&2
+  exit 1
+fi
 echo "docs/testing-strategy-ha-supplement.md flagged this as still open: the original version of"
 echo "this scenario stopped kafka-2 unconditionally, regardless of whether kafka-2 actually led any"
 echo "partition this test's traffic uses -- with 3 partitions spread across all 3 brokers (each"
@@ -112,6 +141,7 @@ BEFORE_OFFSETS=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-get-offsets
   --bootstrap-server localhost:9092 --topic readings --time -1 2>&1)
 CANARY_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 10 -X POST http://localhost/api/v1/readings \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -d "{\"meterId\":\"$METER_ID\",\"readingTimestamp\":\"2026-08-28T00:00:00Z\",\"value\":0.0}")
 echo "Canary reading HTTP status: $CANARY_CODE"
 sleep 2
@@ -149,6 +179,20 @@ if [ -z "$OLD_LEADER" ]; then
 fi
 echo "Current leader of partition $TARGET_PARTITION: broker $OLD_LEADER (kafka-$OLD_LEADER)"
 
+# Reported explicitly, not left implicit -- this is the exact variable
+# docs/testing-strategy-ha-supplement.md's "RTO variance retest" was built around (whether the
+# killed broker was also the active KRaft controller), and a Chat review correctly flagged that
+# this script's own RTO runs weren't reporting it, making it impossible to tell which of the two
+# investigated conditions a given kafka-ha-demo.sh run actually measured.
+ACTIVE_CONTROLLER=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-metadata-quorum.sh \
+  --bootstrap-server localhost:9092 describe --status 2>&1 | grep -o "LeaderId:[[:space:]]*[0-9]*" | grep -o '[0-9]*$')
+if [ "$ACTIVE_CONTROLLER" = "$OLD_LEADER" ]; then
+  WAS_CONTROLLER="yes"
+else
+  WAS_CONTROLLER="no"
+fi
+echo "Active KRaft controller before the kill: broker $ACTIVE_CONTROLLER -- killed broker IS the controller: $WAS_CONTROLLER"
+
 # Whichever broker we're about to kill can't also be queried for state afterward -- pick a witness
 # that's guaranteed to survive (mirrors the same witness pattern already used in
 # load-tests/postgres-primary-failure-test.sh for the identical reason).
@@ -159,38 +203,66 @@ esac
 echo "Witness broker for state queries during the outage (guaranteed to survive): $WITNESS"
 
 echo
-echo "Killing kafka-$OLD_LEADER -- the broker THIS test's traffic actually depends on, not an"
-echo "assumed one -- and measuring real RTO (polling for a new leader) concurrently with sending"
-echo "traffic, so some of it genuinely spans the live election window rather than only running"
-echo "after recovery is already confirmed."
-T0_MS=$(( $(date +%s%N) / 1000000 ))
-docker compose stop "kafka-$OLD_LEADER"
-
-RTO_FILE=$(mktemp)
-(
-  for i in $(seq 1 60); do
-    CUR=$(find_leader "$TARGET_PARTITION" "$WITNESS")
-    if [ -n "$CUR" ] && [ "$CUR" != "$OLD_LEADER" ] && [ "$CUR" != "-1" ]; then
-      T1_MS=$(( $(date +%s%N) / 1000000 ))
-      echo "$CUR $((T1_MS - T0_MS))" > "$RTO_FILE"
-      exit 0
-    fi
-    sleep 0.5
-  done
-  echo "NONE 0" > "$RTO_FILE"
-) &
+echo "Starting the RTO watcher (load-tests/kafka-partition-rto.py) before the kill, so it can"
+echo "snapshot log offsets and attach its tails first -- it reads the controller's own decision"
+echo "timestamp from TRACE-level controller.log, not a kafka-topics.sh polling loop (see"
+echo "docs/testing-strategy-ha-supplement.md's 'RTO variance retest' for why the old polling"
+echo "method mostly measured its own ~1s-per-call JVM startup cost, not real Kafka election time)."
+RTO_OUT=$(mktemp)
+RTO_ERR=$(mktemp)
+SIGNAL_FILE=$(mktemp)
+python3 load-tests/kafka-partition-rto.py "$TARGET_PARTITION" "$OLD_LEADER" "$SIGNAL_FILE" \
+  --timeout 30 > "$RTO_OUT" 2> "$RTO_ERR" &
 RTO_PID=$!
+sleep 1
+
+echo
+echo "Killing kafka-$OLD_LEADER -- the broker THIS test's traffic actually depends on, not an"
+echo "assumed one -- and measuring real RTO concurrently with sending traffic, so some of it"
+echo "genuinely spans the live election window rather than only running after recovery is"
+echo "already confirmed."
+# Signal instant is written BEFORE `docker compose stop`, not after it returns -- found live
+# (2026-09-02) that writing it afterward produced a NEGATIVE measured RTO: Kafka's own
+# SIGTERM-triggered controlled shutdown can relinquish leadership WHILE `docker compose stop`
+# is still waiting for the container to fully exit, so the real decision can be logged before
+# the stop command ever returns. Deliberately python's own clock here, not bash `date +%3N` --
+# this Mac's BSD `date` silently misparses that field-width modifier (see
+# docs/testing-strategy.md's GNU-vs-BSD lesson).
+python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).isoformat())" \
+  > "$SIGNAL_FILE"
+KILL_ISO=$(cat "$SIGNAL_FILE")
+echo "Kill instant recorded as: $KILL_ISO"
+docker compose stop "kafka-$OLD_LEADER"
 
 send_readings 20 "$METER_ID"
 S1_SUCCESS=$SUCCESS_COUNT; S1_FAIL=$FAIL_COUNT
 
 wait "$RTO_PID"
-read -r NEW_LEADER RTO_MS < "$RTO_FILE"
-rm -f "$RTO_FILE"
+read -r NEW_LEADER RTO_S < "$RTO_OUT"
+cat "$RTO_ERR" >&2
+# Archived, not discarded via rm -f -- a Chat review correctly pushed back on trusting a
+# surprising RTO number (0.1-0.15s, well below the ~0.6s the controlled investigation found in
+# either of its conditions) without the raw evidence to check it against. mkdir -p is safe to
+# call every run; the timestamp in the filename keeps repeated runs from overwriting each other.
+EVIDENCE_DIR="load-tests/results/kafka-ha-demo-scenario1-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$EVIDENCE_DIR"
+cp "$RTO_OUT" "$EVIDENCE_DIR/rto-stdout.txt"
+cp "$RTO_ERR" "$EVIDENCE_DIR/rto-stderr-matched-line.txt"
+echo "$KILL_ISO" > "$EVIDENCE_DIR/kill-instant.txt"
+{
+  echo "target_partition=$TARGET_PARTITION"
+  echo "old_leader=kafka-$OLD_LEADER"
+  echo "active_controller_before_kill=kafka-$ACTIVE_CONTROLLER"
+  echo "was_controller=$WAS_CONTROLLER"
+  echo "new_leader=kafka-$NEW_LEADER"
+  echo "rto_s=$RTO_S"
+} > "$EVIDENCE_DIR/summary.txt"
+echo "Scenario 1 evidence archived to $EVIDENCE_DIR"
+rm -f "$RTO_OUT" "$RTO_ERR" "$SIGNAL_FILE"
 if [ "$NEW_LEADER" = "NONE" ]; then
   echo "!!! No new leader elected for partition $TARGET_PARTITION within 30s -- real finding, not a timing artifact" >&2
 else
-  echo "New leader of partition $TARGET_PARTITION: broker $NEW_LEADER -- measured RTO: ${RTO_MS}ms (real, polled -- not assumed)"
+  echo "New leader of partition $TARGET_PARTITION: broker $NEW_LEADER -- measured RTO: ${RTO_S}s (from the controller's own decision-log timestamp, not polled) -- killed broker was the active controller: $WAS_CONTROLLER"
 fi
 
 echo "--- cluster state with kafka-$OLD_LEADER down ---"
@@ -301,7 +373,7 @@ done
 
 banner "Results"
 echo "Scenario 1 (actual partition leader loss, partition $TARGET_PARTITION, kafka-$OLD_LEADER -> ${NEW_LEADER:-none}):"
-echo "  $S1_SUCCESS succeeded, $S1_FAIL failed (of $((S1_SUCCESS + S1_FAIL))); measured RTO: ${RTO_MS:-N/A}ms"
+echo "  $S1_SUCCESS succeeded, $S1_FAIL failed (of $((S1_SUCCESS + S1_FAIL))); measured RTO: ${RTO_S:-N/A}s"
 [ "$S1_FAIL" -eq 0 ] && echo "  PASS: zero impact from the actual leader's loss, as RF=3 promises." \
   || echo "  Some failures during the actual leader's loss -- worth investigating, not automatically a bug (see script header)."
 echo "Scenario 2 (two-broker quorum loss, ${QUORUM_LOSS_SECONDS}s):"

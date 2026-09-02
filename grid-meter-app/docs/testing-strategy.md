@@ -225,6 +225,43 @@ any readiness check (a sleep, a status query, a "did the command
 succeed" boolean) that doesn't confirm the *actual* condition it's
 meant to represent can race an asynchronous transition the same way.
 
+## Test-infrastructure lesson: a polling loop's own per-call cost can dominate the measurement it's trying to take
+
+**Found 2026-09-02, retesting the Kafka RTO variance finding above.** A
+polling loop's *apparent* resolution is whatever `sleep` interval is
+written in the code — but if the thing being called each iteration is
+itself slow, the *real* cadence is `call cost + sleep`, and a fast
+`sleep` gives a false sense of precision the loop never actually had.
+`kafka-ha-demo.sh`'s Scenario 1 RTO measurement (and this retest's own
+first-draft script) both polled for a new partition leader by calling
+`kafka-topics.sh --describe` in a loop with a 0.5s sleep between calls —
+timed directly, a single such call costs **~0.96s, almost entirely JVM
+startup**, meaning the loop's real cadence was ~1.5s, not 0.5s. The
+original 3713ms/14028ms/15476ms RTO figures this produced are better
+read as "however many ~1.5s-costly iterations it took to notice the
+change" than a continuous measurement of anything Kafka-internal —
+confirmed by rebuilding the measurement around a live log-tail (reading
+the actual internal decision's own timestamp, no polling loop at all)
+and finding both conditions land in an identical, tight ~0.6s band, far
+below and far tighter than the original spread.
+
+**The general shape, worth naming precisely since it's subtly different
+from this doc's sibling lessons above**: those are about a readiness
+*check* trusting a stale or coarse signal instead of confirming the
+real condition. This one is about the *instrument itself* — the thing
+doing the checking — being expensive enough that its own cost, not the
+event being measured, dominates the number that comes out. A `sleep 0.5`
+between iterations looks precise on the page; it says nothing about
+whether the call in between it is cheap. **Standing guidance**: before
+trusting any polling-loop-based timing measurement in this project's
+test scripts, time a single iteration of whatever's being called in the
+loop body in isolation. If that cost is not small relative to the
+sleep interval, the loop isn't measuring at the resolution its code
+implies, and the fix is either a cheaper call (a live log tail, a
+persistent client connection, a lighter-weight query) or explicitly
+reporting the real per-iteration cost alongside the result rather than
+implying more precision than the loop actually has.
+
 ## Test-infrastructure lesson: GNU-vs-BSD tooling assumptions in local chaos scripts
 
 **A third named, recurring category of test-script bug for this project
