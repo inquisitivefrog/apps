@@ -2170,6 +2170,37 @@ leader, both correctly reported the real partition count, both measured
 a real RTO (~3.7–3.9s) and confirmed durability through the Traefik-
 routed query fixed earlier in this same pass.
 
+**`kafka-acks-gap-repro.sh`'s live-firing `KAFKA_BIN=kafka-1` hardcode —
+fixed and live-verified (2026-09-03), same day.** Flagged as
+Category B during the sweep, then confirmed to fire for real during
+this pass's own Category C item 1 verification run (`describe_topic()`
+returned "service 'kafka-1' is not running" at the exact moment
+`kafka-1` was one of two followers this script's own scenario had just
+stopped). Unlike `kafka-leader-failover-rto.sh`'s single hardcoded
+target, this script stops *both* followers and (later) the leader at
+different points in the same run, so no single fixed exec target is
+ever safe throughout. Fixed by reusing `kafka-unclean-election-KAFKA-19148.sh`'s
+own already-proven `kafka_exec()` helper verbatim (a sibling script
+with the identical "every broker gets stopped at some point" shape):
+picks whichever broker Compose currently reports running, not a fixed
+one. **Verified with two full, clean runs** — deliberately launched as
+a background command from the start for the second one, after the
+first was force-migrated to background mid-run past the tool's
+foreground timeout and this project's own standing lesson
+(`docs/cross-project-lessons.md`) flagged that as a real corruption
+risk worth avoiding, not just tolerating. Both runs genuinely exercised
+the failure scenario (`kafka-1` was one of the two stopped followers in
+both), both completed cleanly with no "service is not running" error
+anywhere, and both confirmed write durability (`1`) through the
+Traefik-routed query fixed earlier in this pass. **One unrelated,
+transient finding observed but not chased**: a Kafka admin-client
+`TimeoutException`/`DisconnectException` on `listPartitionReassignments`
+appeared in both runs during the ~1-broker-remaining window right after
+stopping 2 followers — a real Kafka-level condition (the sole surviving
+broker's admin listener still settling, plausibly), not a scripting bug,
+and the script handled it gracefully (no crash) both times.
+
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the

@@ -20,7 +20,6 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/check-disk-headroom.sh || exit 1
 
-KAFKA_BIN="docker compose exec -T kafka-1 /opt/kafka/bin"
 TOKEN=""
 
 banner() {
@@ -30,6 +29,25 @@ banner() {
   echo "================================================================"
 }
 
+# This script stops both followers AND the leader at different points (both are down
+# simultaneously between "stopping the leader" and "restarting followers"), so any single
+# hardcoded exec target can be, and has been confirmed live to be, the broker that's down at any
+# given call site -- silently turning that call into "service is not running" instead of real
+# topic state. Same kafka_exec pattern already proven in
+# kafka-unclean-election-KAFKA-19148.sh (a sibling script with the identical "every broker gets
+# stopped at some point" shape): picks whichever broker Compose actually reports running right
+# now, not a fixed one.
+kafka_exec() {
+  for svc in kafka-1 kafka-2 kafka-3; do
+    if docker compose ps --status running --format '{{.Service}}' | grep -qx "$svc"; then
+      docker compose exec -T "$svc" /opt/kafka/bin/"$@"
+      return $?
+    fi
+  done
+  echo "No running Kafka broker found to exec through." >&2
+  return 1
+}
+
 login() {
   TOKEN=$(curl -s -X POST http://localhost/api/v1/auth/login \
     -H 'Content-Type: application/json' \
@@ -37,11 +55,11 @@ login() {
 }
 
 partition_offsets() {
-  $KAFKA_BIN/kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic readings 2>/dev/null | sort
+  kafka_exec kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic readings 2>/dev/null | sort
 }
 
 describe_topic() {
-  $KAFKA_BIN/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic readings
+  kafka_exec kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic readings
 }
 
 banner "Logging in and creating a test meter"
