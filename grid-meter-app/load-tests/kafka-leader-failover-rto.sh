@@ -99,7 +99,14 @@ done
 banner "Confirming that write actually landed durably (not just a fast HTTP 201 -- ingest() is"
 echo "fire-and-forget, so the real proof is the record reaching Postgres, not the HTTP response)"
 sleep 5
-docker compose exec -T postgres psql -U gridmeter -d gridmeter -t -c \
+# The standalone `postgres` container this used to target was retired in Postgres HA Stage 7
+# (docs/postgres-ha-scope.md) -- this call was silently, unconditionally broken until now, not
+# just fragile under some fault. Routes through Traefik's :55432 entrypoint instead, reusing the
+# exact pattern kafka-ha-demo.sh's own Scenario 2 durability check already uses: exec into
+# patroni-1 purely to borrow its psql binary (this script never touches Patroni/Postgres nodes,
+# so patroni-1 is safe to assume up), but the actual DB connection routes through Traefik to
+# whichever node is currently primary, not to patroni-1's own local database.
+docker compose exec -T -e PGPASSWORD=gridmeter patroni-1 psql -h traefik -p 55432 -U gridmeter -d gridmeter -t -c \
   "SELECT COUNT(*) FROM readings WHERE meter_id = '$METER_ID';"
 
 banner "Restarting $LEADER_SVC and confirming it rejoins cleanly"

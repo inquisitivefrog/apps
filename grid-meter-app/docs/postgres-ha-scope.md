@@ -2085,6 +2085,50 @@ falls through correctly, exit 0; confirmed the `show-config` fix
 survives `patroni-1` being stopped the same way. Cluster restored to
 full health after every test.
 
+**Exhaustive repo-wide sweep (2026-09-03) for this same bug shape,
+requested explicitly rather than continuing to find instances one at a
+time as a side effect of unrelated work.** Audited every `.sh` and
+`.py` file under `load-tests/` and `scripts/` for hardcoded single-node
+cluster-state query targets and unguarded `set -e` substitutions not
+already covered above. Found substantially more than the pattern
+audited here alone — some matching this exact shape (fixable the same
+way), some structurally different bugs that happen to share a root
+cause, and several call sites confirmed correct-by-design on closer
+reading rather than assumed buggy from a surface grep match. Full
+categorized findings reported to the user directly (not duplicated
+here in full); one item fixed so far, per explicit user choice to
+proceed one item at a time rather than the whole list at once:
+
+**Category C item 1 — fixed and live-verified (2026-09-03):**
+`kafka-acks-gap-repro.sh` (2 sites) and `kafka-leader-failover-rto.sh`
+(1 site) queried a standalone `postgres` container that no longer
+exists — retired in this doc's own Stage 7 above. Unlike every other
+finding in this pass, this wasn't "hardcoded among several valid
+choices" — it failed unconditionally, every single time, not just
+under some fault. Fixed by reusing the exact pattern
+`docs/testing-strategy-ha-supplement.md`'s own Kafka investigation
+already established for the identical problem
+(`kafka-ha-demo.sh`'s Scenario 2 durability check): exec into
+`patroni-1` purely to borrow its `psql` binary (safe here — neither
+script ever touches a Patroni/Postgres node), routing the actual DB
+connection through Traefik's `:55432` entrypoint so it reaches whichever
+node is genuinely primary, not `patroni-1`'s own local database.
+**Verified precisely, not assumed**: confirmed live that the new query
+form returns `pg_is_in_recovery() = f` (primary) even while `patroni-1`
+itself (queried directly, locally) returns `t` (replica) — direct proof
+the connection actually crosses through Traefik rather than
+accidentally landing on `patroni-1`'s own instance. Both scripts then
+run end-to-end for real: `kafka-acks-gap-repro.sh` clean, both fixed
+queries returning the correct durability count (`1`, matching its own
+documented happy-path interpretation); `kafka-leader-failover-rto.sh`
+clean, its fixed query returning `2` (baseline + post-recovery write).
+The second run also directly, empirically confirmed a *separate*,
+already-flagged finding is real and not just theoretical: that script's
+`LEADER_SVC="kafka-2"` is a stale, unverified assumption about which
+broker leads (Category C item 2, not fixed here) — `kafka-2` wasn't
+actually leading any partition when this ran, so "stopping the leader"
+tested nothing real, exactly as flagged.
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the
