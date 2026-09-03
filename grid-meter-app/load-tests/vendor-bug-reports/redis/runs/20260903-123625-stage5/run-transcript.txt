@@ -1,0 +1,7 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260903-123625-stage5/run-transcript.txt
+
+================================================================
+Baseline: quorum reachable with all 3 Sentinels healthy
+================================================================
+service "sentinel-1" is not running
+OK 3 usable Sentinels. Quorum and failover authorization can be reached

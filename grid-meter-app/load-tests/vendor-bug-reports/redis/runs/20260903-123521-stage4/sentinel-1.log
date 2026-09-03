@@ -1,0 +1,36 @@
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:29.943 - Accepted 172.18.0.18:59286
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:29.943 - Accepted 172.18.0.18:59298
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:29.944 - Client closed connection id=28 addr=172.18.0.18:59286 laddr=172.18.0.14:26379 fd=14 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=3 lib-name=Lettuce lib-ver=7.5.2.RELEASE/5728917 io-thread=0 tot-net-in=305 tot-net-out=221 tot-cmds=4 read-events=5 avg-pipeline-len-sum=5 avg-pipeline-len-cnt=4
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:29.944 - Client closed connection id=29 addr=172.18.0.18:59298 laddr=172.18.0.14:26379 fd=15 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=3 lib-name=Lettuce lib-ver=7.5.2.RELEASE/5728917 io-thread=0 tot-net-in=305 tot-net-out=221 tot-cmds=4 read-events=5 avg-pipeline-len-sum=5 avg-pipeline-len-cnt=4
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:30.043 - Accepted 172.18.0.18:59310
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:30.045 - Accepted 172.18.0.18:59326
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:30.048 - Client closed connection id=30 addr=172.18.0.18:59310 laddr=172.18.0.14:26379 fd=14 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=3 lib-name=Lettuce lib-ver=7.5.2.RELEASE/5728917 io-thread=0 tot-net-in=305 tot-net-out=221 tot-cmds=4 read-events=5 avg-pipeline-len-sum=5 avg-pipeline-len-cnt=4
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:30.048 - Client closed connection id=31 addr=172.18.0.18:59326 laddr=172.18.0.14:26379 fd=15 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=3 lib-name=Lettuce lib-ver=7.5.2.RELEASE/5728917 io-thread=0 tot-net-in=305 tot-net-out=221 tot-cmds=4 read-events=5 avg-pipeline-len-sum=5 avg-pipeline-len-cnt=4
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:30.987 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:34.995 # +sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.004 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.077 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.081 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.081 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.081 # +new-epoch 1
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.082 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.082 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.082 # +vote-for-leader 2817b65105d2cfe0d5eeef2cfe6835911d7453dc 1
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:35.084 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.093 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.098 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.137 # +odown master mymaster redis 6379 #quorum 3/2
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.137 * Next failover delay: I will not start a failover before Thu Sep  3 19:35:55 2026
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.139 - -role-change slave 172.18.0.10:6379 172.18.0.10 6379 @ mymaster redis 6379 new reported role is master
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.149 # +config-update-from sentinel 2817b65105d2cfe0d5eeef2cfe6835911d7453dc 172.18.0.12 26379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.149 # +switch-master mymaster redis 6379 172.18.0.10 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.149 * +slave slave 172.18.0.11:6379 172.18.0.11 6379 @ mymaster 172.18.0.10 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.152 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.152 * +slave slave redis:6379 redis 6379 @ mymaster 172.18.0.10 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.153 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.153 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.240 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.240 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.10 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.240 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.10 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.263 - Accepted 172.18.0.5:48978
+sentinel-1-1  | 1:X 03 Sep 2026 19:35:36.264 - Client closed connection id=32 addr=172.18.0.5:48978 laddr=172.18.0.14:26379 fd=16 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=32 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1

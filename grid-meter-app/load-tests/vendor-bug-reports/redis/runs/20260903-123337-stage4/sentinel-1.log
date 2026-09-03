@@ -1,0 +1,35 @@
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:53.368 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.326 # +sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.373 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.383 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.435 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.443 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.443 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.443 # +new-epoch 1
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.455 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.455 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:57.455 # +vote-for-leader 1bb4a2b8ebd89e7127bc676f0993492ce5bc3522 1
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.411 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.412 # +odown master mymaster redis 6379 #quorum 2/2
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.412 * Next failover delay: I will not start a failover before Thu Sep  3 19:34:17 2026
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.434 - -role-change slave 172.18.0.11:6379 172.18.0.11 6379 @ mymaster redis 6379 new reported role is master
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.500 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.561 # +config-update-from sentinel 1bb4a2b8ebd89e7127bc676f0993492ce5bc3522 172.18.0.17 26379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.561 # +switch-master mymaster redis 6379 172.18.0.11 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.561 * +slave slave 172.18.0.10:6379 172.18.0.10 6379 @ mymaster 172.18.0.11 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.569 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.569 * +slave slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.576 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.576 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.611 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.611 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:58.611 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:59.649 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:59.649 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:59.649 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:33:59.691 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:34:00.702 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 03 Sep 2026 19:34:00.703 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:34:00.703 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.18.0.11 6379 #Name or service not known
+sentinel-1-1  | 1:X 03 Sep 2026 19:34:00.878 - Accepted 172.18.0.5:59272
+sentinel-1-1  | 1:X 03 Sep 2026 19:34:00.879 - Client closed connection id=12 addr=172.18.0.5:59272 laddr=172.18.0.12:26379 fd=16 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=32 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1

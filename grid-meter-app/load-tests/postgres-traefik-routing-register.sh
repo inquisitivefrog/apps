@@ -65,7 +65,22 @@ done
 echo
 echo "=== Registered. Health status (only the current primary should show 'passing') ==="
 sleep 4
-docker compose exec -T consul-1 curl -s "http://localhost:8500/v1/health/service/postgres-primary" \
+# Dynamic query target, not hardcoded -- same "monitoring helper's own hardcoded query target"
+# mistake already found and fixed elsewhere in this project. This is a display-only status check
+# (the actual per-node registration above already correctly targets each node's own paired
+# agent), but a hardcoded consul-1 here would still fail this final summary for an unrelated
+# reason if consul-1 specifically happened to be down.
+STATUS_AGENT=""
+for AGENT in consul-1 consul-2 consul-3; do
+  if docker compose exec -T "$AGENT" consul members >/dev/null 2>&1; then
+    STATUS_AGENT="$AGENT"
+    break
+  fi
+done
+if [[ -z "$STATUS_AGENT" ]]; then
+  echo "Could not reach any Consul agent to check status, skipping." >&2
+else
+docker compose exec -T "$STATUS_AGENT" curl -s "http://localhost:8500/v1/health/service/postgres-primary" \
   | python3 -c "
 import json, sys
 for entry in json.load(sys.stdin):
@@ -77,3 +92,4 @@ for entry in json.load(sys.stdin):
 # ^ python3 runs on the HOST here (not inside the consul container, which has curl but no
 # python3) -- docker compose exec's stdout is captured by the host shell's pipe, so this works
 # without needing python3 installed in the consul image at all.
+fi

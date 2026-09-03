@@ -98,7 +98,16 @@ if [ "$CURRENT_MASTER" != "redis" ]; then
 fi
 
 banner "Baseline: quorum reachable with all 3 Sentinels healthy"
-docker compose exec -T sentinel-1 redis-cli -p 26379 sentinel ckquorum mymaster
+# Dynamic query target -- unlike every other sentinel-1 reference below (which is this test's own
+# deliberately-designated survivor, kept alive by construction once Sub-test A starts), this
+# baseline check runs BEFORE anything is killed, when all 3 Sentinels are still arbitrary,
+# interchangeable healthy peers -- a hardcoded target here would still fail for an unrelated
+# reason if sentinel-1 specifically were left down by an earlier test run.
+for AGENT in sentinel-1 sentinel-2 sentinel-3; do
+  if docker compose exec -T "$AGENT" redis-cli -p 26379 sentinel ckquorum mymaster; then
+    break
+  fi
+done
 
 KILL_ISO_A=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 banner "SUB-TEST A: killing sentinel-2 and sentinel-3 (2 of 3) -- primary/replicas stay healthy"

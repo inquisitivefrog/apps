@@ -2263,6 +2263,81 @@ operations. Confirmed Patroni's live cluster was undisturbed throughout
 (3/3 nodes, correct roles, before and after).
 
 
+**Remaining Category B items — happy-path sweep, fixed and verified
+(2026-09-03), same day.** Per the agreed order for closing out this
+pass (chaos-logic sites get full fault-injection rigor above; these
+remaining sites are cosmetic-output or setup-only, so verified via
+isolated happy-path/fallthrough checks rather than a full chaos run
+each):
+
+- **`postgres-traefik-routing-register.sh`**: a display-only
+  `consul-1` hardcode in the script's final health-status check,
+  replaced with the same 3-agent discovery loop used throughout this
+  pass. Verified live against the real running cluster — correctly
+  showed `patroni-3` as "passing" (the real current leader).
+- **`redis-ha-demo.sh`**: `sentinel_master_view()`'s hardcoded
+  `sentinel-1` replaced with a 3-Sentinel discovery loop. First draft
+  used `2>&1` on the discovery attempts, which would have leaked failed-
+  attempt error text into the returned value ahead of a later success —
+  caught before shipping, fixed to `2>/dev/null` with an explicit
+  success-path `echo`. Verified live through a full 2-sub-test run —
+  both call sites confirmed correct.
+- **`redis-primary-failover-rto.sh`**: the replica-discovery polling
+  loop's hardcoded `sentinel-1` replaced with the same discovery
+  pattern. **A real bug caught on the first live-verification run**: the
+  initial `KNOWN_REPLICAS` computation used
+  `[ -n "$POLL_SENTINEL" ] && CMD | grep -c "^ip$" || echo 0` — the exact
+  `grep -c` zero-match trap this project's own testing-strategy doc
+  already warns about, reintroduced by this fix itself. When Sentinel
+  legitimately reports 0 replicas discovered yet (true on every run's
+  very first poll), `grep -c`'s exit status 1 tripped the `||` fallback
+  *in addition to* the `&&` chain already having produced "0", yielding
+  a malformed two-line value and a real bash arithmetic error. Fixed
+  with a plain `if/else` that never depends on `grep -c`'s exit status.
+  Re-verified with a full clean chaos run (real primary kill, real
+  Sentinel failover, split-brain probing) — the 0-replicas edge case now
+  handled correctly, reaching a clean VERDICT SUMMARY with
+  SPLIT-BRAIN: NO.
+- **`redis-quorum-loss.sh`**: the pre-kill baseline `ckquorum` check —
+  the one call site (of 5 total `sentinel-1` references in the file)
+  not already correct-by-design, since the other 4 deliberately keep
+  querying `sentinel-1` specifically as this script's own designated
+  survivor once Sub-test A begins. Replaced with a 3-Sentinel discovery
+  loop. Verified via isolated extraction test: happy path picks
+  `sentinel-1`; with `sentinel-1` stopped, correctly falls through to
+  `sentinel-2`.
+- **`postgres-consul-self-demotion-timing-test.py`**: found 3
+  hardcoded `"patroni-1"` sites on closer reading, not just the 1
+  originally flagged — `get_leader()`, `wait_for_quorum()`, and
+  `main()`'s config-presence check. Added a `patronictl_exec()` helper
+  mirroring the bash `kafka_exec()`/`any_running_consul()` pattern
+  already proven throughout this pass, checking `docker compose ps
+  --status running` before exec'ing rather than the bash scripts'
+  usual "exit-status of the command itself" signal (first draft used
+  the wrong signal for this one — checked stderr for "Connection
+  refused," which isn't what a *stopped container* actually produces;
+  corrected to the `ps --status running` check). Verified via direct
+  Python module import: happy path (real cluster data, exit 0); with
+  `patroni-1` stopped, correctly fell through to `patroni-2`/`patroni-3`
+  (still exit 0).
+- **`kafka-ha-demo.sh`**: 4 pre-chaos setup call sites hardcoded to
+  `kafka-1` — the debug-overlay prerequisite check, the canary-write
+  offset-diff pair (`BEFORE_OFFSETS`/`AFTER_OFFSETS`), and the active-
+  controller check. Distinct from this same file's own already-hardened
+  `cluster_state(witness)` function (which takes a witness parameter
+  specifically because *this* script deliberately kills a broker later
+  in the same run) — these 4 sites all run strictly before any kill, so
+  the only real risk is the same residual-state pattern found repeatedly
+  elsewhere today: `kafka-1` left down by an unrelated earlier run, not
+  this script's own action. Fixed with a `kafka_exec()` helper (same
+  name and discovery mechanism as the sibling scripts' helper, but
+  generalized to forward an arbitrary command rather than assuming an
+  `/opt/kafka/bin/` prefix, since one of the 4 sites greps a config file
+  directly rather than invoking a bin script). Verified live: happy path
+  against all 3 real brokers, then with `kafka-1` deliberately stopped
+  and restarted, confirming correct fallthrough to `kafka-2`/`kafka-3`.
+
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the

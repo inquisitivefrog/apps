@@ -39,7 +39,20 @@ banner() {
 }
 
 sentinel_master_view() {
-  docker compose exec -T sentinel-1 redis-cli -p 26379 sentinel master mymaster 2>&1
+  # Dynamic query target -- this script never kills any Sentinel (only Redis replicas), so all 3
+  # remain interchangeable, healthy peers throughout, and a hardcoded sentinel-1 would still fail
+  # for an unrelated reason if it happened to be left down by an earlier, unrelated test run.
+  # 2>/dev/null (not 2>&1) on each attempt, so a failed try's own error output doesn't pollute the
+  # real result once a later attempt succeeds -- callers capture this function's stdout as the
+  # actual sentinel view.
+  local out
+  for svc in sentinel-1 sentinel-2 sentinel-3; do
+    if out=$(docker compose exec -T "$svc" redis-cli -p 26379 sentinel master mymaster 2>/dev/null); then
+      echo "$out"
+      return 0
+    fi
+  done
+  return 1
 }
 
 primary_replication_info() {

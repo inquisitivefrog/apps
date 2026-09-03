@@ -55,6 +55,22 @@ def compose_exec(service, *cmd):
     return run(COMPOSE + ["exec", "-T", service] + list(cmd), check=False)
 
 
+def patronictl_exec(*cmd):
+    """Runs a patronictl command via whichever Patroni node is actually running, not a hardcoded
+    one. This script only ever kills Consul agents (never Patroni containers directly), so the
+    real risk isn't this script's own action -- it's the same residual-state pattern found
+    repeatedly elsewhere in this project today (a prior, unrelated test run leaving patroni-1
+    specifically down). Checks container status via `docker compose ps` first, matching the
+    proven bash pattern used throughout this pass, rather than string-matching error output
+    (fragile -- a stopped container's exec failure and a real patronictl-level error look
+    different and shouldn't be conflated)."""
+    running = run(COMPOSE + ["ps", "--status", "running", "--format", "{{.Service}}"]).stdout
+    for svc in ("patroni-1", "patroni-2", "patroni-3"):
+        if svc in running.splitlines():
+            return compose_exec(svc, "patronictl", "-c", "/etc/patroni.yml", *cmd)
+    raise RuntimeError("No running Patroni node found to exec through.")
+
+
 def get_leader(retries=5, delay=2.0):
     """Returns (leader_service, leader_number) e.g. ('patroni-2', '2'). Confirmed live,
     not assumed, since a prior trial's restore could in principle leave a different node
@@ -70,7 +86,7 @@ def get_leader(retries=5, delay=2.0):
     section), not just a script robustness gap to paper over silently."""
     last_out = ""
     for attempt in range(retries):
-        r = compose_exec("patroni-1", "patronictl", "-c", "/etc/patroni.yml", "list")
+        r = patronictl_exec("list")
         out = r.stdout
         last_out = out
         for line in out.splitlines():
@@ -105,7 +121,7 @@ def wait_for_quorum(timeout_s=40):
     demoted_at ~0.24s with no prior "f" sample at all, exactly this failure shape."""
     start = time.time()
     while time.time() - start < timeout_s:
-        r = compose_exec("patroni-1", "patronictl", "-c", "/etc/patroni.yml", "list")
+        r = patronictl_exec("list")
         if r.returncode == 0 and "Leader" in r.stdout:
             try:
                 leader_service, _ = get_leader()
@@ -253,7 +269,7 @@ def main():
     args = parser.parse_args()
 
     print("=== Confirming live loop_wait/ttl/retry_timeout (not assumed) ===")
-    cfg = compose_exec("patroni-1", "patronictl", "-c", "/etc/patroni.yml", "show-config").stdout
+    cfg = patronictl_exec("show-config").stdout
     print(cfg)
     loop_wait = None
     for line in cfg.splitlines():

@@ -67,8 +67,29 @@ echo "sleep duration under contention, so this polls for the actual condition in
 echo "a longer number)."
 DISCOVERED=0
 for i in $(seq 1 30); do
-  KNOWN_REPLICAS=$(docker compose exec -T sentinel-1 redis-cli -p 26379 sentinel replicas mymaster 2>/dev/null | grep -c "^ip$")
-  echo "t+${i}s: sentinel-1 knows about $KNOWN_REPLICAS replica(s)"
+  # Dynamic query target -- this script's own force-recreate above brings up all 3 Sentinels
+  # fresh, but doesn't guarantee sentinel-1 specifically is the first one ready; a hardcoded
+  # target here would also still fail for an unrelated reason if it were left down by an earlier,
+  # unrelated test run.
+  POLL_SENTINEL=""
+  for svc in sentinel-1 sentinel-2 sentinel-3; do
+    if docker compose exec -T "$svc" redis-cli -p 26379 ping >/dev/null 2>&1; then
+      POLL_SENTINEL="$svc"
+      break
+    fi
+  done
+  # A plain `&&`/`||` chain around this pipe was tried first and was itself a real, live-caught
+  # bug: `grep -c` exits non-zero on a legitimate zero-match count (this project's own standing
+  # "grep -c" lesson, docs/cross-project-lessons.md), which made the `||` fallback ALSO fire and
+  # print "0" -- producing a two-line "0\n0" value that broke the numeric comparison below. A
+  # plain if/else avoids the trap entirely by never treating grep -c's own exit status as
+  # meaningful here.
+  if [ -n "$POLL_SENTINEL" ]; then
+    KNOWN_REPLICAS=$(docker compose exec -T "$POLL_SENTINEL" redis-cli -p 26379 sentinel replicas mymaster 2>/dev/null | grep -c "^ip$")
+  else
+    KNOWN_REPLICAS=0
+  fi
+  echo "t+${i}s: ${POLL_SENTINEL:-no reachable sentinel} knows about $KNOWN_REPLICAS replica(s)"
   if [ "$KNOWN_REPLICAS" -ge 2 ]; then
     DISCOVERED=1
     echo "Both replicas discovered at t+${i}s -- safe to proceed"

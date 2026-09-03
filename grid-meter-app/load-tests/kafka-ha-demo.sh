@@ -97,6 +97,23 @@ cluster_state() {
     --bootstrap-server localhost:9092 --describe --topic readings 2>&1
 }
 
+# For the pre-chaos setup calls below only (debug-overlay check, offset diffs, active-controller
+# check) -- these all run BEFORE this scenario's own kill, so unlike cluster_state()'s witness
+# parameter (which exists because THIS script deliberately kills a broker), the only risk here is
+# the same residual-state pattern found repeatedly elsewhere in this project today: kafka-1 left
+# down by an unrelated earlier test run. Same kafka_exec pattern already proven in
+# kafka-unclean-election-KAFKA-19148.sh and kafka-acks-gap-repro.sh.
+kafka_exec() {
+  for svc in kafka-1 kafka-2 kafka-3; do
+    if docker compose ps --status running --format '{{.Service}}' | grep -qx "$svc"; then
+      docker compose exec -T "$svc" "$@"
+      return $?
+    fi
+  done
+  echo "No running Kafka broker found to exec through." >&2
+  return 1
+}
+
 banner "Setup: login + create a test meter"
 login
 if [ -z "$TOKEN" ]; then
@@ -117,9 +134,9 @@ banner "SCENARIO 1: Tolerate the ACTUAL partition leader's loss (dynamically det
 # 2026-09-02 for real RTO measurement (see this script's own prerequisites comment up top and
 # docs/testing-strategy-ha-supplement.md's "RTO variance retest"). Checked directly against the
 # live config rather than assumed, matching this project's own standing discipline.
-if ! docker compose exec -T kafka-1 grep -A1 '"org.apache.kafka.controller"' /opt/kafka/config/log4j2.yaml 2>/dev/null \
+if ! kafka_exec grep -A1 '"org.apache.kafka.controller"' /opt/kafka/config/log4j2.yaml 2>/dev/null \
     | grep -q 'DEBUG\|TRACE'; then
-  echo "!!! kafka-debug overlay not active on kafka-1 -- Scenario 1's RTO measurement requires it" >&2
+  echo "!!! kafka-debug overlay not active -- Scenario 1's RTO measurement requires it" >&2
   echo "    (org.apache.kafka.controller must be at DEBUG or TRACE level). Bring it up first:" >&2
   echo "      docker compose -f docker-compose.yml -f docker-compose.kafka-debug.yml up -d" >&2
   echo "      docker compose restart api   # recreates the readings topic with 3 partitions/RF 3 --" >&2
@@ -137,7 +154,7 @@ echo
 echo "Determining which partition THIS meter's traffic actually lands on, via an offset diff around"
 echo "a canary write, rather than assuming or hashing it ourselves (Kafka's own partitioner is the"
 echo "only source of truth for this)."
-BEFORE_OFFSETS=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-get-offsets.sh \
+BEFORE_OFFSETS=$(kafka_exec /opt/kafka/bin/kafka-get-offsets.sh \
   --bootstrap-server localhost:9092 --topic readings --time -1 2>&1)
 CANARY_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 10 -X POST http://localhost/api/v1/readings \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -145,7 +162,7 @@ CANARY_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 10 -X POST http://localh
   -d "{\"meterId\":\"$METER_ID\",\"readingTimestamp\":\"2026-08-28T00:00:00Z\",\"value\":0.0}")
 echo "Canary reading HTTP status: $CANARY_CODE"
 sleep 2
-AFTER_OFFSETS=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-get-offsets.sh \
+AFTER_OFFSETS=$(kafka_exec /opt/kafka/bin/kafka-get-offsets.sh \
   --bootstrap-server localhost:9092 --topic readings --time -1 2>&1)
 
 TARGET_PARTITION=""
@@ -184,7 +201,7 @@ echo "Current leader of partition $TARGET_PARTITION: broker $OLD_LEADER (kafka-$
 # killed broker was also the active KRaft controller), and a Chat review correctly flagged that
 # this script's own RTO runs weren't reporting it, making it impossible to tell which of the two
 # investigated conditions a given kafka-ha-demo.sh run actually measured.
-ACTIVE_CONTROLLER=$(docker compose exec -T kafka-1 /opt/kafka/bin/kafka-metadata-quorum.sh \
+ACTIVE_CONTROLLER=$(kafka_exec /opt/kafka/bin/kafka-metadata-quorum.sh \
   --bootstrap-server localhost:9092 describe --status 2>&1 | grep -o "LeaderId:[[:space:]]*[0-9]*" | grep -o '[0-9]*$')
 if [ "$ACTIVE_CONTROLLER" = "$OLD_LEADER" ]; then
   WAS_CONTROLLER="yes"

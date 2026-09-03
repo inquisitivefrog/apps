@@ -1,0 +1,176 @@
+Saving this run's output to load-tests/vendor-bug-reports/redis/runs/20260903-123247-stage3/run-transcript.txt
+
+================================================================
+SUB-TEST: redis-replica-1 -- baseline before kill
+================================================================
+connected_slaves:2
+min_slaves_good_slaves:2
+slave0:ip=172.18.0.12,port=6379,state=online,offset=5685311,lag=1,io-thread=0
+slave1:ip=172.18.0.17,port=6379,state=online,offset=5685311,lag=1,io-thread=0
+flags
+master
+
+================================================================
+SUB-TEST: redis-replica-1 -- killing it
+================================================================
+ Container grid-meter-app-redis-replica-1-1 Stopping 
+ Container grid-meter-app-redis-replica-1-1 Stopped 
+
+================================================================
+SUB-TEST: redis-replica-1 -- checking Sentinel did NOT attempt a failover
+================================================================
+name
+mymaster
+ip
+redis
+port
+6379
+runid
+7e1243adf298d6cef0fd0363720070dfada7fbc0
+flags
+master
+link-pending-commands
+0
+link-refcount
+1
+last-ping-sent
+0
+last-ok-ping-reply
+158
+last-ping-reply
+158
+down-after-milliseconds
+5000
+info-refresh
+3545
+role-reported
+master
+role-reported-time
+8406571
+config-epoch
+0
+num-slaves
+2
+num-other-sentinels
+2
+quorum
+2
+failover-timeout
+10000
+parallel-syncs
+1
+OK: master still flagged plain 'master' (no failover attempted, no s_down/o_down escalation stuck).
+
+================================================================
+SUB-TEST: redis-replica-1 -- confirming primary still accepts writes with min-replicas-to-write=1
+================================================================
+SET result: OK
+connected_slaves:1
+min_slaves_good_slaves:1
+slave0:ip=172.18.0.17,port=6379,state=online,offset=5686984,lag=0,io-thread=0
+
+================================================================
+SUB-TEST: redis-replica-1 -- restarting it, confirming clean rejoin
+================================================================
+ Container grid-meter-app-redis-replica-1-1 Starting 
+ Container grid-meter-app-redis-replica-1-1 Started 
+connected_slaves:2
+min_slaves_good_slaves:2
+slave0:ip=172.18.0.17,port=6379,state=online,offset=5688556,lag=1,io-thread=0
+slave1:ip=172.18.0.12,port=6379,state=online,offset=5688556,lag=0,io-thread=0
+redis-replica-1 GET stage3-marker-redis-replica-1-1788463967 -> written-while-redis-replica-1-down (expect: written-while-redis-replica-1-down)
+
+================================================================
+SUB-TEST redis-replica-1 -- VERDICT
+================================================================
+PASS: no failover attempted, primary kept accepting writes, redis-replica-1 rejoined and caught up cleanly.
+
+================================================================
+SUB-TEST: redis-replica-2 -- baseline before kill
+================================================================
+connected_slaves:2
+min_slaves_good_slaves:2
+slave0:ip=172.18.0.17,port=6379,state=online,offset=5688687,lag=1,io-thread=0
+slave1:ip=172.18.0.12,port=6379,state=online,offset=5688556,lag=1,io-thread=0
+flags
+master
+
+================================================================
+SUB-TEST: redis-replica-2 -- killing it
+================================================================
+ Container grid-meter-app-redis-replica-2-1 Stopping 
+ Container grid-meter-app-redis-replica-2-1 Stopped 
+
+================================================================
+SUB-TEST: redis-replica-2 -- checking Sentinel did NOT attempt a failover
+================================================================
+name
+mymaster
+ip
+redis
+port
+6379
+runid
+7e1243adf298d6cef0fd0363720070dfada7fbc0
+flags
+master
+link-pending-commands
+0
+link-refcount
+1
+last-ping-sent
+0
+last-ok-ping-reply
+336
+last-ping-reply
+336
+down-after-milliseconds
+5000
+info-refresh
+134
+role-reported
+master
+role-reported-time
+8423220
+config-epoch
+0
+num-slaves
+2
+num-other-sentinels
+2
+quorum
+2
+failover-timeout
+10000
+parallel-syncs
+1
+OK: master still flagged plain 'master' (no failover attempted, no s_down/o_down escalation stuck).
+
+================================================================
+SUB-TEST: redis-replica-2 -- confirming primary still accepts writes with min-replicas-to-write=1
+================================================================
+SET result: OK
+connected_slaves:1
+min_slaves_good_slaves:1
+slave0:ip=172.18.0.12,port=6379,state=online,offset=5689997,lag=1,io-thread=0
+
+================================================================
+SUB-TEST: redis-replica-2 -- restarting it, confirming clean rejoin
+================================================================
+ Container grid-meter-app-redis-replica-2-1 Starting 
+ Container grid-meter-app-redis-replica-2-1 Started 
+connected_slaves:2
+min_slaves_good_slaves:2
+slave0:ip=172.18.0.12,port=6379,state=online,offset=5691801,lag=1,io-thread=0
+slave1:ip=172.18.0.17,port=6379,state=online,offset=5691801,lag=1,io-thread=0
+redis-replica-2 GET stage3-marker-redis-replica-2-1788463983 -> written-while-redis-replica-2-down (expect: written-while-redis-replica-2-down)
+
+================================================================
+SUB-TEST redis-replica-2 -- VERDICT
+================================================================
+PASS: no failover attempted, primary kept accepting writes, redis-replica-2 rejoined and caught up cleanly.
+
+================================================================
+Both sub-tests complete
+================================================================
+Full transcript saved to load-tests/vendor-bug-reports/redis/runs/20260903-123247-stage3/run-transcript.txt
