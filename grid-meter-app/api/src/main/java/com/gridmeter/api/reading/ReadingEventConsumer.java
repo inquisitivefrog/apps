@@ -55,6 +55,18 @@ public class ReadingEventConsumer {
         }
 
         String key = "reading:latest:" + event.meterId();
-        redisTemplate.opsForValue().set(key, LatestReading.from(event), LATEST_READING_TTL);
+        // TEMPORARY instrumentation for docs/redis-ha-scope.md's Lettuce/Kafka-retry isolation
+        // test (see that doc's "Isolating the Lettuce/Kafka retry hypothesis" section) -- logs
+        // each listener invocation for a given meter, including Spring Kafka's own redeliveries
+        // after a thrown exception, so the isolation test can read exact per-attempt wall-clock
+        // timestamps directly from api logs instead of inferring them from indirect evidence.
+        log.info("Redis write attempt starting for meter {}", event.meterId());
+        try {
+            redisTemplate.opsForValue().set(key, LatestReading.from(event), LATEST_READING_TTL);
+            log.info("Redis write attempt SUCCEEDED for meter {}", event.meterId());
+        } catch (RuntimeException ex) {
+            log.warn("Redis write attempt FAILED for meter {}: {}", event.meterId(), ex.toString());
+            throw ex;
+        }
     }
 }

@@ -1,0 +1,18 @@
+# Override for isolating docs/redis-ha-scope.md's Lettuce/Kafka-retry hypothesis (see that doc's
+# "Isolating the Lettuce/Kafka retry hypothesis" section). Not a separate environment -- an
+# override merged on top of the normal stack, so everything else is untouched. Sets
+# GRID_METER_KAFKA_LISTENER_MAX_ATTEMPTS=1 on the api service only, which
+# KafkaListenerRetryTestConfig picks up to replace Spring Kafka's default 10-attempt error handler
+# with a single-attempt one (no redelivery at all) -- isolates whether the async Redis cache
+# write's observed zero-loss result during a Sentinel failover actually depends on Kafka's own
+# consumer-side redelivery, or would happen anyway on the first (and only) delivery attempt.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.redis-retry-isolation-test.yml up -d --force-recreate api
+#
+# Baseline runs (this hypothesis test's Test 1) use plain `docker compose up -d --force-recreate
+# api` with NO override file at all -- not this file with a large attempt count -- so there is no
+# risk of a stray environment value leaking into the "normal behavior" baseline measurement.
+services:
+  api:
+    environment:
+      GRID_METER_KAFKA_LISTENER_MAX_ATTEMPTS: "1"

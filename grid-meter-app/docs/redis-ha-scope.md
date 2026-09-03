@@ -595,6 +595,125 @@ not one) rather than a Redis-specific curiosity.
 
 Full evidence: `load-tests/vendor-bug-reports/redis/NOTES.md`.
 
+## Isolating the Lettuce/Kafka retry hypothesis (2026-09-03): refuted — Kafka's consumer retry is never engaged at all
+
+**Verdict: refuted, and the real mechanism is more interesting than the
+original theory.** The "most plausibly because Spring Kafka's own
+default consumer retry covers the gap" explanation above was never
+independently isolated — this investigation isolates it directly, per
+an explicit request to stop inferring from co-occurrence. Spring Kafka's
+consumer-level redelivery isn't just *not necessary* for the zero-loss
+result — across every run tested, both with and without it available,
+**it never fires even once.**
+
+**Method.** Added temporary instrumentation to
+`ReadingEventConsumer.onReadingEvent()` (a log line immediately before
+and after the Redis write, so every listener invocation — including any
+Spring Kafka redelivery — is directly visible in api logs with
+millisecond timestamps, not inferred). Added
+`KafkaListenerRetryTestConfig`, a `@ConditionalOnProperty`-gated bean
+that only takes effect when `GRID_METER_KAFKA_LISTENER_MAX_ATTEMPTS` is
+explicitly set in the environment — unset (every environment except this
+test) leaves Spring Kafka's autoconfigured default error handler
+(`FixedBackOff(0, 9)`, up to 10 total delivery attempts) completely
+untouched, confirmed by checking the container's own environment before
+trusting any baseline run. Isolation runs used a separate
+`docker-compose.redis-retry-isolation-test.yml` override setting
+`GRID_METER_KAFKA_LISTENER_MAX_ATTEMPTS=1` (zero redeliveries — a
+listener exception permanently drops that record, matching
+`DefaultErrorHandler`'s built-in behavior once retries are exhausted),
+so there's no way for baseline runs to be contaminated by a stray
+environment value.
+
+**A real environment contamination found and fixed before trusting the
+first baseline run**: the first attempt showed a ~10.8s window with zero
+`POST /readings` successes, api logs full of `401`s from a source IP
+that wasn't this test's own traffic. Root cause: a leftover background
+script from earlier the same session (`_tmp-oldcode-negctrl.sh`, a
+negative-control harness from an unrelated hardcoded-target bug
+verification) had been running for over 5 hours, continuously hammering
+the API with a since-expired token. Killed by exact PID (verified via
+`ps -p`, not a broad pattern match) before re-running; confirmed clean
+(zero stray traffic) for every run reported below.
+
+**Results — precise mechanism-level timestamps, not inferred ranges,
+across 2 baseline runs (default retry config, one of which is the clean
+re-run after the contamination above) and 2 isolation runs
+(`max-attempts=1`):**
+
+| Condition | Run | Last write before outage | Lettuce reconnect completes | First write after outage | Gap |
+|---|---|---|---|---|---|
+| Baseline (retry available) | 1 | 22:27:12.822 | 22:27:23.570 | 22:27:23.583 | 10.76s |
+| Baseline (retry available) | 2 | 22:32:32.260 | 22:32:42.630 | 22:32:42.642 | 10.38s |
+| Isolated (`max-attempts=1`) | 1 | 22:36:05.051 | 22:36:15.963 | 22:36:15.987 | 10.94s |
+| Isolated (`max-attempts=1`) | 2 | 22:37:36.005 | 22:37:46.112 | (not separately re-extracted; same pattern confirmed via `FAILED` count and cache-caught-up result) | ~10.1s |
+
+**In all 4 runs, without exception:**
+- **Zero `WARN ... FAILED` log lines ever appear** — the explicit
+  failure log this investigation's own instrumentation would print on
+  every exception, whether Kafka redelivers or not. Spring Kafka's
+  `DefaultErrorHandler` is never invoked, in either condition.
+- **Zero listener invocations occur during the outage window** (no
+  `Redis write attempt starting` log at all) until 1–12ms *after*
+  Lettuce's own `ReconnectionHandler : Reconnected to ...` line —
+  confirmed by an unfiltered grep of every log line from every thread
+  across the full gap window in the clean baseline run, not just the
+  lines this investigation expected to find.
+- **The single delivery attempt that straddles the outage succeeds
+  immediately** once it finally runs (1–2ms), with no failed attempt
+  logged before it, in every run — including both isolation runs, where
+  Kafka redelivery was structurally impossible (`max-attempts=1`).
+- **The cache write result itself is identical in both conditions**:
+  "yes, caught up" in all 4 runs, `~0-1000ms` after the promotion+20s
+  window started (effectively the first poll).
+
+**What this means: the original theory had the right instinct (a
+client-library reconnect clock and a coordinator promotion clock are
+separate) but the wrong mechanism.** It is not "Lettuce fails fast, and
+Kafka's redelivery quietly re-attempts a few times until Lettuce has
+caught up." What's actually happening is that Lettuce's own connection
+layer swallows the entire outage without ever surfacing an exception to
+the calling thread at all — the Kafka listener thread's single call to
+`redisTemplate.opsForValue().set(...)` for whichever record is in
+flight when the primary dies simply **blocks synchronously for the
+whole ~10.1–10.9s reconnect window** (matching `Cannot reconnect to
+[redis/<unresolved>:6379]: connection timed out after 10000 ms`'s own
+10-second dead-address timeout, plus a short Sentinel-driven
+re-resolution), then completes normally once the connection is live
+again. No exception is ever thrown; no redelivery is ever needed; one
+delivery attempt is always sufficient. This also explains why the
+single-threaded listener container shows *zero* other activity during
+the gap — it isn't idling or retrying, it's genuinely parked inside
+that one blocking call.
+
+**Practical implication, corrected from the original write-up**: this
+app's cache-write zero-loss result does **not** depend on Kafka's
+consumer retry as a safety net — Kafka's redelivery is *never on the
+critical path* for this specific behavior, confirmed by removing it
+entirely and observing identical results. The real dependency is
+narrower and different: **whatever thread calls the blocking
+`RedisTemplate` API during a Sentinel failover will itself block for the
+duration of Lettuce's reconnect**, and correctness here depends on that
+being an acceptable cost (a background Kafka consumer thread blocking
+for ~10s delays only that one cached value, harmlessly) rather than
+something that would matter if the same blocking call were ever made
+synchronously in a request-handling thread instead. If this app's
+architecture changed so that a Redis write happened synchronously in
+the HTTP request path (unlike today's fully async cache write), this
+same Lettuce behavior would turn into a ~10s request hang during every
+failover, not a silent, harmless delay — worth remembering as the
+concrete, now-confirmed version of the "two separate clocks" shape,
+rather than the retry-dependent story originally written down.
+
+Full evidence (per-run log extracts, the contaminated-run diagnosis,
+and the exact commands used): retained in this investigation's own
+session notes; `KafkaListenerRetryTestConfig`,
+`ReadingEventConsumer`'s instrumentation, and
+`docker-compose.redis-retry-isolation-test.yml` are kept in the repo
+(all inert/no-op unless `GRID_METER_KAFKA_LISTENER_MAX_ATTEMPTS` is
+explicitly set) as reusable tooling for any future retry-path
+investigation, rather than thrown away after a single use.
+
 **Stage 6: done. This closes the Redis HA pass — infrastructure
 (Stages 1–5) and application (Stage 6) both now validated, matching the
 Postgres pass's own infrastructure-plus-application closure.**

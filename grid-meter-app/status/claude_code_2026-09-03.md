@@ -583,6 +583,54 @@ so explicitly this turn.
   between a command's own description and its actual content is itself
   a signal to stop and re-read before running.
 
+- **Isolated and refuted the Redis Lettuce/Kafka-retry hypothesis
+  (`docs/redis-ha-scope.md`'s Stage 6), per an explicit request (relayed
+  from Claude Chat) to stop inferring from co-occurrence.** The prior
+  write-up's "most plausibly because Spring Kafka's own default consumer
+  retry covers the gap" was never independently isolated. Built a direct
+  test: temporary per-attempt logging in `ReadingEventConsumer`, plus an
+  env-var-gated `KafkaListenerRetryTestConfig` bean (only active when
+  `GRID_METER_KAFKA_LISTENER_MAX_ATTEMPTS` is explicitly set — confirmed
+  absent/inert in every baseline run) driven by a new
+  `docker-compose.redis-retry-isolation-test.yml` override, matching
+  this project's existing `docker-compose.kafka-debug.yml` pattern.
+  - **A real environment contamination found and fixed before trusting
+    results**: the first baseline run showed a ~10.8s window of nothing
+    but `401`s from a source unrelated to the test's own traffic. Root
+    cause: `_tmp-oldcode-negctrl.sh`, a negative-control script from
+    earlier the same session's hardcoded-target bug verification work,
+    had been running unattended for **over 5 hours**, continuously
+    hammering the API with a stale token. Killed by exact PID (`ps -p`
+    verified first, not a pattern match); confirmed zero stray traffic
+    before trusting any further run.
+  - **Verdict: refuted.** Across 2 clean baseline runs (default Spring
+    Kafka retry config) and 2 isolation runs (`max-attempts=1`, retries
+    structurally impossible), the result is identical in every run:
+    zero `FAILED`/exception log lines ever appear, Spring Kafka's error
+    handler is never invoked, and the single delivery attempt that
+    straddles the outage always succeeds immediately once it runs — 1-2ms
+    after Lettuce's own `Reconnected` log line, confirmed via an
+    unfiltered grep of the entire gap window, not just expected log
+    lines. The real mechanism: Lettuce's blocking `RedisTemplate` call
+    simply **blocks the calling thread synchronously for the whole
+    ~10.1-10.9s reconnect window** rather than throwing — one delivery
+    attempt is always sufficient; Kafka's redelivery is never on the
+    critical path at all, disabling it entirely changes nothing.
+  - **Documented in full** in `docs/redis-ha-scope.md`'s new "Isolating
+    the Lettuce/Kafka retry hypothesis" section — mechanism, evidence
+    table, and the corrected practical implication (this app's
+    zero-loss result depends on the Redis write staying on an async
+    thread where a ~10s block is harmless, not on Kafka retry as a
+    safety net; the same Lettuce behavior would hang a request for
+    ~10s if this write were ever made synchronous).
+  - Test infrastructure kept in the repo (all inert unless the env var
+    is explicitly set), not thrown away after one use: the config class,
+    the consumer instrumentation, and the compose override.
+  - Test data (4 meters/readings sets across the runs) cleaned up via
+    Traefik's `:55432` entrypoint; api restored to normal config
+    (override removed) afterward.
+
+
 ## Next
 
 - **The exhaustive repo-wide sweep is now fully closed and pushed** —
