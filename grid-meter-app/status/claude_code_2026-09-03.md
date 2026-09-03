@@ -677,6 +677,29 @@ so explicitly this turn.
     practicing the exact discipline (don't leave scratch scripts
     lying around) this whole check exists to enforce.
 
+- **Closed the two follow-ups Chat flagged on the stray-traffic guard,
+  both confirmed rather than assumed.**
+  - **False-positive risk against the 5 wired-in scripts' own setup
+    traffic**: confirmed structurally first (the guard is sourced at
+    the very top of every script, strictly before any `/api/v1/*` call
+    — login/meter-creation are later in file order, or defined as
+    functions not yet invoked, in every case), then live-verified for
+    the two most structurally distinct scripts
+    (`kafka-ha-demo.sh`, whose login is a function called much later;
+    `postgres-app-primary-failure-test.sh`, the one without a prior
+    `check-disk-headroom.sh` sourcing): extracted and ran each script's
+    real preamble through its own login+meter-creation, both passed the
+    guard cleanly and completed their setup normally. Test data cleaned
+    up via Traefik afterward; scratch smoke-test files deleted
+    immediately after each run, not left lying around.
+  - **New `docs/cross-project-lessons.md` entry**, per Chat's
+    assessment that this is a genuinely distinct lesson shape from
+    everything else in that file (not a fixed sleep, not a hardcoded
+    target, not GNU-vs-BSD tooling): a chaos/measurement script's own
+    preconditions should include "is anything else already generating
+    traffic against this target," not just "is the infrastructure
+    itself healthy" — added to the "Test-writing pitfalls" section.
+
 ## Next
 
 - **The exhaustive repo-wide sweep is now fully closed and pushed** —
@@ -686,13 +709,14 @@ so explicitly this turn.
   a standing lesson.
 - **The Redis Lettuce/Kafka-retry hypothesis is now closed** — refuted
   with direct, isolated, twice-replicated evidence per condition.
-- **The stray-traffic contamination pattern now has a standing
-  pre-flight guard** (`scripts/check-no-stray-traffic.sh`), wired into
-  every app-level HTTP-traffic-measuring script — closed, not just
-  flagged as a one-off hygiene note.
-- This session's remaining uncommitted work (`api/` changes,
-  `docs/redis-ha-scope.md`, the new compose override, the new
-  stray-traffic check and its 5 call sites) awaits an explicit "commit
-  and push" per this session's established pattern.
+- **The stray-traffic contamination pattern is now fully closed** — the
+  pre-flight guard, its false-positive risk against its own 5 call
+  sites, and the cross-project lesson write-up are all confirmed and
+  documented, not just built and assumed correct.
+- This session's remaining uncommitted work (the
+  `docs/cross-project-lessons.md` entry and this section's own update)
+  awaits an explicit "commit and push" per this session's established
+  pattern.
 - Docker Compose stack is currently up on normal config (no debug
-  overlays active).
+  overlays active). **This is a clean, fully-verified stopping point
+  for the day** per Chat's own closing assessment.

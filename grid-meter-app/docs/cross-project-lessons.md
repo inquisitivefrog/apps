@@ -94,6 +94,33 @@ library's own defaults (not just the environment) are a real suspect —
 found here via a `tcpdump` packet capture comparing a working probe
 against the failing one.
 
+**A chaos/measurement script's own preconditions should include "is
+anything else already generating traffic against this target," not just
+"is the infrastructure itself healthy."** Found 2026-09-03, isolating
+`docs/redis-ha-scope.md`'s Lettuce/Kafka-retry hypothesis: a leftover
+background script from earlier the same session (a scratch
+negative-control harness, `_tmp-oldcode-negctrl.sh`) had been running
+unattended for over 5 hours, continuously hitting the API with a
+since-expired token — and its traffic silently mixed into the next
+test's own request/success counts until the mismatch was noticed and
+traced by hand. This is a distinct failure shape from every other lesson
+in this file: not a fixed sleep racing a readiness signal, not a
+hardcoded query target, not a GNU-vs-BSD tooling gap — it's a test
+script correctly checking that its *target system* is healthy and ready,
+while never checking whether it has *exclusive, uncontaminated
+observation* of that target's traffic. A stack can be perfectly healthy
+and a measurement can still be wrong. **General rule**: any script whose
+result depends on counting or timing real requests against a live
+service should verify, as an explicit pre-flight step, that no
+unexpected traffic is already hitting that service before its own
+traffic starts — not assume a quiet environment just because nothing
+else was deliberately started in this run. `scripts/
+check-no-stray-traffic.sh` implements this for this project (sourced
+alongside `check-disk-headroom.sh`, sampling recent access-log traffic
+and hard-stopping if anything shows up); the underlying instinct
+transfers to any app in this monorepo with real HTTP-facing chaos or
+load-test tooling, regardless of the specific implementation.
+
 ## Shell scripting and OS-tooling pitfalls
 
 **A script's own tooling assumptions can silently misbehave on macOS
