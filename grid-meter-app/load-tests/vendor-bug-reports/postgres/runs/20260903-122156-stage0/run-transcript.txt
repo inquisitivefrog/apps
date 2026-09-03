@@ -1,0 +1,90 @@
+Saving this run's output to load-tests/vendor-bug-reports/postgres/runs/20260903-122156-stage0/run-transcript.txt
+
+================================================================
+Resetting to a clean 3-agent cluster
+================================================================
+ Container grid-meter-app-consul-3-1 Recreate 
+ Container grid-meter-app-consul-1-1 Recreate 
+ Container grid-meter-app-consul-2-1 Recreate 
+ Container grid-meter-app-consul-1-1 Recreated 
+ Container grid-meter-app-consul-3-1 Recreated 
+ Container grid-meter-app-consul-2-1 Recreated 
+ Container grid-meter-app-consul-2-1 Starting 
+ Container grid-meter-app-consul-1-1 Starting 
+ Container grid-meter-app-consul-3-1 Starting 
+ Container grid-meter-app-consul-1-1 Started 
+ Container grid-meter-app-consul-3-1 Started 
+ Container grid-meter-app-consul-2-1 Started 
+Waiting for all 3 to report alive, a leader elected, AND all 3 promoted to full voters --
+confirmed empirically (2026-08-30) that 'alive + leader exists' alone is NOT sufficient:
+Consul's autopilot has a stabilization delay before promoting a freshly-joined server to
+full voting status, and a first run here caught exactly that window (2 nodes alive, but
+only 1 was an actual raft voter), which shrank the effective quorum requirement and produced
+a misleading result. Checking voter status directly instead of assuming a delay covers it.
+3/3 alive, 3/3 voters, leader=consul-1, at t+3s
+--- baseline raft peers ---
+Node      ID                                    Address          State     Voter  RaftProtocol  Commit Index  Trails Leader By
+consul-2  d236ec51-459c-9cd1-3bce-c5ae0388a034  172.18.0.8:8300  follower  true   3             3041          0 commits
+consul-1  118dc727-a43f-f532-de6f-1967e9a1e147  172.18.0.3:8300  leader    true   3             3041          -
+consul-3  93df5b65-3b48-826b-ee82-b8c18b3111b9  172.18.0.6:8300  follower  true   3             3041          0 commits
+Current leader: consul-1
+
+================================================================
+SUB-TEST A: killing the current leader (consul-1) -- 2 of 3 remain
+================================================================
+ Container grid-meter-app-consul-1-1 Stopping 
+ Container grid-meter-app-consul-1-1 Stopped 
+
+================================================================
+Polling for the remaining 2 to elect a new leader
+================================================================
+New leader elected: consul-3 at t+2s
+
+================================================================
+Confirming the 2-of-3 cluster is still fully functional (real KV write/read)
+================================================================
+KV put result: Success! Data written to: stage0-marker-1788463350
+KV get result: quorum-of-2-still-works
+
+================================================================
+SUB-TEST B: killing a SECOND agent -- only 1 of 3 left, quorum should be LOST
+================================================================
+Stopping consul-2 (leaving only 1 of 3 alive)
+ Container grid-meter-app-consul-2-1 Stopping 
+ Container grid-meter-app-consul-2-1 Stopped 
+Sole survivor: consul-3
+
+================================================================
+Confirming quorum loss is detected (no leader) within 30s
+================================================================
+No leader reported at t+2s -- quorum correctly lost
+consul-3's own raft view:
+Error getting peers: Failed to retrieve raft configuration: Unexpected response code: 500 (No cluster leader)
+
+================================================================
+Confirming writes requiring consensus are correctly REFUSED, not silently accepted
+================================================================
+KV put attempt with no quorum: exit=1, output: Error! Failed writing data: Unexpected response code: 500 (No cluster leader)
+
+================================================================
+Restoring the full 3-agent cluster
+================================================================
+ Container grid-meter-app-consul-2-1 Starting 
+ Container grid-meter-app-consul-1-1 Starting 
+ Container grid-meter-app-consul-1-1 Started 
+ Container grid-meter-app-consul-2-1 Started 
+All 3 alive again at t+1s
+Node      ID                                    Address          State     Voter  RaftProtocol  Commit Index  Trails Leader By
+consul-2  d236ec51-459c-9cd1-3bce-c5ae0388a034  172.18.0.8:8300  follower  true   3             3065          0 commits
+consul-3  93df5b65-3b48-826b-ee82-b8c18b3111b9  172.18.0.6:8300  leader    true   3             3065          -
+consul-1  118dc727-a43f-f532-de6f-1967e9a1e147  172.18.0.3:8300  follower  false  3             3065          0 commits
+
+================================================================
+VERDICT SUMMARY
+================================================================
+Sub-test A: killed leader (consul-1), new leader elected among survivors: consul-3
+  2-of-3 cluster functional (KV write/read): put=Success! Data written to: stage0-marker-1788463350
+Sub-test B: killed a second agent (consul-2), quorum loss detected: yes
+  Write attempted with no quorum: exit=1 (non-zero/timeout expected -- refused, not silently accepted)
+PASS: 2-of-3 correctly elected a new leader and stayed functional; 1-of-3 correctly lost
+quorum and refused a write requiring consensus, rather than silently continuing degraded.

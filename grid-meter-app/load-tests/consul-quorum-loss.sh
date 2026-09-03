@@ -70,8 +70,14 @@ echo "only 1 was an actual raft voter), which shrank the effective quorum requir
 echo "a misleading result. Checking voter status directly instead of assuming a delay covers it."
 READY=0
 for i in $(seq 1 60); do
-  ALIVE=$(docker compose exec -T consul-1 consul members 2>/dev/null | grep -c "alive")
-  VOTERS=$(docker compose exec -T consul-1 consul operator raft list-peers 2>/dev/null | grep -c "true")
+  # any_running_consul(), not hardcoded to consul-1 -- this loop runs right after
+  # --force-recreate on all 3 agents, so any one of them could individually be the slowest to
+  # come up; a fixed exec target risks reading 0/0 from a not-yet-up consul-1 even while
+  # consul-2/consul-3 are both genuinely fine, the same "chaos script's own observation point
+  # invalidated by unrelated state" shape docs/cross-project-lessons.md already names.
+  POLL_SVC=$(any_running_consul 2>/dev/null || true)
+  ALIVE=$([ -n "$POLL_SVC" ] && docker compose exec -T "$POLL_SVC" consul members 2>/dev/null | grep -c "alive" || echo 0)
+  VOTERS=$([ -n "$POLL_SVC" ] && docker compose exec -T "$POLL_SVC" consul operator raft list-peers 2>/dev/null | grep -c "true" || echo 0)
   LEADER=$(current_leader_service 2>/dev/null || true)
   if [ "$ALIVE" -eq 3 ] && [ "$VOTERS" -eq 3 ] && [ -n "$LEADER" ]; then
     echo "3/3 alive, 3/3 voters, leader=$LEADER, at t+${i}s"
@@ -167,14 +173,18 @@ echo "KV put attempt with no quorum: exit=$WRITE_B_EXIT, output: $WRITE_B"
 banner "Restoring the full 3-agent cluster"
 docker compose start "$LEADER_SVC" "$SECOND_KILL"
 for i in $(seq 1 30); do
-  ALIVE=$(docker compose exec -T consul-1 consul members 2>/dev/null | grep -c "alive")
+  # Same any_running_consul() fix as the setup loop above -- $LEADER_SVC/$SECOND_KILL are the two
+  # nodes just restarted, so hardcoding to consul-1 specifically here would query one of them
+  # while it's still settling, right when a fixed target is most likely to be the wrong one.
+  POLL_SVC=$(any_running_consul 2>/dev/null || true)
+  ALIVE=$([ -n "$POLL_SVC" ] && docker compose exec -T "$POLL_SVC" consul members 2>/dev/null | grep -c "alive" || echo 0)
   if [ "$ALIVE" -eq 3 ]; then
     echo "All 3 alive again at t+${i}s"
     break
   fi
   sleep 1
 done
-docker compose exec -T consul-1 consul operator raft list-peers 2>&1
+docker compose exec -T "$(any_running_consul)" consul operator raft list-peers 2>&1
 
 banner "VERDICT SUMMARY"
 echo "Sub-test A: killed leader ($LEADER_SVC), new leader elected among survivors: ${NEW_LEADER_SVC:-NONE}"

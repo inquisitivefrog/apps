@@ -2201,6 +2201,41 @@ broker's admin listener still settling, plausibly), not a scripting bug,
 and the script handled it gracefully (no crash) both times.
 
 
+**`consul-quorum-loss.sh`'s 3 hardcoded-`consul-1` sites — fixed and
+live-verified (2026-09-03).** Category B from the sweep: this script
+already has a proven `any_running_consul()` helper (used correctly at
+several call sites), but 3 sites still bypassed it — the initial
+"wait for 3/3 alive + voters" readiness loop (right after
+`--force-recreate` on all 3 agents, where any one could individually be
+the slowest to come up), the "restoring the full 3-agent cluster"
+recovery-wait loop, and its trailing diagnostic print. Fixed by routing
+all 3 through `any_running_consul()`, consistent with the rest of the
+file. **Verified with genuinely strong real-world coverage, not a
+contrived test**: this script already performs real chaos (kills the
+actual current leader, then a second agent), so a full run naturally
+tests whether the fix survives `consul-1` being the one killed — and in
+both of two full runs, `consul-1` genuinely *was* the leader Sub-test A
+killed, and was also one of the two nodes mid-restart during the
+"restoring the full cluster" loop (the exact site 2/3 fix) — both runs
+still correctly reported "All 3 alive again" with a real, accurate raft
+peer table, both reached the same clean PASS verdict.
+
+**A real, pre-existing Consul-level state issue found afterward, unrelated
+to this fix**: after the second run, `consul-1` showed as "alive" at the
+gossip layer (`consul members`) but was completely absent from the raft
+peer configuration (`consul operator raft list-peers`) — not merely
+"not yet promoted to voter" (the known stabilization-delay case this
+script's own header comment already documents), but missing from the
+list entirely, plausibly Consul autopilot's dead-server cleanup
+removing it after being down across two chaos runs and not automatically
+re-adding it on a plain restart. Not a bug in this fix (which only
+changes *which* container gets exec'd into for a query, not Consul's own
+raft-membership reconciliation) — resolved by a `--force-recreate` on
+all 3 agents, re-confirmed at a real 3/3-voter state, and confirmed
+Patroni's own cluster was undisturbed by the recreate (3/3 nodes,
+correct roles) before proceeding to further work.
+
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the
