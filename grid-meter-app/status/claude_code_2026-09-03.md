@@ -302,6 +302,45 @@
     than in the Kafka RTO doc) covering the sweep's full findings and
     this fix's live verification in detail.
 
+- **Fixed Category C item 2, per explicit user request** (confirmed live
+  in the previous turn to be a currently-active bug, not a hypothetical:
+  `kafka-2` wasn't leading any partition, so this script's core scenario
+  had never actually tested a real failover).
+  `kafka-leader-failover-rto.sh`'s `LEADER_SVC="kafka-2"` replaced with
+  a dynamic check: parse the live partition-leader distribution, pick
+  whichever broker currently leads the most partitions. Reused the
+  "pick the broker leading the most partitions" technique already
+  proven in this project's own `kafka-controller-failover-rto-test.py`,
+  rather than porting `kafka-ha-demo.sh`'s canary-write/offset-diff
+  mechanism verbatim — that targets a single specific partition, a
+  narrower test than this script's own stated goal of exercising the
+  whole topic at once; the part worth porting was "determine the real
+  target at runtime," not that specific single-partition mechanism.
+  - **A real bug caught on the very first live-verification run, not
+    assumed correct from the code alone**: the initial fix's
+    `LED_COUNT`/`STILL_OLD` checks used an end-of-line-anchored `grep -c`
+    pattern that never actually matches `describe_topic`'s real output
+    (the leader ID is always followed by more tab-separated fields, never
+    end-of-line) — silently printing "leads 0 of 3 partitions" directly
+    below `describe_topic`'s own output clearly showing 2 of 3. Caught by
+    noticing the two didn't agree, not by trusting the syntax looked
+    plausible. Worse than cosmetic: the same broken pattern made the
+    polling loop's "is the old leader really gone" check a structural
+    no-op. Fixed by reusing the exact `grep -oE` extraction already
+    proven correct for picking the leader ID itself.
+  - **Re-verified clean across two further runs**, each against a
+    genuinely different real leadership distribution (`kafka-3` leading
+    all 3 partitions in one, `kafka-2` leading 2 of 3 in the next) — both
+    correctly identified and stopped the real current leader, both
+    correctly reported the real partition count this time, both measured
+    a real RTO (~3.7–3.9s) and confirmed durability through the
+    Traefik-routed query fixed earlier in this pass.
+  - Kafka cluster confirmed healthy after every run; only the intended
+    file left modified.
+  - **Documented**: a new dated section added to `docs/postgres-ha-scope.md`
+    right after the Category C item 1 entry, including the self-caught
+    bug and its fix.
+
 ## Open
 
 - (carried over from `status/claude_chat_2026-09-02.md`, still accurate as
@@ -309,10 +348,22 @@
   - Postgres/Redis/Kafka HA passes are otherwise fully closed
     (infrastructure + application + follow-up corrections) — no further
     stages planned unless a new gap surfaces.
-- The full Category B list (8 files) and the two remaining Category C
-  items (the `kafka-leader-failover-rto.sh` stale-leader assumption,
-  the deliberately-preserved `postgres-replica-failure-test.sh`
-  tradeoff) — reported to the user, not yet acted on further.
+- **One Category B/C finding upgraded from theoretical to live-confirmed
+  by today's own verification runs, still tracked as open — not folded
+  into "done" just because it surfaced mid-verification:**
+  `kafka-acks-gap-repro.sh`'s `KAFKA_BIN=kafka-1` hardcode (used by
+  `describe_topic()`) actually fired during this session's own
+  end-to-end verification run of the unrelated Category C item 1 fix —
+  `describe_topic()` returned "service 'kafka-1' is not running"
+  instead of real topic state, at the exact moment `kafka-1` was one of
+  the two followers this script's own scenario had just stopped. Not
+  fixed; the fix that WAS made (routing the postgres queries through
+  Traefik) is unrelated to this separate Kafka-side hardcode.
+- The remaining 7 Category B files (not live-confirmed this session,
+  found by static audit) and `postgres-replica-failure-test.sh`'s
+  deliberately-preserved `patroni-1` tradeoff (Category C item 3, needs
+  the user's own judgment call, not a mechanical fix) — reported to the
+  user, not yet acted on further.
 
 ## Committed and pushed
 
