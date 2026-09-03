@@ -18,6 +18,7 @@
 # Usage: ./postgres-app-primary-failure-test.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/check-no-stray-traffic.sh || exit 1
 
 LOG_DIR=$(mktemp -d)
 REQUEST_LOG="$LOG_DIR/requests.log"

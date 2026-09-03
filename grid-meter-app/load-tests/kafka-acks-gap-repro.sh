@@ -19,6 +19,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/check-disk-headroom.sh || exit 1
+source scripts/check-no-stray-traffic.sh || exit 1
 
 TOKEN=""
 

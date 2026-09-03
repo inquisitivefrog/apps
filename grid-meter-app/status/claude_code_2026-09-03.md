@@ -630,6 +630,52 @@ so explicitly this turn.
     Traefik's `:55432` entrypoint; api restored to normal config
     (override removed) afterward.
 
+- **Built a standing pre-flight guard against the stray-traffic
+  contamination found above, per explicit user request** ("do we need a
+  test rule... this isn't the first case of contamination that
+  disappeared on retry" → "if that is what we need, then by all
+  means"). Explicitly recommended against a full `docker compose down/
+  up` bounce before every test first: expensive (real multi-minute HA
+  reconvergence — Patroni, Consul, KRaft, Sentinel discovery — on every
+  run), and it would **not** have caught this specific incident anyway,
+  since the contamination was a stray *host* process, not stale
+  *container* state. Built the right-grained fix instead.
+  - **New `scripts/check-no-stray-traffic.sh`**, mirroring the existing
+    `check-disk-headroom.sh` pre-flight pattern (sourced near the top
+    of a script, hard-stops with a clear diagnostic rather than
+    silently auto-cleaning). Samples `docker compose logs api --since
+    <N>s` (default 5s) for any `/api/v1/*` traffic — deliberately
+    excluding `/actuator/health`/`/actuator/prometheus`, which Traefik
+    and Prometheus legitimately hit on their own schedule regardless of
+    what test is running — and refuses to proceed if anything shows up,
+    since that's exactly the shape of the incident this guards against
+    (a leftover process silently mixing its traffic into the next
+    test's own counts before that test has sent a single request of its
+    own).
+  - **Verified both directions live**, not just read for plausibility:
+    confirmed a clean pass against the current quiet environment (exit
+    0), confirmed a real single `GET /api/v1/meters` request correctly
+    trips the hard-stop with an accurate diagnostic (exit 1), confirmed
+    the check clears again once the traffic window passes with no
+    lingering false positive.
+  - **Wired into the 5 scripts that generate and measure real app-level
+    HTTP traffic** — the exact shape at risk of this contamination:
+    `redis-app-primary-failure-test.sh`, `kafka-ha-demo.sh`,
+    `kafka-acks-gap-repro.sh`, `kafka-leader-failover-rto.sh` (added
+    alongside their existing `check-disk-headroom.sh` sourcing), and
+    `postgres-app-primary-failure-test.sh` (didn't previously source
+    the disk-headroom check either; added only the new stray-traffic
+    check, staying scoped to what was asked rather than retrofitting an
+    unrelated gap). Infra-only chaos scripts (Consul/Patroni/Kafka-
+    broker-only, no real app HTTP traffic) deliberately left untouched
+    — not at risk of this specific contamination shape.
+  - **Functionally smoke-tested the actual integration**, not just
+    `bash -n` syntax checks: extracted and ran each modified script's
+    real pre-flight-check preamble in place (correct `$0`/`cd` context,
+    not a relocated copy) to confirm it passes through cleanly — used
+    and immediately deleted a `load-tests/_tmp-*` scratch file for this,
+    practicing the exact discipline (don't leave scratch scripts
+    lying around) this whole check exists to enforce.
 
 ## Next
 
@@ -638,10 +684,15 @@ so explicitly this turn.
 - **The `docker compose kill` incident is closed out** — root-caused,
   independently re-verified against the full stack, and documented as
   a standing lesson.
-- Nothing outstanding from this session unless new work is requested.
-- Docker Compose stack is currently up, **including the Kafka debug-
-  logging overlay** (`docker-compose.kafka-debug.yml`, TRACE-level
-  controller logging on all 3 brokers) rather than the normal dev
-  config — worth knowing if picking this back up; bring it back with a
-  plain `docker compose up -d` (no `-f docker-compose.kafka-debug.yml`)
-  to revert to standard logging.
+- **The Redis Lettuce/Kafka-retry hypothesis is now closed** — refuted
+  with direct, isolated, twice-replicated evidence per condition.
+- **The stray-traffic contamination pattern now has a standing
+  pre-flight guard** (`scripts/check-no-stray-traffic.sh`), wired into
+  every app-level HTTP-traffic-measuring script — closed, not just
+  flagged as a one-off hygiene note.
+- This session's remaining uncommitted work (`api/` changes,
+  `docs/redis-ha-scope.md`, the new compose override, the new
+  stray-traffic check and its 5 call sites) awaits an explicit "commit
+  and push" per this session's established pattern.
+- Docker Compose stack is currently up on normal config (no debug
+  overlays active).

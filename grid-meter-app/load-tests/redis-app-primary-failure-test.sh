@@ -29,6 +29,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/check-disk-headroom.sh || exit 1
+source scripts/check-no-stray-traffic.sh || exit 1
 
 DATA_SVCS="redis redis-replica-1 redis-replica-2"
 

@@ -14,6 +14,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/check-disk-headroom.sh || exit 1
+source scripts/check-no-stray-traffic.sh || exit 1
 
 KAFKA_BIN="docker compose exec -T kafka-1 /opt/kafka/bin"
 TOKEN=""
