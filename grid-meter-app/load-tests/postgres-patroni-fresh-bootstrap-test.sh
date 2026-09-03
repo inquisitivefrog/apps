@@ -68,9 +68,24 @@ for v in "$VOL_1" "$VOL_2" "$VOL_3"; do
 done
 
 banner "Step 2: clearing Consul's KV tree for this cluster scope, so it looks genuinely new"
-docker compose exec -T consul-1 consul kv delete -recurse service/gridmeter-postgres-ha/ 2>&1
+# Dynamic query target, not hardcoded to consul-1 -- this script never touches Consul agents
+# itself, but a prior, unrelated test run leaving consul-1 specifically down (the same residual-
+# state risk already found and fixed multiple times elsewhere in this project today) would
+# otherwise fail this step for a reason that has nothing to do with what's being tested here.
+CONSUL_EXEC=""
+for AGENT in consul-1 consul-2 consul-3; do
+  if docker compose exec -T "$AGENT" consul members >/dev/null 2>&1; then
+    CONSUL_EXEC="$AGENT"
+    break
+  fi
+done
+if [ -z "$CONSUL_EXEC" ]; then
+  echo "Could not reach any Consul agent -- aborting." >&2
+  exit 1
+fi
+docker compose exec -T "$CONSUL_EXEC" consul kv delete -recurse service/gridmeter-postgres-ha/ 2>&1
 echo "--- confirming empty ---"
-docker compose exec -T consul-1 consul kv get -recurse service/gridmeter-postgres-ha 2>&1 || echo "(empty, as expected)"
+docker compose exec -T "$CONSUL_EXEC" consul kv get -recurse service/gridmeter-postgres-ha 2>&1 || echo "(empty, as expected)"
 
 banner "Step 3: bringing up patroni-1 alone first (matching the original Stage 2 bootstrap order)"
 docker compose up -d patroni-1

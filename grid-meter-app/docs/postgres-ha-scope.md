@@ -2236,6 +2236,33 @@ Patroni's own cluster was undisturbed by the recreate (3/3 nodes,
 correct roles) before proceeding to further work.
 
 
+**`postgres-patroni-fresh-bootstrap-test.sh`'s 2 hardcoded-`consul-1`
+sites — fixed and verified (2026-09-03), scoped deliberately narrower
+than the fix's usual live-run treatment.** This script never touches
+Consul agents itself (only Patroni containers), so the risk here is the
+same residual-state category found repeatedly earlier today (a *prior,
+unrelated* test leaving `consul-1` down) rather than this script's own
+action colliding with itself. Fixed with a discovery loop matching the
+pattern established throughout this pass. **Deliberately not verified
+by running the actual fixed lines against the live system**: this
+script's own Step 2 deletes the real `service/gridmeter-postgres-ha/`
+Consul KV tree that the currently-running, live-cutover Patroni cluster
+depends on for its own coordination — unlike every other fix verified
+today (all read-only "identify the leader" queries), running this for
+real would genuinely disrupt the live app, the exact kind of
+consequence this script's own header comment already flags as needing
+explicit sign-off, not something to trigger as a side effect of
+verifying a mechanical exec-target fix. Instead, verified the
+discovery-loop mechanism alone, in isolation, using only a harmless
+read-only `consul members` check: confirmed it correctly picks
+`consul-1` when healthy, and correctly falls through to `consul-2` when
+`consul-1` is deliberately stopped — the identical mechanism already
+proven correct at half a dozen other call sites earlier in this pass,
+just not re-run against this specific script's own destructive KV
+operations. Confirmed Patroni's live cluster was undisturbed throughout
+(3/3 nodes, correct roles, before and after).
+
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the
