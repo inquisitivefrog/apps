@@ -181,13 +181,26 @@
     (infrastructure + application + follow-up corrections) — no further
     stages planned unless a new gap surfaces.
 
+## Committed and pushed
+
+Three focused commits, per this project's own "split unrelated changes"
+convention, pushed to `origin/main` (`e78e67e..7315611`, bypassed the 3
+required status checks — same documented solo-owner behavior as every
+prior session):
+
+1. `776b4b4` — the two Postgres `set -e` guard fixes plus the Stage 7
+   backgrounded-loop `cross-project-lessons.md` write-up
+   (`docs/cross-project-lessons.md`, `docs/postgres-ha-scope.md`,
+   `load-tests/postgres-app-primary-failure-test.sh`).
+2. `0af7590` — the Kafka RTO investigation's archival-gap fix
+   (`docs/testing-strategy-ha-supplement.md`,
+   `load-tests/kafka-controller-failover-rto-test.py`).
+3. `7315611` — this status log.
+
+Working tree clean as of this push.
+
 ## Next
 
-- Nothing committed yet this session — `docs/cross-project-lessons.md`,
-  `docs/postgres-ha-scope.md`, `docs/testing-strategy-ha-supplement.md`,
-  `load-tests/postgres-app-primary-failure-test.sh`, and
-  `load-tests/kafka-controller-failover-rto-test.py` are all modified,
-  awaiting a commit decision.
 - The identical hardcoded-`patroni-2` pattern found in 4 sibling scripts
   (`postgres-consul-nonleader-agent-loss-test.sh`,
   `postgres-consul-partition-test.sh`, `postgres-consul-quorum-loss-test.sh`,
