@@ -21,11 +21,24 @@ the Postgres self-demotion investigation's whole-second `SECONDS`-builtin quanti
 unpredictable per-call variance instead of fixed 1s quantization, which would have been even
 harder to notice without deliberately timing a single call first.
 
-Usage: ./kafka-controller-failover-rto-test.py [--repeats 3]
+Usage: ./kafka-controller-failover-rto-test.py [--repeats 3] [--pass-label LABEL]
 Prerequisites: full stack + kafka-debug overlay up
   (docker compose -f docker-compose.yml -f docker-compose.kafka-debug.yml up -d),
 readings topic with 3 partitions / RF 3 already provisioned by the API.
 Restores all 3 brokers before exiting, including on error/interrupt.
+
+Archival note (2026-09-04): every output filename below is namespaced by --pass-label
+(default: a UTC timestamp) after this script's own evidence-archival discipline was found to
+have a real gap -- the original version used a fixed filename scheme with no pass identifier
+at all, so re-running it a second time (to capture the elapsed-time diagnostic that closed out
+docs/testing-strategy-ha-supplement.md's own "~250ms overclaim" correction) silently overwrote
+the first corrected pass's raw controller.log slices and results JSON with the second pass's
+data. That first pass's numbers survive only as a quoted terminal transcript in that doc's
+prose -- not as independently re-checkable raw evidence -- and can't be recovered at this
+point. This fix doesn't change that; it only guarantees every future invocation gets its own
+non-colliding, fully-archived evidence set going forward, the same way the pilot/pilot2/BUGGY/
+CONTAMINATED runs already preserved in results/ happened to survive only because each one's
+name was manually varied by hand at the time.
 """
 import argparse
 import json
@@ -200,7 +213,7 @@ def wait_for_full_health(timeout_s=60):
     return False
 
 
-def run_trial(condition, run_num):
+def run_trial(condition, run_num, pass_label):
     partition, leader, controller_id, leaders, isrs = wait_for_target(condition)
     is_controller_led = (leader == controller_id)
     print(f"  Target: partition {partition}, leader=kafka-{leader}, controller=kafka-{controller_id} "
@@ -211,7 +224,7 @@ def run_trial(condition, run_num):
     tail_paths = {}
     tail_procs = []
     for b in surviving:
-        path = f"results/kafka-{condition}-run{run_num}-kafka{b}-controller.log"
+        path = f"results/kafka-{pass_label}-{condition}-run{run_num}-kafka{b}-controller.log"
         proc, f = start_log_tail(b, path)
         tail_procs.append((proc, f))
         tail_paths[b] = path
@@ -296,14 +309,24 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--conditions", default="controller,non-controller")
+    parser.add_argument(
+        "--pass-label",
+        default=None,
+        help="Namespaces every output filename for this invocation (per-trial controller.log "
+             "slices and the results JSON) so repeat runs never silently collide/overwrite "
+             "each other's archived evidence. Defaults to a UTC timestamp if not given -- "
+             "explicit only when you want a human-readable label instead.",
+    )
     args = parser.parse_args()
+    pass_label = args.pass_label or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    print(f"Archiving this pass's evidence under label: {pass_label}")
 
     results = []
     try:
         for condition in args.conditions.split(","):
             for i in range(1, args.repeats + 1):
                 print(f"\n=== Trial: condition={condition} run={i}/{args.repeats} ===")
-                result = run_trial(condition, i)
+                result = run_trial(condition, i, pass_label)
                 results.append(result)
                 if not result["quorum_healthy_after"]:
                     print("WARNING: full ISR not restored before timeout -- extra settle pause",
@@ -320,9 +343,10 @@ def main():
               f"was_controller={r['was_controller']} rto={r['rto_s']}s "
               f"external_confirm={r['external_confirm_s']}s new_controller=kafka-{r['new_controller']}")
 
-    with open("results/kafka-controller-failover-rto-results.json", "w") as f:
+    results_path = f"results/kafka-controller-failover-rto-results-{pass_label}.json"
+    with open(results_path, "w") as f:
         json.dump(results, f, indent=2)
-    print("\nFull results written to results/kafka-controller-failover-rto-results.json")
+    print(f"\nFull results written to {results_path}")
 
 
 if __name__ == "__main__":

@@ -669,10 +669,23 @@ largely tested; see below per-scenario.**
   pass is also where the elapsed-time diagnostic above was measured,
   so both the fix and its own explanation share the same evidence:
 
-  | Condition | Pass 1: Run 1 | Run 2 | Run 3 | Pass 2: Run 1 | Run 2 | Run 3 | Internal RTO band (n=6) |
-  |---|---|---|---|---|---|---|---|
-  | Controller killed | 0.155s | 0.138s | 0.142s | 0.167s | 0.151s | 0.153s | 0.138–0.167s |
-  | Non-controller killed | 0.143s | 0.115s | 0.114s | 0.112s | 0.110s | 0.106s | 0.106–0.143s |
+  | Condition | Pass 1: Run 1 | Run 2 | Run 3 | Pass 2: Run 1 | Run 2 | Run 3 | 2026-09-03 re-run: Run 1 | Run 2 | Run 3 | Internal RTO band (n=9) |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | Controller killed | 0.155s | 0.138s | 0.142s | 0.167s | 0.151s | 0.153s | 0.144s | 0.122s | 0.141s | 0.122–0.167s |
+  | Non-controller killed | 0.143s | 0.115s | 0.114s | 0.112s | 0.110s | 0.106s | 0.139s | 0.098s | 0.133s | 0.098–0.143s |
+
+  **The rightmost 3 columns (2026-09-03) added once the archival-rigor
+  gap this section originally disclosed was closed — see "Archival gap
+  closed" under this stage's Raw evidence pointer, further down.**
+  Labeled by date rather than "Pass 3" deliberately, to avoid colliding
+  with this doc's own separate "pass 1/2/3" numbering for the
+  `external_confirm_s` metric a few paragraphs below, which counts an
+  earlier, RTO-buggy-but-`external_confirm_s`-clean run as its own pass
+  1 — a different scheme than this table's Pass 1/Pass 2 (both already
+  RTO-corrected). Widens both RTO bands slightly (two individual
+  samples, 0.122s and 0.098s, land below the tighter n=6 range first
+  reported) without changing the conclusion: the two conditions still
+  overlap heavily.
 
   **This directly cross-validates against `kafka-ha-demo.sh`'s own
   production measurements, not just against itself.** Three real
@@ -704,22 +717,25 @@ largely tested; see below per-scenario.**
   bug in its own retest, both now found and fixed in turn.
 
   **The secondary finding is upgraded from "single-sample, not yet
-  confirmed" to a real, now three-times-replicated result** (12 total
-  trials across the two corrected RTO passes plus the original
-  RTO-buggy-but-`external_confirm_s`-clean pass, since this metric
-  always used `kill_wall_time` and was never affected by the timing
-  bug above): controller-killed
+  confirmed" to a real, now four-times-replicated result** (12 total
+  trials across the two corrected RTO passes, the original
+  RTO-buggy-but-`external_confirm_s`-clean pass, and the 2026-09-03
+  archival-rigor re-run, since this metric always used `kill_wall_time`
+  and was never affected by either the original timing bug or the
+  archival-filename bug): controller-killed
   `external_confirm_s` — pass 1 (original): 4.137s / 13.927s / 6.668s;
   pass 2 (corrected RTO, first run): 13.764s / 13.965s / 14.952s;
   pass 3 (corrected RTO, second run, the same pass the elapsed-time
-  diagnostic above came from): 12.407s / 6.757s / 12.301s. Non-controller-killed,
-  same three passes: 3.801s / 3.741s / 3.737s; 3.712s / 3.788s / 3.816s;
-  3.997s / 3.721s / 3.804s. **Every single controller-killed sample
-  (9 of 9) exceeds every single non-controller-killed sample (9 of 9)**
-  — the non-controller band is consistently tight (3.71–4.00s across
-  all three passes), while the controller band is wider and more
-  variable (4.14–14.95s) but never once dips into non-controller range.
-  Three independent passes showing the same non-overlapping ordering,
+  diagnostic above came from): 12.407s / 6.757s / 12.301s; pass 4
+  (2026-09-03 archival-fix re-run): 4.0s / 12.656s / 15.153s.
+  Non-controller-killed, same four passes: 3.801s / 3.741s / 3.737s;
+  3.712s / 3.788s / 3.816s; 3.997s / 3.721s / 3.804s; 3.701s / 3.902s /
+  3.853s. **Every single controller-killed sample (12 of 12) exceeds
+  every single non-controller-killed sample (12 of 12)**
+  — the non-controller band is consistently tight (3.70–4.00s across
+  all four passes), while the controller band is wider and more
+  variable (4.0–15.15s) but never once dips into non-controller range.
+  Four independent passes showing the same non-overlapping ordering,
   even with real variability in the controller band's own width, is
   stronger confirmation than this project's usual three-repeat bar
   asks for on a single pass. This is
@@ -754,7 +770,45 @@ largely tested; see below per-scenario.**
   survive only as the quoted terminal transcript above, not as
   separately archived files — worth naming as a real gap in this
   investigation's own archival discipline, not glossed over just
-  because the numbers themselves were already captured in prose);
+  because the numbers themselves were already captured in prose).
+
+  **Archival gap closed (2026-09-03), by fixing the root cause rather
+  than just re-running once more.** The script's filename scheme now
+  takes a `--pass-label` argument (default: a UTC timestamp), namespacing
+  every per-trial `controller.log` slice and the results JSON so a future
+  re-run can never again silently collide with and overwrite a prior
+  pass's evidence the way pass 2 overwrote pass 1. Re-ran the full
+  6-trial suite once under the fixed script
+  (`kafka-controller-failover-rto-results-20260903T175404Z.json`, label
+  `20260903T175404Z`) specifically to backfill a third, fully-archived
+  data point rather than leave the record at "one archived pass plus one
+  prose-only quote." **Confirmed live that pass 2's original files were
+  genuinely untouched** (unchanged mtimes) before trusting the new run's
+  own output.
+
+  This third pass's raw numbers: controller-killed 0.144s/0.122s/0.141s,
+  non-controller-killed 0.139s/0.098s/0.133s. **Reported precisely
+  rather than smoothed to fit**: two individual samples (0.122s and
+  0.098s) land just below the previously-stated 0.138–0.167s and
+  0.106–0.143s bands — those bands were never a hard theoretical limit,
+  just the observed range of the first 6 corrected trials, and a third
+  independent pass finding the true range is a little wider is the
+  expected, healthy outcome of adding more data, not a contradiction of
+  anything. **The actual conclusion is unaffected and now more strongly
+  evidenced**: the two conditions' ranges (controller 0.122–0.144s,
+  non-controller 0.098–0.139s) still overlap heavily, consistent with
+  "no measurable internal-RTO effect from controller identity" across
+  all 3 passes now, not just 2. The secondary `external_confirm_s`
+  finding is strengthened further still: this pass's 3 controller-killed
+  values (4.0s, 12.656s, 15.153s) each exceed all 3 of its
+  non-controller-killed values (3.701s, 3.902s, 3.853s), extending the
+  clean non-overlapping separation from 9-of-9 to **12 of 12** samples
+  across the 4 independent passes that section's own numbering counts
+  (see the fully updated `external_confirm_s` writeup further down for
+  the complete per-pass breakdown).
+
+  Updated raw evidence: `load-tests/results/*-20260903T175404Z*` (12
+  per-trial `controller.log` slices plus the results JSON, this pass);
   `load-tests/results/*-BUGGY-early-kill-dt*`
   and `load-tests/results/*-CONTAMINATED-jvm-poll-overhead*` (both
   earlier, wrong full runs, kept and clearly labeled rather than
