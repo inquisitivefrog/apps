@@ -2058,6 +2058,33 @@ operator raft list-peers`, completely unguarded) and
 different command — flagged here rather than silently expanded into,
 same discipline as everywhere else in this pass.
 
+**Follow-up (2026-09-03, later same day): both of these fixed too,
+live-verified with the higher rigor the raft-leader check's severity
+warranted.** The `consul-1` raft-leader check is not merely hardcoded
+but completely unguarded — this project's *worst* instance of the
+pattern found so far, since it's the very first command in its script
+and fails silently under `set -e` with zero diagnostic. Fixed with a
+3-agent discovery loop (`consul-1`/`consul-2`/`consul-3`), matching the
+established pattern. The `show-config` check got a variant of the same
+fix: the node-reachability step is now dynamic, but the `grep`
+extracting `ttl`/`loop_wait`/`retry_timeout` deliberately stays fatal
+if a successfully-reached node's config is missing those settings —
+that's a real config problem worth stopping over, not something to
+paper over by trying another node. **Verification went beyond the
+earlier fixes' bar, matching the raft-leader check's higher severity**:
+along the way, discovered that an inline `set -e; cmd; echo` typed
+directly as one ad hoc multi-line command does *not* reliably enforce
+`set -e` the way a real script file run via `bash script.sh` does — a
+real methodology gap, caught by a controlled side-by-side comparison
+before trusting the result, unrelated to but found while building this
+fix's own negative control. With that resolved, confirmed via a proper
+negative control (a real script file, not inline) that the pre-fix
+`consul-1` code dies silently, exit 1, with `consul-1` genuinely
+stopped; confirmed the fixed version survives the identical fault and
+falls through correctly, exit 0; confirmed the `show-config` fix
+survives `patroni-1` being stopped the same way. Cluster restored to
+full health after every test.
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the

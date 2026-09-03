@@ -43,7 +43,23 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "=== Confirming live ttl/loop_wait/retry_timeout (per this stage's own prerequisite) ==="
-docker compose exec -T patroni-1 patronictl -c /etc/patroni.yml show-config 2>&1 | grep -E "ttl|loop_wait|retry_timeout"
+# Dynamic query target for REACHING a node, not hardcoded -- same "monitoring helper's own
+# hardcoded query target" mistake already found and fixed elsewhere in this project. Deliberately
+# keeps the grep itself fatal if a successfully-reached node's config is missing these settings --
+# that's a real config problem worth stopping over, not something to paper over by trying another
+# node, so only the "which node do we ask" step gets the retry/fallthrough treatment.
+CONFIG=""
+for NODE in patroni-1 patroni-2 patroni-3; do
+  if CONFIG=$(docker compose exec -T "$NODE" patronictl -c /etc/patroni.yml show-config 2>/dev/null); then
+    break
+  fi
+  CONFIG=""
+done
+if [[ -z "$CONFIG" ]]; then
+  echo "Could not reach any Patroni node to confirm live ttl/loop_wait/retry_timeout, aborting" >&2
+  exit 1
+fi
+echo "$CONFIG" | grep -E "ttl|loop_wait|retry_timeout"
 
 echo
 echo "=== Identifying current leader and its paired Consul agent ==="

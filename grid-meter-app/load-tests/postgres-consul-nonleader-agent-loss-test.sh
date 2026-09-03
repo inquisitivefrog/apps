@@ -20,7 +20,23 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "=== Identifying the Consul raft leader (to avoid) ==="
-RAFT_INFO=$(docker compose exec -T consul-1 consul operator raft list-peers 2>&1)
+# Dynamic query target, not hardcoded -- same "monitoring helper's own hardcoded query target"
+# mistake already found and fixed elsewhere in this project (Kafka's cluster_state(),
+# postgres-app-primary-failure-test.sh's own leader-identification check). Any agent can answer
+# `raft list-peers` (it's cluster-wide state, not agent-specific) -- tries each known agent in
+# turn until one actually answers, rather than dying unguarded on this script's very first
+# command if consul-1 specifically happens to be down.
+RAFT_INFO=""
+for AGENT in consul-1 consul-2 consul-3; do
+  if RAFT_INFO=$(docker compose exec -T "$AGENT" consul operator raft list-peers 2>/dev/null); then
+    break
+  fi
+  RAFT_INFO=""
+done
+if [[ -z "$RAFT_INFO" ]]; then
+  echo "Could not reach any Consul agent to identify the raft leader, aborting" >&2
+  exit 1
+fi
 echo "$RAFT_INFO"
 RAFT_LEADER=$(echo "$RAFT_INFO" | awk '$4=="leader" {print $1}')
 echo "Raft leader: $RAFT_LEADER"
