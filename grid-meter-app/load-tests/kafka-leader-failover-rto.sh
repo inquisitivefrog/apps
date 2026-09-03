@@ -54,12 +54,39 @@ curl -s -o /dev/null -w "HTTP %{http_code}\n" -X POST http://localhost/api/v1/re
   -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -d '{"meterId":"'"$METER_ID"'","readingTimestamp":"2026-08-28T12:00:00Z","value":1.111}'
 
-# kafka-2 currently leads all 3 partitions (a side effect of an earlier test in this session,
-# auto.leader.rebalance.enable's 300s check interval hasn't run yet) -- stopping it tests failover
-# for the whole topic at once, a broader and arguably more realistic "one node incident" scenario
-# than isolating a single partition.
-LEADER_SVC="kafka-2"
-banner "Stopping the leader ($LEADER_SVC) -- kafka-1 and kafka-3 (and controller quorum) stay up"
+# Dynamically determined, not a stale hardcoded assumption -- an earlier version of this script
+# hardcoded LEADER_SVC="kafka-2" based on a one-time observation written into a comment, never
+# re-verified at runtime. Confirmed live (2026-09-03) this goes stale fast: on a real re-run,
+# kafka-2 wasn't leading any partition at all, so "stopping the leader" tested nothing real --
+# the identical bug already found and fixed once in kafka-ha-demo.sh's own Scenario 1, just never
+# ported to this sibling script until now. Picks whichever broker currently leads the MOST
+# partitions (preserving this test's original intent -- impact the whole topic's traffic, not
+# just one partition -- without requiring the fragile precondition that one broker leads
+# literally all 3, which isn't the guaranteed steady state: leadership has been observed split
+# across all 3 brokers in some runs, concentrated in one in others). Same "pick the broker
+# leading the most partitions right now" technique already proven in this project's
+# kafka-controller-failover-rto-test.py.
+banner "Determining which broker currently leads the most partitions (real state, not an assumption)"
+DESC=$(describe_topic)
+echo "$DESC"
+LEADER_ID=$(echo "$DESC" | grep -oE "Leader: [0-9]+" | awk '{print $2}' | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+if [ -z "$LEADER_ID" ]; then
+  echo "Could not determine any partition leader from describe_topic output -- aborting." >&2
+  exit 1
+fi
+LEADER_SVC="kafka-$LEADER_ID"
+# Reuses the exact `grep -oE "Leader: [0-9]+"` extraction already proven correct above, rather
+# than grep -c "Leader: N$" -- caught live (2026-09-03) that the $ end-of-line anchor never
+# matches, since "Leader: N" is always followed by more tab-separated fields (Replicas:, Isr:,
+# ...) on the same line, not end-of-line. That bug silently zeroed this count and, more
+# seriously, made the STILL_OLD check below a structural no-op (always reading 0 regardless of
+# whether the old leader was still reported) -- caught by actually running this and noticing the
+# printed count didn't match the describe_topic output directly above it, not assumed correct
+# because the syntax looked plausible.
+LED_COUNT=$(echo "$DESC" | grep -oE "Leader: [0-9]+" | awk -v id="$LEADER_ID" '$2==id' | wc -l | tr -d ' ')
+echo "$LEADER_SVC currently leads $LED_COUNT of 3 partitions -- this is the broker being stopped"
+
+banner "Stopping the leader ($LEADER_SVC) -- the other two brokers (and controller quorum) stay up"
 STOP_START=$(now_ms)
 docker compose stop "$LEADER_SVC"
 
@@ -68,10 +95,10 @@ NEW_LEADER_MS=""
 for i in $(seq 1 60); do
   DESC=$(describe_topic 2>/dev/null)
   LEADERLESS=$(echo "$DESC" | grep -c "Leader: -1\|Leader: none")
-  STILL_OLD=$(echo "$DESC" | grep -c "Leader: 2")
+  STILL_OLD=$(echo "$DESC" | grep -oE "Leader: [0-9]+" | awk -v id="$LEADER_ID" '$2==id' | wc -l | tr -d ' ')
   if [ "$LEADERLESS" -eq 0 ] && [ "$STILL_OLD" -eq 0 ]; then
     NEW_LEADER_MS=$(( $(now_ms) - STOP_START ))
-    echo "All 3 partitions have a new leader (not broker 2, not leaderless) after ${NEW_LEADER_MS}ms"
+    echo "All 3 partitions have a new leader (not broker $LEADER_ID, not leaderless) after ${NEW_LEADER_MS}ms"
     echo "$DESC"
     break
   fi

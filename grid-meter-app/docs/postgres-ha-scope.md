@@ -2129,6 +2129,47 @@ broker leads (Category C item 2, not fixed here) — `kafka-2` wasn't
 actually leading any partition when this ran, so "stopping the leader"
 tested nothing real, exactly as flagged.
 
+**Category C item 2 — fixed and live-verified (2026-09-03), same day.**
+`kafka-leader-failover-rto.sh`'s `LEADER_SVC="kafka-2"` replaced with a
+dynamic check: parse the live partition-leader distribution and pick
+whichever broker currently leads the *most* partitions, preserving the
+script's own original intent (impact the whole topic's traffic, not
+just one partition) without requiring the fragile precondition that one
+broker leads literally all 3 — confirmed directly across today's own
+runs that this isn't the guaranteed steady state; leadership has been
+observed split across all 3 brokers in some snapshots, concentrated in
+one in others. Same "pick the broker leading the most partitions right
+now" technique already proven in this project's own
+`kafka-controller-failover-rto-test.py`. Reused this same technique
+rather than porting `kafka-ha-demo.sh`'s canary-write/offset-diff
+approach verbatim, since that mechanism targets a single specific
+partition (a genuinely different, narrower test than this script's own
+stated goal of exercising the whole topic at once) — the fix that
+matters, ported faithfully, is "determine the real target at runtime,"
+not the specific single-partition-targeting mechanism.
+
+**A real bug caught on the very first live-verification run, not
+assumed correct from the code alone.** The initial fix's `LED_COUNT`
+and `STILL_OLD` checks used `grep -c "Leader: $LEADER_ID\$"` — anchored
+to end-of-line — but `describe_topic`'s actual output never ends a line
+right after the leader ID; it's always followed by more tab-separated
+fields (`Replicas:`, `Isr:`, ...). The anchor silently never matched
+anything, printing "leads 0 of 3 partitions" immediately below
+`describe_topic`'s own output clearly showing 2 of 3 — caught by
+noticing the two didn't agree, not by trusting the syntax looked
+plausible. Worse than cosmetic: the same broken pattern made
+`STILL_OLD` (the polling loop's "is the old leader really gone" check)
+a structural no-op, always reading 0 regardless of the real state.
+Fixed by reusing the exact `grep -oE "Leader: [0-9]+"` extraction
+already proven correct for picking `LEADER_ID` itself, rather than a
+second, differently-anchored pattern. Re-verified clean across two
+further runs, each against a different real leadership distribution
+(`kafka-3` leading all 3 partitions in one run, `kafka-2` leading 2 of 3
+in the next) — both correctly identified and stopped the actual current
+leader, both correctly reported the real partition count, both measured
+a real RTO (~3.7–3.9s) and confirmed durability through the Traefik-
+routed query fixed earlier in this same pass.
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the
