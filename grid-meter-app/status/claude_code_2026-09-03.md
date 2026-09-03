@@ -173,6 +173,36 @@
     table, the `external_confirm_s` passage, and the archival-gap
     disclosure itself.
 
+- **Fixed the hardcoded-`patroni-2` pattern in the 4 flagged sibling
+  scripts, per explicit user request ("fix it please").**
+  - `postgres-primary-failure-test.sh` and `postgres-consul-partition-test.sh`
+    each had one occurrence — fixed inline with the same dynamic
+    3-node-discovery-loop pattern used for the original fix.
+  - `postgres-consul-nonleader-agent-loss-test.sh` had one occurrence,
+    fixed the same way.
+  - `postgres-consul-quorum-loss-test.sh` had the pattern at 3 call
+    sites (initial identification, a recovery-wait poll, final cleanup)
+    — factored into a shared `query_any_node()` helper instead of
+    tripling the loop, since all 3 sites needed identical behavior.
+  - **Live verification, not just syntax checks**: extracted and ran
+    each script's actual (already-edited) leader-identification block
+    directly against the real, healthy cluster — confirmed correct
+    output at every site, proving the edits integrate correctly with
+    each script's surrounding logic. Separately fault-injection tested
+    `query_any_node()` itself: stopped `patroni-1` (its first-tried
+    node), confirmed the helper correctly falls through to `patroni-2`,
+    exit 0. Cluster restored to full health afterward.
+  - **Two more, distinct hardcoded-target instances found incidentally
+    while reading these files, not fixed**: a completely unguarded
+    `docker compose exec -T consul-1 consul operator raft list-peers`
+    in `postgres-consul-nonleader-agent-loss-test.sh`, and a
+    hardcoded-to-`patroni-1` `show-config` prerequisite check in
+    `postgres-consul-partition-test.sh` — same bug shape, different
+    command, flagged rather than silently fixed without being asked.
+  - **Documented**: `docs/postgres-ha-scope.md`'s existing "not fixed
+    here, flagged for follow-up" note updated in place to record the
+    fix, the verification, and the two new incidental findings.
+
 ## Open
 
 - (carried over from `status/claude_chat_2026-09-02.md`, still accurate as
@@ -180,11 +210,14 @@
   - Postgres/Redis/Kafka HA passes are otherwise fully closed
     (infrastructure + application + follow-up corrections) — no further
     stages planned unless a new gap surfaces.
+- Two newly-found, unfixed hardcoded-target instances (see above): the
+  unguarded `consul-1` raft-leader check and the hardcoded-`patroni-1`
+  `show-config` check.
 
-## Committed and pushed
+## Committed and pushed (earlier this session)
 
-Three focused commits, per this project's own "split unrelated changes"
-convention, pushed to `origin/main` (`e78e67e..7315611`, bypassed the 3
+Four commits, per this project's own "split unrelated changes"
+convention, pushed to `origin/main` (`e78e67e..1432158`, bypassed the 3
 required status checks — same documented solo-owner behavior as every
 prior session):
 
@@ -196,16 +229,20 @@ prior session):
    (`docs/testing-strategy-ha-supplement.md`,
    `load-tests/kafka-controller-failover-rto-test.py`).
 3. `7315611` — this status log.
+4. `1432158` — status log follow-up noting the commit/push itself.
 
-Working tree clean as of this push.
+**Not yet committed**: the 4-sibling-script hardcoded-`patroni-2` fix
+above (`postgres-primary-failure-test.sh`,
+`postgres-consul-partition-test.sh`,
+`postgres-consul-nonleader-agent-loss-test.sh`,
+`postgres-consul-quorum-loss-test.sh`) and this section's own update.
 
 ## Next
 
-- The identical hardcoded-`patroni-2` pattern found in 4 sibling scripts
-  (`postgres-consul-nonleader-agent-loss-test.sh`,
-  `postgres-consul-partition-test.sh`, `postgres-consul-quorum-loss-test.sh`,
-  `postgres-primary-failure-test.sh`) — deliberately not fixed this
-  session, flagged for a future follow-up if those scripts are revisited.
+- The two newly-found, unfixed hardcoded-target instances (unguarded
+  `consul-1` raft-leader check, hardcoded-`patroni-1` `show-config`
+  check) — flagged, not fixed, for a future follow-up if those scripts
+  are revisited.
 - Docker Compose stack is currently up, **including the Kafka debug-
   logging overlay** (`docker-compose.kafka-debug.yml`, TRACE-level
   controller logging on all 3 brokers) rather than the normal dev
