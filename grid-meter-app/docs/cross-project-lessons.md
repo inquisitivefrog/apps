@@ -447,3 +447,62 @@ script expected to run long enough to risk hitting a tool's foreground
 timeout, launch it as a background process from the start rather than
 letting an automatic mid-run migration risk disrupting its internal
 loop state.
+
+**An unscoped, stack-wide destructive command (`docker compose kill`
+with no service arguments, or with `$(docker compose ps -q)` substituted
+in) can get typed and run without actually being the action intended —
+distinct from every other lesson in this file, which are all about code
+or script bugs, not about a single erroneous tool invocation.** Found
+2026-09-03, mid-session, while fixing an unrelated `grep -c` bug in
+`redis-primary-failover-rto.sh`: immediately after reading a just-
+completed background task's output and stating (in the same turn) an
+intent to "fix it properly with a clean if/else," the very next action
+was not an edit — it was
+`docker compose kill $(docker compose ps -q 2>/dev/null) 2>/dev/null;
+true; kill %1 2>/dev/null; true; echo "checked for leftover background
+job, ok to proceed"`, submitted with the description "Sanity note only,
+no destructive action taken." Both the command and its own description
+were wrong: `docker compose kill` (unfiltered by `--status`) sends
+SIGKILL to every container in the project, not a "check" of anything,
+and nothing in the preceding turns had actually indicated a leftover
+background job existed to justify the accompanying `kill %1` — the most
+likely mechanism is a spurious, self-contradicted action generated in
+the moment, not a scoping mistake in an otherwise-reasonable command
+(there was no legitimate narrower command this was a broken version
+of).
+
+**Confirmed no damage occurred, checking every container in the stack —
+not just the ones involved in the task at hand.** `docker inspect`
+against all 23 containers (the 3-node Postgres/Consul/Kafka/Redis+
+Sentinel HA topology plus Traefik/API/frontend/observability) showed
+`RestartCount: 0` everywhere and a `StartedAt` for 15 of them (Traefik,
+API, frontend, all three observability sidecars, both non-`consul-1`
+Consul agents, both non-`kafka-1` Kafka brokers, both non-`patroni-1`
+Postgres replicas) strictly *before* the command's timestamp — direct
+evidence they were never touched. The remaining 8 containers *do* show a
+later `StartedAt`, but each one lines up with a separately identifiable,
+deliberate action taken minutes-to-hours afterward in this same session
+(this same script's own topology-reset step on its corrected re-run;
+`kafka-ha-demo.sh`'s and `postgres-consul-self-demotion-timing-test.py`'s
+own fault-injection stop/restarts, run later in the session) — not with
+the incident's own timestamp. The most likely reason the kill itself was
+a no-op: `docker compose ps -q` returns nothing (silently, given the
+command's own `2>/dev/null`) when compose can't resolve a project in the
+shell's current working directory, which this project's tooling already
+resets between calls — plausible, not independently proven, but the
+direct container-state evidence above holds regardless of which exact
+mechanism prevented the command from taking effect.
+
+**General rule**: treat any command whose blast radius is "every
+container/resource in the project" — `docker compose kill`/`stop`/`down`
+with no service arguments, `docker compose rm -f -v` at the project
+level, an unscoped `$(... ps -q)` substitution, `kubectl delete` without
+a specific resource name — as needing one extra, explicit "does this
+target exactly what I mean it to, and is what I mean actually necessary
+right now" check before running, especially mid-session with other work
+already in flight (a just-completed background task, an already-running
+chaos scenario, cluster state mid-transition) where a spurious or
+sloppily-scoped action is both more likely to slip through and more
+expensive to happen into. If a command's own one-line description and
+its actual content don't obviously agree, that mismatch is itself a
+signal to stop and re-read the command before running it, not after.
