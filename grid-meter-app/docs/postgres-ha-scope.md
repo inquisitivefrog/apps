@@ -2025,11 +2025,38 @@ hardcoded-`patroni-2` pattern in four sibling scripts**
 (`postgres-consul-nonleader-agent-loss-test.sh`,
 `postgres-consul-partition-test.sh`,
 `postgres-consul-quorum-loss-test.sh`,
-`postgres-primary-failure-test.sh`) — **not fixed here**, out of scope
-for this pass, flagged for a future follow-up if those scripts are
-revisited. Confirmed live in isolation: with the loop's first-tried node
-(`patroni-1`) stopped, the discovery loop correctly fails on that
-attempt and succeeds via `patroni-2` on the next one.
+`postgres-primary-failure-test.sh`) — initially flagged and left
+unfixed as out of scope for this pass, **fixed in a same-day follow-up
+once explicitly requested.** Confirmed live in isolation: with the
+loop's first-tried node (`patroni-1`) stopped, the discovery loop
+correctly fails on that attempt and succeeds via `patroni-2` on the next
+one.
+
+**Follow-up (2026-09-03, later same day): all four sibling scripts
+fixed too, live-verified.** Same dynamic-node-discovery pattern applied
+to each script's own "identify current leader/primary" call —
+`postgres-primary-failure-test.sh` and `postgres-consul-partition-test.sh`
+each had one occurrence, fixed inline the same way as the `$WITNESS` fix
+above. `postgres-consul-quorum-loss-test.sh` had the pattern at 3 call
+sites (initial identification, a recovery-wait poll, and final cleanup)
+— factored into a shared `query_any_node()` helper instead of
+tripling the loop, since all 3 sites needed the identical "try every
+node, guard the failure" behavior. **Verified live, not just by
+inspection**: extracted and ran each script's actual (already-edited)
+leader-identification block directly against the healthy cluster,
+confirming correct output at every site; separately fault-injection
+tested `query_any_node()` itself by stopping `patroni-1` (its
+first-tried node) and confirming it correctly falls through to
+`patroni-2`, exit 0. Cluster restored to full health afterward, no
+temp/scratch files left in the repo. **A related, distinct hardcoded-
+target instance found incidentally while reading these files, not
+fixed**: `postgres-consul-nonleader-agent-loss-test.sh`'s own opening
+Consul raft-leader check (`docker compose exec -T consul-1 consul
+operator raft list-peers`, completely unguarded) and
+`postgres-consul-partition-test.sh`'s `show-config` prerequisite check
+(hardcoded to `patroni-1`) are both the same bug shape applied to a
+different command — flagged here rather than silently expanded into,
+same discipline as everywhere else in this pass.
 
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 

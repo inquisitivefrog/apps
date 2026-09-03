@@ -30,6 +30,23 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Dynamic query target, not hardcoded to one specific node -- same "monitoring helper's own
+# hardcoded query target" mistake already found and fixed elsewhere in this project (Kafka's
+# cluster_state(), postgres-app-primary-failure-test.sh's own leader-identification check). Tries
+# each known node in turn, echoing its output and returning 0 on the first one that answers, or
+# returning 1 (with no output) if all three fail -- callers guard the same `if VAR=$(...); then`
+# way as every other patronictl call in this script, so a total-failure return never trips set -e.
+query_any_node() {
+  local result=""
+  for node in patroni-1 patroni-2 patroni-3; do
+    if result=$(docker compose exec -T "$node" patronictl -c /etc/patroni.yml list 2>/dev/null); then
+      echo "$result"
+      return 0
+    fi
+  done
+  return 1
+}
+
 SURVIVING_AGENT="${1:-consul-3}"
 ALL_AGENTS=(consul-1 consul-2 consul-3)
 KILL_AGENTS=()
@@ -44,10 +61,10 @@ docker compose exec -T patroni-1 patronictl -c /etc/patroni.yml show-config 2>&1
 echo
 echo "=== Identifying current leader ==="
 LIST=""
-if ! LIST=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1); then
-  echo "patronictl list failed -- retrying once after 5s (can be transient right after other Consul activity)" >&2
+if ! LIST=$(query_any_node); then
+  echo "patronictl list failed on every node -- retrying once after 5s (can be transient right after other Consul activity)" >&2
   sleep 5
-  LIST=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1) || true
+  LIST=$(query_any_node) || true
 fi
 echo "$LIST"
 LEADER=$(echo "$LIST" | awk -F'|' '/Leader/ {gsub(/ /,"",$2); print $2}')
@@ -196,7 +213,7 @@ echo "=== Waiting for full cluster recovery (up to 90s) ==="
 START=$SECONDS
 while (( SECONDS - START < 90 )); do
   RESULT=""
-  if ! RESULT=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1); then
+  if ! RESULT=$(query_any_node); then
     RESULT=""
   fi
   if echo "$RESULT" | grep -c "streaming" | grep -q "^2$"; then
@@ -225,7 +242,7 @@ fi
 echo
 echo "=== Cleanup: removing probe rows ==="
 FINAL_LEADER=""
-if FINAL_LIST=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1); then
+if FINAL_LIST=$(query_any_node); then
   FINAL_LEADER=$(echo "$FINAL_LIST" | awk -F'|' '/Leader/ {gsub(/ /,"",$2); print $2}')
 fi
 docker compose exec -T "${FINAL_LEADER:-$LEADER}" psql -U postgres -c "DELETE FROM stage6_marker WHERE note LIKE '%-probe-%';" 2>&1

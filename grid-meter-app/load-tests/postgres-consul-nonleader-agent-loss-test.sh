@@ -27,7 +27,21 @@ echo "Raft leader: $RAFT_LEADER"
 
 echo
 echo "=== Identifying the current Postgres primary and its paired Consul agent (to avoid) ==="
-LIST=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1)
+# Dynamic query target, not hardcoded -- same "monitoring helper's own hardcoded query target"
+# mistake already found and fixed elsewhere in this project (Kafka's cluster_state(),
+# postgres-app-primary-failure-test.sh's own leader-identification check). Tries each known node
+# in turn until one actually answers.
+LIST=""
+for NODE in patroni-1 patroni-2 patroni-3; do
+  if LIST=$(docker compose exec -T "$NODE" patronictl -c /etc/patroni.yml list 2>/dev/null); then
+    break
+  fi
+  LIST=""
+done
+if [[ -z "$LIST" ]]; then
+  echo "Could not reach any Patroni node to identify the current primary, aborting" >&2
+  exit 1
+fi
 echo "$LIST"
 PRIMARY=$(echo "$LIST" | awk -F'|' '/Leader/ {gsub(/ /,"",$2); print $2}')
 case "$PRIMARY" in

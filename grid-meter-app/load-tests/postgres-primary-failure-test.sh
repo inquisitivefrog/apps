@@ -22,7 +22,23 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "=== Identifying current leader ==="
-LIST=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1)
+# The query TARGET itself must also be dynamic, not just the leader value read from its output --
+# a fixed query target would fail this whole check for a reason unrelated to the actual scenario
+# under test (e.g. that one node left stopped by an earlier run). Same "monitoring helper's own
+# hardcoded query target" mistake already found and fixed elsewhere in this project (Kafka's
+# cluster_state(), postgres-app-primary-failure-test.sh's own leader-identification check) --
+# tries each known node in turn until one actually answers.
+LIST=""
+for NODE in patroni-1 patroni-2 patroni-3; do
+  if LIST=$(docker compose exec -T "$NODE" patronictl -c /etc/patroni.yml list 2>/dev/null); then
+    break
+  fi
+  LIST=""
+done
+if [[ -z "$LIST" ]]; then
+  echo "Could not reach any Patroni node to identify the current leader, aborting" >&2
+  exit 1
+fi
 echo "$LIST"
 LEADER=$(echo "$LIST" | awk -F'|' '/Leader/ {gsub(/ /,"",$2); print $2}')
 if [[ -z "$LEADER" ]]; then
