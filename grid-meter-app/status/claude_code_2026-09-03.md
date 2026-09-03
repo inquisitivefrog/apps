@@ -203,6 +203,105 @@
     here, flagged for follow-up" note updated in place to record the
     fix, the verification, and the two new incidental findings.
 
+- **Explained, then fixed, the two "newly-found, unfixed" instances
+  flagged above — per explicit user request ("fix it please").**
+  `postgres-consul-nonleader-agent-loss-test.sh`'s unguarded `consul-1`
+  raft-leader check and `postgres-consul-partition-test.sh`'s
+  hardcoded-`patroni-1` `show-config` check both fixed with the same
+  dynamic-discovery pattern (3-node loop for the former, a
+  reach-any-node loop that deliberately keeps the actual `grep` fatal
+  for the latter, since a successfully-reached node missing its
+  expected config lines is a real problem, not a "try the next node"
+  situation). **Live-verified with the full rigor the higher-severity
+  Bug 1 deserved**: happy-path re-run for both; a proper fault-injection
+  test for Bug 1 (stopped `consul-1`, confirmed fallthrough — after
+  first catching that an inline ad hoc `set -e; cmd; echo` typed
+  directly into one tool call does *not* reliably enforce `set -e` the
+  way a real script file does, a real methodology gap caught before
+  trusting it, unrelated to but discovered alongside this fix); a
+  negative control confirming the pre-fix code really does die silently
+  under the identical fault; a lighter fault-injection check for Bug 2.
+  Cluster restored to full health after every test.
+
+- **Exhaustive repo-wide sweep for the same hardcoded-target bug shape,
+  per explicit user request, after Chat argued incremental discovery
+  wasn't good enough given the pattern had now surfaced 7 times in one
+  day.** Audited every `.sh` and `.py` under `load-tests/` and
+  `scripts/` (47 files) for hardcoded single-node cluster-state query
+  targets and any remaining unguarded `set -e` substitutions. Found far
+  more than a simple continuation of today's pattern:
+  - **Category B** (same shape, straightforward, not yet fixed):
+    `consul-quorum-loss.sh` (3 sites, despite the file already having a
+    proven `any_running_consul()` helper it doesn't consistently use),
+    `postgres-traefik-routing-register.sh` (1 site, display-only),
+    `postgres-patroni-fresh-bootstrap-test.sh` (2 `consul-1` sites),
+    `redis-ha-demo.sh`/`redis-primary-failover-rto.sh` (1 `sentinel-1`
+    site each), `redis-quorum-loss.sh` (1 of 5 `sentinel-1` sites — the
+    other 4 are correct-by-design, see below),
+    `kafka-acks-gap-repro.sh`'s `KAFKA_BIN=kafka-1` (confirmed firing
+    live during this turn's own verification run, see below),
+    `postgres-consul-self-demotion-timing-test.py`'s `get_leader()`,
+    and a handful of lower-priority pre-chaos setup lines in
+    `kafka-ha-demo.sh`.
+  - **Category C** (structurally different, flagged for explicit
+    review rather than mechanically fixed): (1) two scripts referencing
+    the retired standalone `postgres` container — **fixed this turn,
+    see below**; (2) `kafka-leader-failover-rto.sh`'s
+    `LEADER_SVC="kafka-2"`, a stale hardcoded *assumption* about which
+    broker leads (never runtime-verified), the identical bug already
+    fixed once in `kafka-ha-demo.sh`'s Scenario 1 but never ported to
+    this sibling script; (3) `postgres-replica-failure-test.sh`'s
+    `patroni-1` hardcode, which is an *explicitly documented, deliberate
+    tradeoff* by whoever wrote it (avoiding refreshing patroni-1's stale
+    local view to avoid triggering an unplanned failover) — not touched,
+    since a mechanical fix risks reawakening the exact problem the
+    comment warns about.
+  - **Category D** (examined, confirmed correct-by-design, not bugs):
+    the Redis primary-container references (protected by explicit
+    convergence checks, or the test's own design never kills the
+    primary), `redis-quorum-loss.sh`'s post-kill `sentinel-1` uses (its
+    own deliberately-designated, permanent survivor by construction),
+    `postgres-patroni-fresh-bootstrap-test.sh`'s `patroni-1` uses (the
+    only node running at that point in a from-scratch bootstrap test),
+    `kafka-ha-demo.sh`'s `WITNESS` mechanism, and all three
+    `kafka-unclean-election-*`/`kafka-debug-snapshot.sh` scripts
+    (already using a proven dynamic-discovery loop). `scripts/*.sh` has
+    zero instances of this pattern anywhere.
+  - Reported the full categorized list to the user rather than
+    auto-fixing all of it — this had grown well past the original
+    2-bug scope, and further action needed the user's own call on how
+    much to take on.
+
+- **Fixed Category C item 1, per explicit user request ("Fix Category C
+  item 1 now").** `kafka-acks-gap-repro.sh` (2 sites) and
+  `kafka-leader-failover-rto.sh` (1 site) queried a standalone
+  `postgres` container retired in Postgres HA Stage 7 — unconditionally
+  broken every time, not just under some fault. Fixed by reusing the
+  exact pattern `kafka-ha-demo.sh`'s own Scenario 2 durability check
+  already established for the identical problem: exec into `patroni-1`
+  purely to borrow its `psql` binary (safe — neither script touches a
+  Patroni/Postgres node), routing the actual DB connection through
+  Traefik's `:55432` entrypoint to whichever node is really primary.
+  - **Verified precisely, not assumed**: confirmed live that the new
+    query form returns `pg_is_in_recovery() = f` (primary) while
+    `patroni-1` itself, queried directly and locally, returns `t`
+    (replica) — direct proof the connection genuinely crosses through
+    Traefik rather than accidentally landing on `patroni-1`'s own
+    instance.
+  - **Both scripts run end-to-end for real**, not just the isolated
+    query: `kafka-acks-gap-repro.sh` clean, both fixed queries
+    returning the correct durability count (`1`); `kafka-leader-
+    failover-rto.sh` clean, its fixed query returning `2`.
+  - **This second run also directly, empirically confirmed a separate
+    finding is real, not theoretical**: `kafka-2` wasn't actually
+    leading any partition when the script "stopped the leader" —
+    live confirmation of Category C item 2, not fixed this turn.
+  - Kafka cluster confirmed healthy after both runs.
+  - **Documented**: a new dated section added to `docs/postgres-ha-scope.md`
+    (this fix belongs there, as a Stage 7 retirement follow-up, more
+    than in the Kafka RTO doc) covering the sweep's full findings and
+    this fix's live verification in detail.
+
 ## Open
 
 - (carried over from `status/claude_chat_2026-09-02.md`, still accurate as
@@ -210,39 +309,45 @@
   - Postgres/Redis/Kafka HA passes are otherwise fully closed
     (infrastructure + application + follow-up corrections) — no further
     stages planned unless a new gap surfaces.
-- Two newly-found, unfixed hardcoded-target instances (see above): the
-  unguarded `consul-1` raft-leader check and the hardcoded-`patroni-1`
-  `show-config` check.
+- The full Category B list (8 files) and the two remaining Category C
+  items (the `kafka-leader-failover-rto.sh` stale-leader assumption,
+  the deliberately-preserved `postgres-replica-failure-test.sh`
+  tradeoff) — reported to the user, not yet acted on further.
 
-## Committed and pushed (earlier this session)
+## Committed and pushed
 
-Four commits, per this project's own "split unrelated changes"
-convention, pushed to `origin/main` (`e78e67e..1432158`, bypassed the 3
+Eight commits, per this project's own "split unrelated changes"
+convention, pushed to `origin/main` (`e78e67e..c6a7428`, bypassed the 3
 required status checks — same documented solo-owner behavior as every
 prior session):
 
 1. `776b4b4` — the two Postgres `set -e` guard fixes plus the Stage 7
-   backgrounded-loop `cross-project-lessons.md` write-up
-   (`docs/cross-project-lessons.md`, `docs/postgres-ha-scope.md`,
-   `load-tests/postgres-app-primary-failure-test.sh`).
-2. `0af7590` — the Kafka RTO investigation's archival-gap fix
-   (`docs/testing-strategy-ha-supplement.md`,
-   `load-tests/kafka-controller-failover-rto-test.py`).
+   backgrounded-loop `cross-project-lessons.md` write-up.
+2. `0af7590` — the Kafka RTO investigation's archival-gap fix.
 3. `7315611` — this status log.
 4. `1432158` — status log follow-up noting the commit/push itself.
+5. `86eb22d` — the hardcoded-`patroni-2` fix across all 4 sibling
+   scripts.
+6. `cc416aa` — status log update for that fix.
+7. `0072891` — the `consul-1`/`patroni-1` (Bug 1/Bug 2) fixes in
+   `postgres-consul-nonleader-agent-loss-test.sh` and
+   `postgres-consul-partition-test.sh`, plus `docs/postgres-ha-scope.md`'s
+   corrected "Follow-up... both fixed too" note (its prior "not fixed"
+   wording, committed in `86eb22d`, had gone stale once these were
+   actually fixed in this session's own later turn — split cleanly from
+   commit 8 below via a manual doc-content backup/restore, since both
+   additions landed in the same file with no separating context line).
+8. `c6a7428` — the exhaustive repo-wide sweep's findings plus the
+   retired-`postgres`-container fix (Category C item 1) in
+   `kafka-acks-gap-repro.sh`/`kafka-leader-failover-rto.sh`.
 
-**Not yet committed**: the 4-sibling-script hardcoded-`patroni-2` fix
-above (`postgres-primary-failure-test.sh`,
-`postgres-consul-partition-test.sh`,
-`postgres-consul-nonleader-agent-loss-test.sh`,
-`postgres-consul-quorum-loss-test.sh`) and this section's own update.
+Working tree clean as of this push.
 
 ## Next
 
-- The two newly-found, unfixed hardcoded-target instances (unguarded
-  `consul-1` raft-leader check, hardcoded-`patroni-1` `show-config`
-  check) — flagged, not fixed, for a future follow-up if those scripts
-  are revisited.
+- The remaining Category B (8 files) and Category C (2 items) findings
+  from the exhaustive sweep — reported in full to the user, awaiting
+  direction on how much more to fix.
 - Docker Compose stack is currently up, **including the Kafka debug-
   logging overlay** (`docker-compose.kafka-debug.yml`, TRACE-level
   controller logging on all 3 brokers) rather than the normal dev
