@@ -27,6 +27,13 @@ esac
 # script: its own local patroni.yml view went stale mid-session (a Docker Desktop bind-mount
 # caching artifact, unrelated to the live cluster's actual correctness) and hasn't been refreshed
 # to avoid triggering an unplanned failover -- see docs/postgres-ha-scope.md's Stage 2 results.
+#
+# psql_primary hardcoding patroni-1 is NOT the same "arbitrary interchangeable peer" pattern fixed
+# elsewhere in this project's chaos scripts (docs/testing-strategy.md/postgres-ha-scope.md) --
+# psql_primary must reach the actual current primary specifically (writes to a replica would fail
+# outright), not just any reachable node, so dynamic peer discovery doesn't apply here. It's safe
+# to hardcode only because this script's own TARGET validation above (line 19-22) rejects patroni-1
+# as a kill target, guaranteeing patroni-1 remains primary for this script's entire run.
 psql_primary() { docker compose exec -T patroni-1 psql -U postgres -Atc "$1"; }
 ctl() { docker compose exec -T "$WITNESS" patronictl -c /etc/patroni.yml "$@"; }
 

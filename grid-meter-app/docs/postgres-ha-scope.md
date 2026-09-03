@@ -2200,7 +2200,6 @@ stopping 2 followers — a real Kafka-level condition (the sole surviving
 broker's admin listener still settling, plausibly), not a scripting bug,
 and the script handled it gracefully (no crash) both times.
 
-
 **`consul-quorum-loss.sh`'s 3 hardcoded-`consul-1` sites — fixed and
 live-verified (2026-09-03).** Category B from the sweep: this script
 already has a proven `any_running_consul()` helper (used correctly at
@@ -2235,7 +2234,6 @@ all 3 agents, re-confirmed at a real 3/3-voter state, and confirmed
 Patroni's own cluster was undisturbed by the recreate (3/3 nodes,
 correct roles) before proceeding to further work.
 
-
 **`postgres-patroni-fresh-bootstrap-test.sh`'s 2 hardcoded-`consul-1`
 sites — fixed and verified (2026-09-03), scoped deliberately narrower
 than the fix's usual live-run treatment.** This script never touches
@@ -2261,7 +2259,6 @@ proven correct at half a dozen other call sites earlier in this pass,
 just not re-run against this specific script's own destructive KV
 operations. Confirmed Patroni's live cluster was undisturbed throughout
 (3/3 nodes, correct roles, before and after).
-
 
 **Remaining Category B items — happy-path sweep, fixed and verified
 (2026-09-03), same day.** Per the agreed order for closing out this
@@ -2337,6 +2334,24 @@ each):
   against all 3 real brokers, then with `kafka-1` deliberately stopped
   and restarted, confirming correct fallthrough to `kafka-2`/`kafka-3`.
 
+**Category C item 3 — reviewed and closed with a comment strengthening,
+not a code change, per the agreed order (2026-09-03).**
+`postgres-replica-failure-test.sh`'s `psql_primary()` hardcodes
+`patroni-1` deliberately — this is a genuinely different situation from
+every fix above, not the same bug shape left unfixed: `psql_primary`
+must reach the actual current primary specifically (a write against a
+replica fails outright), so "try any reachable node" doesn't apply the
+way it does for `patronictl`/read-only status queries. The existing
+comment explained why `patroni-1` is *avoided* for `patronictl` (a
+stale local `patroni.yml` view, see Stage 2) but never explained why
+hardcoding it for `psql_primary` is safe rather than an overlooked
+instance of today's bug pattern — a real ambiguity given how many
+sibling scripts got the discovery-loop treatment this same day.
+Strengthened the comment to spell out the actual invariant that makes
+this safe: the script's own `TARGET` validation (rejecting `patroni-1`
+as a kill target) guarantees `patroni-1` remains primary for the
+script's entire run, so the hardcode is correct by construction, not an
+oversight.
 
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
