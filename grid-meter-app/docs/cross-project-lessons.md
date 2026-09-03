@@ -208,6 +208,47 @@ real failure. Prefer `set -uo pipefail` (no `-e`) for scripts built
 around this kind of polling, with explicit `if`/`until` checks doing the
 control-flow work instead.
 
+**A backgrounded loop (`&`) is still a subshell of its parent script and
+still inherits `set -e` — the first command substitution to fail inside
+it can kill the whole loop silently, with the parent script never
+noticing.** A Postgres HA chaos script launched a continuous
+request-generator function as a background job
+(`send_requests_loop &`) to keep sending traffic while the foreground
+script killed and monitored the primary. The loop's own `curl` call
+returned non-zero on a genuine connection-refused during the failover
+window — precisely the moment the test most needed data — and because
+the backgrounded subshell inherited the parent's `set -e`, that single
+non-zero exit killed the loop instantly after only ~2 seconds instead of
+running its intended ~24-second window. The foreground script had no way
+to see its background job had died early, so its own summary line still
+printed a clean-looking result — the same "loop silently exits early,
+script reports success anyway" shape `docs/testing-strategy.md`'s
+fixed-sleep lesson already tracks, just triggered by `set -e`
+propagating into a background job instead of a timing assumption. Root
+cause of the regression, worth stating precisely since it's a distinct
+mechanism from *introducing* an unguarded line: the loop's own
+`|| echo "000"` fallback (present from the start, specifically for this
+reason) was stripped out while fixing an unrelated cosmetic issue (a
+doubled `"000000"` status code appearing in the log) — whoever made that
+edit didn't recognize the same line was also the thing keeping `set -e`
+from killing the loop. Caught by noticing one run's request count was
+implausibly low for its duration, not by the script's own
+still-clean-looking summary. **Distinct from the two set-e lessons
+above, worth being precise about the difference**: the `grep -c` lesson
+is about a command whose own zero-match exit code is a legitimate,
+expected outcome `set -e` can't tell apart from failure; the
+asymmetric-guard lesson (below, "Build tooling") is about one of two
+adjacent, structurally-similar foreground lines getting a guard while
+its neighbor didn't. This one is about `set -e`'s *scope* — a job
+launched with a bare `&` is easy to mentally file as "off running on its
+own," which is exactly what makes it easy to forget it's still bound by
+the parent script's shell options. General rule: any command
+substitution inside a function that will be launched as a background job
+needs its own explicit guard, same as any substitution in the
+foreground — and when removing what looks like a purely cosmetic
+duplicate-output fix, check whether the line being touched is also
+serving as an unrelated `set -e` guard before simplifying it away.
+
 ## Kubernetes and infrastructure-as-code pitfalls
 
 **`docker compose rm -f -v` does not reliably delete a container's

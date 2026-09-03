@@ -46,7 +46,23 @@ echo "Meter: $METER_ID"
 
 echo
 echo "=== Identifying current leader ==="
-LIST=$(docker compose exec -T patroni-2 patronictl -c /etc/patroni.yml list 2>&1)
+# Dynamic, not hardcoded to one specific node -- a fixed query target here would fail this
+# script's very first infrastructure check for a reason that has nothing to do with the actual
+# scenario under test (e.g. that one node left stopped by an earlier run). Same "monitoring
+# helper's own hardcoded query target" mistake this project already found and fixed once in
+# Kafka's cluster_state() (docs/testing-strategy-ha-supplement.md) -- tries each known node in
+# turn until one actually answers, guarded the same way as the $WITNESS polling loop below.
+LIST=""
+for NODE in patroni-1 patroni-2 patroni-3; do
+  if LIST=$(docker compose exec -T "$NODE" patronictl -c /etc/patroni.yml list 2>/dev/null); then
+    break
+  fi
+  LIST=""
+done
+if [[ -z "$LIST" ]]; then
+  echo "Could not reach any Patroni node to identify the current leader, aborting" >&2
+  exit 1
+fi
 echo "$LIST"
 LEADER=$(echo "$LIST" | awk -F'|' '/Leader/ {gsub(/ /,"",$2); print $2}')
 if [[ -z "$LEADER" ]]; then
@@ -110,13 +126,20 @@ echo "=== Polling for a new leader at the infrastructure level (up to 60s) ==="
 NEW_LEADER=""
 START=$SECONDS
 while (( SECONDS - START < 60 )); do
-  LIST2=$(docker compose exec -T "$WITNESS" patronictl -c /etc/patroni.yml list 2>&1)
-  CANDIDATE=$(echo "$LIST2" | awk -F'|' -v old="$LEADER" '/Leader/ {gsub(/ /,"",$2); if ($2 != old) print $2}')
-  if [[ -n "$CANDIDATE" ]]; then
-    T1_MS=$(($(date +%s%N) / 1000000))
-    NEW_LEADER="$CANDIDATE"
-    echo "  New leader: $NEW_LEADER -- infra-level RTO: $((T1_MS - T0_MS))ms"
-    break
+  # Guarded via `if VAR=$(...); then` (matching postgres-consul-partition-test.sh's own
+  # WITNESS/patronictl polling) rather than a bare assignment: this call runs during the exact
+  # failover window it's polling through, so a transient patronictl failure is expected, not
+  # exceptional -- an unguarded substitution here would let `set -e` kill the loop silently on
+  # the first hiccup, indistinguishable from a real "no leader elected" failure. A failed
+  # iteration is treated as "not ready yet" and simply retried, not as success.
+  if LIST2=$(docker compose exec -T "$WITNESS" patronictl -c /etc/patroni.yml list 2>/dev/null); then
+    CANDIDATE=$(echo "$LIST2" | awk -F'|' -v old="$LEADER" '/Leader/ {gsub(/ /,"",$2); if ($2 != old) print $2}')
+    if [[ -n "$CANDIDATE" ]]; then
+      T1_MS=$(($(date +%s%N) / 1000000))
+      NEW_LEADER="$CANDIDATE"
+      echo "  New leader: $NEW_LEADER -- infra-level RTO: $((T1_MS - T0_MS))ms"
+      break
+    fi
   fi
   sleep 0.5
 done

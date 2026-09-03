@@ -1986,6 +1986,51 @@ too low for its duration rather than accepting the clean-looking summary
 at face value; that run was discarded and re-run after restoring the
 guard.
 
+**A second, same-shape risk found by audit (2026-09-03) and fixed
+proactively — distinct from the one above in that it never actually
+fired.** The `while` loop polling `$WITNESS` for the new leader
+(`LIST2=$(docker compose exec -T "$WITNESS" patronictl ... list 2>&1)`)
+had the identical unguarded-substitution-under-`set -e` shape, just in
+the *foreground* rather than a backgrounded subshell — a transient
+`patronictl` failure on `$WITNESS` during the polling window would have
+killed the script silently, mid-poll, before its own "No new leader
+elected" diagnostic could fire. Guarded the same way
+`postgres-consul-partition-test.sh` already guards its own identical
+`$WITNESS`/`patronictl` call (`if LIST2=$(... 2>/dev/null); then`),
+confirmed live: the fixed script survives an 8-second forced `$WITNESS`
+outage spanning many poll iterations and still correctly detects the new
+leader once `$WITNESS` recovers (exit 0), while a scratch copy of the
+pre-fix code hit the identical fault and died silently (exit 1, no
+diagnostic) as predicted. See `docs/cross-project-lessons.md`'s
+"Shell scripting and OS-tooling pitfalls" section for the portable
+write-up.
+
+**A third, different-shape risk found by the same audit and fixed
+(2026-09-03) — not a `set -e` guard issue, a hardcoded query target.**
+Line 49's initial "who is the current leader" check was
+`docker compose exec -T patroni-2 patronictl ... list` — fixed to a
+specific node regardless of who the actual leader is or whether that
+specific node happens to be up. Same "monitoring helper's own hardcoded
+query target" mistake this project already found and fixed once in
+Kafka's `cluster_state()`
+(`docs/testing-strategy-ha-supplement.md`), just in a new script. Real,
+not hypothetical: it fired organically during this same investigation
+when `patroni-2` was left transiently stopped by an earlier test run —
+`docker compose exec -T patroni-2 ...` failed outright ("service
+'patroni-2' is not running"), killing the script at its very first
+infrastructure check. Fixed by trying each of the three known nodes in
+turn until one answers, guarded the same `if VAR=$(...); then` way as
+the `$WITNESS` fix above. **A broader grep found this identical
+hardcoded-`patroni-2` pattern in four sibling scripts**
+(`postgres-consul-nonleader-agent-loss-test.sh`,
+`postgres-consul-partition-test.sh`,
+`postgres-consul-quorum-loss-test.sh`,
+`postgres-primary-failure-test.sh`) — **not fixed here**, out of scope
+for this pass, flagged for a future follow-up if those scripts are
+revisited. Confirmed live in isolation: with the loop's first-tried node
+(`patroni-1`) stopped, the discovery loop correctly fails on that
+attempt and succeeds via `patroni-2` on the next one.
+
 ## Stage 7 re-verification (2026-09-02): re-run after the Patroni bootstrap work, 3/3 clean — plus a real, unexplained App RTO variance worth flagging
 
 Re-executed after the intervening bootstrap-hook investigation (the
