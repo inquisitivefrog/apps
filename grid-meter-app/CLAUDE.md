@@ -146,6 +146,31 @@ upstream as of Loki 3.7.3.
   method. See `docs/resilience-scope.md`'s "Circuit breaker: built"
   section for the full account, including live verification against
   real Kafka and Postgres outages.
+- **An uncaught `DataAccessException`/`TransactionException` during a
+  genuine Postgres outage can silently fabricate a `200 OK` instead of
+  erroring — this is a real, confirmed gap in Spring Framework itself
+  (spring-web 7.0.8's `DisconnectedClientHelper`), not a theoretical
+  risk.** Found 2026-09-04, live-testing the circuit breaker work
+  against the first-ever total (all-3-Patroni-nodes-down, not just
+  failover) Postgres outage this project has tested: an uncaught
+  `CannotCreateTransactionException` reached `DispatcherServlet` with no
+  matching resolver, fell through to `DisconnectedClientHelper`, and was
+  misdiagnosed as "the HTTP client disconnected" (that helper excludes
+  `DataAccessException` from its check but not the *different*
+  `TransactionException` hierarchy `CannotCreateTransactionException`
+  belongs to) — producing an apparently-successful, empty response for a
+  request that never completed. Worse than a timeout or a `500`: a
+  caller has no way to tell this happened. Fixed in
+  `GlobalExceptionHandler` by explicitly claiming both exception
+  hierarchies, mapped to `503`, before `DispatcherServlet` ever reaches
+  that ambiguous fallback path — confirmed via red/green testing
+  (`PostgresUnavailableComponentTest`) and live re-verification (8/8
+  clean `503`s against a real sustained outage). **Any new
+  `@RestControllerAdvice`/global exception handling in this project
+  should assume Postgres/Kafka/Redis unavailability needs explicit
+  exception-type handling, not rely on Spring's own default fallback
+  behavior to produce a sane status** — see `docs/resilience-scope.md`'s
+  full write-up for the mechanism.
 
 ## Dev workflow
 

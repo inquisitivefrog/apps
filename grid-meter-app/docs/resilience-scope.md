@@ -79,6 +79,64 @@ recovery through `HALF_OPEN` → `CLOSED` once Kafka came back (real `201`s resu
 lifecycle confirmed for the Postgres breaker against a real, sustained, all-3-Patroni-nodes-down
 outage — which is where the bug below was found.
 
+### A severe, pre-existing, unrelated bug found live-testing the Postgres breaker: Postgres outages could silently fabricate `200 OK` responses
+
+**Not a circuit-breaker defect — confirmed by reproducing it on a plain, unmodified
+`GET /api/v1/meters` with no breaker or `@Retryable` involved at all.** During a genuine,
+sustained, all-3-Patroni-nodes-down outage (a scenario this project had apparently never tested
+before — every prior Postgres HA test was failover-focused, where a new primary becomes available
+within seconds, not a total, sustained unavailability), an uncaught
+`org.springframework.transaction.CannotCreateTransactionException` (HikariCP unable to open a
+connection at all) reached Spring MVC's `DispatcherServlet` with no matching resolver, fell through
+to `org.springframework.web.util.DisconnectedClientHelper`, and was **misdiagnosed as the HTTP
+client having disconnected** — producing a fabricated `200 OK` with `Content-Length: 0`, even
+though the real client (`curl`, with a 15–30s timeout) was still connected and waiting the whole
+time. This is worse than a timeout or a `500`: a caller sees an apparently-successful response for
+a request that never actually completed.
+
+**Root cause, found via `-DEBUG`-level Spring web tracing against a live reproduction**: the exact
+log sequence — `o.s.w.s.handler.DisconnectedClient : Looks like the client has gone away:
+CannotCreateTransactionException...` immediately followed by `DispatcherServlet : Completed 200
+OK` — led directly to `DisconnectedClientHelper`'s source (spring-web 7.0.8). That class explicitly
+excludes `org.springframework.dao.DataAccessException` from its "client disconnected" heuristic,
+with a comment stating the intent plainly: *"Ignore onward connection issues to other servers (500
+error)"* — Spring's own authors clearly anticipated and guarded against exactly this category of
+misdiagnosis. But `CannotCreateTransactionException` belongs to a **different** hierarchy,
+`org.springframework.transaction.TransactionException`, which is **not** in that exclusion list —
+a real, narrow gap in Spring Framework itself, not something this app can patch upstream. The
+helper falls through to matching the most-specific cause's message against the phrases "broken
+pipe"/"connection reset by peer" — phrasing a genuinely-dead Postgres backend connection can
+produce (from the *server*-side socket, not the HTTP client's), which the helper's global,
+undiscriminating phrase match conflates with the client's own connection.
+
+**Fixed** in `GlobalExceptionHandler` by adding an explicit `@ExceptionHandler({DataAccessException
+.class, TransactionException.class})`, mapped to `503` — this makes `ExceptionHandlerException
+Resolver` claim the exception before `DispatcherServlet` ever reaches `DisconnectedClientHelper`'s
+ambiguous fallback path. `503`, not `500`, since this is a downstream dependency being
+unavailable, not a bug in the app's own code — the same semantic the circuit breaker's own
+`CallNotPermittedException` handler already uses.
+
+**Regression test**: `PostgresUnavailableComponentTest`, a dedicated (not `ComponentTestSupport`'s
+shared singleton) Testcontainers Postgres, genuinely stopped mid-test. Red/green-verified by
+directly, temporarily disabling the fix and re-running: confirmed the test fails predictably
+without it. Honest finding along the way, documented in the test's own Javadoc rather than
+glossed over: a single stopped Testcontainers container more often produces "connection refused"
+for a fresh connection attempt (which doesn't match either phrase, so without the fix this
+specific environment reliably surfaces a plain `500` rather than the worse fabricated `200`) than
+the "connection reset by peer" wording the real sustained 3-node outage produced live. The
+CannotCreateTransactionException path was still reliably reproduced and shown to resolve to the
+wrong status without the fix (500, not 503) — a real, provable regression either way, since the
+fix is exception-type-based, not message-text-based, and closes both variants regardless of which
+one a given environment happens to produce. A small, fixed-size (2-connection) Hikari pool was
+needed to reach this exception type deterministically within a handful of calls, since the far
+larger production pool size means several already-open pooled connections can each individually
+fail with the already-safe `JpaSystemException` first.
+
+**Live re-verification after the fix**: 8 sequential requests against a real, sustained, all-3-
+Patroni-nodes-down outage — every single one now returns a real `503` with a proper error body,
+zero fabricated `200`s. Confirmed the app fully recovers (real `200`s resume) once Patroni
+re-elects a leader.
+
 ## Outcome (2026-08-28)
 
 **Summary: the transactional outbox was built, tested against a real
