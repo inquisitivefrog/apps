@@ -751,17 +751,126 @@ largely tested; see below per-scenario.**
   confirmed one all the same.
 
   **On Chat's ordered follow-up candidates (ISR catch-up lag, then
-  GC-pause noise, only if controller identity didn't explain it)**:
-  still neither has been tested. Controller identity didn't explain the
-  *internal* mechanism, but it wasn't a dead end either — it surfaced a
-  different, now well-confirmed correlation (external visibility)
-  instead. ISR catch-up lag and GC-pause noise remain open, untested
-  candidates for whatever drives the external-visibility split
-  specifically, not the original internal-RTO question, which this
-  stage now closes twice over — once on the mechanism, once on trusting
-  the numbers that closed it.
+  GC-pause noise, only if controller identity didn't explain it)
+  (2026-09-04): both tested directly, both refuted.** Neither explains
+  the external-visibility split — the real mechanism remains unknown,
+  reported here plainly rather than forced.
 
-  Raw evidence: `load-tests/kafka-controller-failover-rto-test.py`;
+  **Candidate 1 (ISR catch-up lag) — refuted against the archived
+  20260903T175404Z pass's raw `controller.log` slices**, not inferred.
+  The target partition's own ISR shrink and leader handoff happen
+  *instantly* (~0.14s, same timestamp as `rto_s`) in every trial,
+  identically for both conditions — because it's driven by the *dying*
+  broker's own graceful-shutdown handling (Kafka's `docker compose stop`
+  sends `SIGTERM` first, and a still-alive, still-active old controller
+  hands off leadership for its own partitions before it's actually
+  gone), not by anything the *new* controller has to catch up on. There
+  is no separate re-sync step for the target partition to be slow.
+
+  **A more precise breakdown of where the real time actually goes**,
+  found while checking candidate 1: extracting each archived
+  controller-condition trial's `Becoming the active controller` log
+  line shows controller activation itself is a roughly *constant*
+  ~2.3–2.5s after the kill across all 3 trials (run1 2.506s, run2
+  2.313s, run3 2.373s) — consistent, not what varies. The real variable
+  component is the gap *after* activation, before `external_confirm_s`
+  fires: 1.494s, 10.343s, 12.780s for the same 3 trials respectively.
+  Controller activation time is not the source of the 4.0–15.15s spread;
+  something happening *after* the new controller is already active is.
+
+  **Candidate 2 (GC-pause noise) — refuted via a fresh, purpose-built
+  live trial** (`load-tests/kafka-external-confirm-gc-check.py`), not
+  archived-data analysis: the original 3 trials' GC logs no longer
+  exist (Kafka has no persistent volume in this project, so those
+  containers are long gone) and needed a new kill to check at all. GC
+  logging is already enabled by default on this image
+  (`-Xlog:gc*:file=.../kafkaServer-gc.log`, confirmed live via `ps aux`
+  inside the container) — no new instrumentation needed. Killed the
+  current controller (kafka-3), reproduced the same shape (activation
+  2.394s after kill, `external_confirm_s` 14.087s, an 11.693s
+  post-activation gap, matching the archived trials' high end), and
+  checked the new controller's (kafka-1) own GC log for the entire
+  window: **zero GC events of any kind, "Pause" or otherwise.** Verified
+  the instrument itself first, not just trusted the null result — the
+  same log file has real, correctly-formatted GC entries from the
+  broker's own JVM startup moments earlier (two young-gen pauses,
+  ~20ms/~18ms, both trivially fast and irrelevant), confirming GC
+  logging genuinely works on this broker and genuinely logged nothing
+  during the 11.7s gap, rather than the check silently finding nothing
+  because it was broken.
+
+  **Third, bounded round (2026-09-04, greenlit by Chat specifically
+  because this shape — a test-harness/client-side cost wearing a
+  Kafka-mechanism costume — is exactly this investigation's own
+  already-proven bug pattern, found twice before): the mechanism is
+  now precisely localized, not just "not GC and not ISR."** Checked
+  whether AdminClient's own client-side retry/backoff behavior
+  (queueing multiple attempts) accounts for the gap, by enabling
+  `org.apache.kafka.clients` `DEBUG` logging for the `kafka-topics.sh
+  --describe` call itself (no new instrumentation — this logging
+  capability already exists via `KAFKA_LOG4J_OPTS` and
+  `config/tools-log4j2.yaml`, just not normally turned on) and
+  correlating every request/response pair's timestamp against a fresh
+  controller-kill trial, live, the same way the GC check worked.
+
+  **The original "client-side retry" framing turned out to be not
+  quite right, but the same diagnostic technique found something more
+  precise and more useful.** There's no retry loop visible at all — the
+  AdminClient sends a normal, small burst of requests
+  (`DescribeCluster`, `DescribeTopicPartitions`, `DescribeConfigs`,
+  `ListPartitionReassignments`) as part of building one `--describe`
+  call's output, and every one of them gets answered in single-digit
+  milliseconds — **except `ListPartitionReassignments`, sent to the
+  new controller specifically, which the controller does not answer
+  for many seconds.** Trial 1: sent at kill+3.508s, answered at
+  kill+22.108s — an **18.6s stall on this one request**, accounting for
+  83% of that trial's total 22.496s `external_confirm_s`. A second live
+  trial (a different new controller, kafka-2 this time, confirming this
+  isn't specific to one broker) reproduced the identical shape at a
+  different magnitude: a 10.521s stall on the same request, 74% of that
+  trial's 14.259s total. Both trials' full request/response logs are
+  archived, not just summarized.
+
+  **Where this leaves it**: the mechanism is now precisely localized —
+  the newly-active KRaft controller specifically stalls answering
+  `ListPartitionReassignments` for a long, variable period after
+  activation, while answering every other request type essentially
+  instantly — but *why* that one request type stalls (a KRaft-controller
+  internal implementation question: some queue, gate, or deferred
+  initialization step specific to that request path) is one level
+  deeper than this bounded round covers. Per Chat's explicit scope for
+  this round, stopping here rather than opening a fourth, unscoped
+  cycle into KRaft's own `QuorumController` internals. **Status: three
+  candidates tested (ISR catch-up lag, GC-pause noise, AdminClient
+  client-side retry/backoff), the first two cleanly refuted, the third
+  reframed into a precise, reproducible, named bottleneck
+  (`ListPartitionReassignments` response latency from a freshly-active
+  controller) rather than confirmed or refuted as originally stated —
+  genuinely resolved to that level of precision, not "still unknown."**
+
+  Raw evidence for all three candidates above:
+  `load-tests/kafka-external-confirm-gc-check.py` (the fresh GC-pause
+  trial; kills the current controller, polls for actual activation
+  rather than a fixed sleep, and dumps the new controller's GC log for
+  the window — live-verified output: activation 2.394s after kill,
+  `external_confirm_s` 14.087s, zero GC events);
+  `load-tests/kafka-external-confirm-adminclient-check.py` (the
+  AdminClient-debug-logging trial that found the
+  `ListPartitionReassignments` bottleneck — enables `DEBUG` logging for
+  `org.apache.kafka.clients` via `KAFKA_LOG4J_OPTS` around the same
+  one-shot `--describe` call, no source changes). Both live runs' full
+  request/response transcripts archived at
+  `load-tests/results/kafka-external-confirm-adminclient-check-run{1,2}-*.txt`
+  (moved there from `/tmp/` where they first landed — this investigation
+  already has one documented archival-discipline gap from exactly this
+  kind of oversight, worth not repeating). The GC-pause check's own
+  live output was not similarly saved to a file at the time (only
+  quoted in prose above) — trivially reproducible by re-running
+  `kafka-external-confirm-gc-check.py`, but noted here rather than
+  implied as archived when it isn't.
+
+  Raw evidence for the original internal-RTO/external-visibility
+  finding: `load-tests/kafka-controller-failover-rto-test.py`;
   `load-tests/results/kafka-controller-failover-rto-results.json` and
   its per-trial `controller.log` slices (pass 2/corrected only — this
   fixed filename scheme meant re-running the script a second time for
