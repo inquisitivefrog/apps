@@ -1,0 +1,97 @@
+name: grid-meter-app E2E (self-hosted)
+
+# Non-blocking by design (never added to branch protection's required checks) -- this tier is
+# new and might be flaky, matching testing-strategy.md's existing precedent for load tests:
+# runs on every push for visibility, promote to a required check later once proven stable.
+#
+# push-only, deliberately not pull_request: this runs on a self-hosted Mac runner, not a
+# disposable GitHub-hosted VM -- running PR-triggered workflows on a self-hosted runner is a
+# well-known way to let an untrusted branch execute code on your own machine.
+on:
+  push:
+    paths:
+      - "grid-meter-app/**"
+  workflow_dispatch: {}
+
+jobs:
+  e2e:
+    name: Playwright E2E suite
+    runs-on: [self-hosted, grid-meter-app]
+    # Generous but bounded -- this machine has other uses; a hung run shouldn't occupy the
+    # runner indefinitely. Measured full run (warm caches) is well under 3 minutes; this leaves
+    # headroom for a cold Docker image pull/build with no layer cache.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: grid-meter-app
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # This runner is this Mac, not dedicated CI infrastructure -- bail cleanly with a clear
+      # message if Docker isn't running or the stack's ports are already occupied (e.g. a stale
+      # stack from a prior run, or unrelated work on this machine) rather than a confusing
+      # mid-run failure. Mirrors check-disk-headroom.sh's pattern.
+      - name: Pre-flight check
+        run: ./scripts/preflight-ci-check.sh
+
+      - name: Bring up a clean stack
+        run: |
+          docker compose down -v
+          docker compose up --build -d
+
+      # Poll for the actual condition, not a fixed sleep (this project's own standing
+      # test-infra lesson).
+      - name: Wait for API health
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/actuator/health || true)
+            if [ "$code" = "200" ]; then
+              echo "API healthy after $((i * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API never became healthy" >&2
+          exit 1
+
+      # Empirically confirmed necessary (2026-09-04), not a conservative assumption:
+      # /actuator/health going green is NOT sufficient for cli-postgres.spec.ts, which connects
+      # directly to a live-discovered replica -- at the health-check moment, replicas are still
+      # refusing TCP connections (ECONNREFUSED). See wait-for-patroni-convergence.sh's header.
+      - name: Wait for Patroni HA convergence
+        run: ./scripts/wait-for-patroni-convergence.sh 180
+
+      - name: Install Playwright dependencies
+        working-directory: grid-meter-app/e2e
+        run: npm ci
+
+      - name: Ensure Chromium is installed
+        working-directory: grid-meter-app/e2e
+        run: npx playwright install chromium
+
+      # Capped explicitly rather than defaulting to full parallelism against however many cores
+      # happen to be free on this shared Mac at the moment.
+      - name: Run the E2E suite
+        working-directory: grid-meter-app/e2e
+        run: npx playwright test --workers=2
+
+      - name: Upload Playwright report and screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            grid-meter-app/e2e/playwright-report/
+            grid-meter-app/e2e/screenshots/
+          retention-days: 7
+
+      # Always, regardless of pass/fail -- a failed run shouldn't leave the stack up occupying
+      # resources on the runner between jobs.
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v
