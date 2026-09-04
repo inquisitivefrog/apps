@@ -61,10 +61,10 @@ per-technology from the start rather than assuming it stays Kafka-specific.
    keeping, and update the `docs/` narrative doc if the finding changes —
    don't let the two drift out of sync.
 
-## Current status (as of 2026-08-29)
+## Current status (as of 2026-09-04)
 
 | Technology | Status | Filing status |
 |---|---|---|
 | Kafka | Active — mechanism confirmed twice (broker-fencing-triggered ELR promotion, unlabeled, not gated by config) | JIRA account requested, pending approval |
-| Redis / Sentinel | Not started | N/A |
-| PostgreSQL clustering | Not started — clustering package not yet selected | N/A |
+| Redis / Sentinel | HA testing closed (all 6 stages, `docs/redis-ha-scope.md`) — no vendor-bug candidate surfaced | N/A |
+| PostgreSQL clustering | HA testing closed (Patroni + Consul, all 7 stages, `docs/postgres-ha-scope.md`) — no vendor-bug candidate surfaced | N/A |

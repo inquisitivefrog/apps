@@ -112,6 +112,34 @@ upstream as of Loki 3.7.3.
   config. See `docs/testing-strategy.md`'s "Test-infrastructure lesson"
   section for the full account and the standing guidance for new test
   scripts.
+- **Chaos-tested infrastructure is not the same claim as a protected
+  application — verify the app is actually wired to what was tested,
+  not just that the infrastructure survives.** All three HA passes
+  independently found the same shape of gap: every stage of Kafka's,
+  Redis's, and Postgres's chaos testing validated the cluster itself
+  (brokers/Sentinel/Patroni correctly failing over, electing a leader,
+  refusing unsafe promotions) via direct clients (`redis-cli`,
+  `psql`/`patronictl`, admin APIs) — none of it confirmed the *running
+  application* was in the request path of what was being tested.
+  Postgres was the sharpest instance: `SPRING_DATASOURCE_URL` pointed
+  at the original standalone `postgres` container through all 6 stages
+  of "clean" Patroni results — the fully-validated HA cluster was
+  never in the app's request path at all. Redis had the same gap (the
+  app's Redis client had zero Sentinel awareness until checked).
+  Checking, not assuming, mattered here: Kafka's pass turned out
+  already clean by construction (its chaos script always drove traffic
+  through real authenticated app endpoints), so the lesson is "check
+  this everywhere," not "assume this everywhere." **Why this is worse
+  than not testing at all**: six stages of clean infrastructure results
+  can be, and were, misread as "the app's data tier is HA" — a false
+  sense of security stronger than having no chaos-testing story, since
+  it looks like evidence rather than an acknowledged gap. Now a
+  required final stage for every HA layer, not optional follow-up
+  polish: after infrastructure-level chaos testing passes, cut the app
+  over to the validated cluster and re-run a representative failure
+  scenario through the app's real endpoints before calling the layer
+  done. See `docs/ha-scope.md`'s standing lesson section for the full
+  account across all three layers.
 - **Never assume a local (non-containerized) shell script's target
   environment shares Linux/GNU tool semantics — this Mac's bundled tools
   are BSD-derived and differ, sometimes silently.** Confirmed twice: the

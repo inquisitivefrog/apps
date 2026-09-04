@@ -201,15 +201,21 @@ Redis-backed caching upstream, a handful of mutations).
   reserved for `kube-prometheus-stack`, where its templating earns its
   keep.
 
-### Terraform — explicitly out of scope
+### Terraform — multi-cloud deployment (AWS, GCP, Azure)
 
-Considered as a future SRE-demo addition, but not adopted: this project's
-entire deployment surface is local (Docker Compose for dev, `kind` for the
-k8s demo), so there is no real cloud target for Terraform to provision.
-Introducing it would mean inventing infrastructure to justify the tool
-rather than the other way around — inconsistent with the project's
-minimal-scope ethos elsewhere. Revisit only if a real cloud deployment
-target is ever added to this project's actual scope.
+**Reversed 2026-08-27** — see `docs/cloud-deployment-scope.md` for the
+full scope. Real cloud deployment (interview-portable, running
+independently of the laptop) is now an explicit project goal. Separate
+Terraform configurations per provider — `terraform/aws/`,
+`terraform/gcp/`, `terraform/azure/` — designed with parallel structure
+from the outset rather than a single abstracted multi-cloud codebase, so
+each provider's own idioms stay legible rather than flattened into a
+lowest-common-denominator abstraction (same reasoning already applied to
+plain-YAML k8s manifests over Helm). Managed PostgreSQL and managed Redis
+per provider; Kafka self-hosted identically across all three (see
+`docs/cloud-deployment-scope.md` for why). Local Docker Compose/`kind`
+deployment is unaffected and remains a fully separate, still-maintained
+track.
 
 ## Resource budget notes (24GB MacBook Air)
 

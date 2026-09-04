@@ -106,10 +106,9 @@ durable record, never worth a page on its own.
   from the prior session) — breaker opened / half-opened / closed.
   Informational on its own; becomes trend-worthy the moment open-events
   start climbing in frequency (a breaker flapping is itself a slope, not
-  just a discrete event). **Status (2026-08-28): the circuit breaker
-  itself remains unbuilt — see `resilience-scope.md`'s open decision on
-  it — so this notice type has no source yet. Still a valid design,
-  waiting on its upstream signal to exist.**
+  just a discrete event). **Status (2026-09-03): built — see
+  `resilience-scope.md`'s "Circuit breaker: built" section for the
+  implementation and live-verification detail.**
 - **Delivery-failure notices** — added 2026-08-28, reclassified the same
   day: a Kafka publish permanently failing after `delivery.timeout.ms`
   expires during a sustained outage
