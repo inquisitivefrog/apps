@@ -67,9 +67,17 @@ get made across requests once it's seen enough of them fail. No conflict, no dou
 `minimum-number-of-calls` + `failure-rate-threshold` are both crossed, not before; half-open
 closes on continued success; half-open re-opens on renewed failure; the two breakers are
 genuinely independent in both directions (a Kafka-only failure never opens the Postgres breaker
-and vice versa); the Kafka-open case fails fast without ever calling `send()`. All 85 tests in
-the suite pass, including the full Spring context boot with real `resilience4j-spring-boot4`
-autoconfiguration wired in — not mocked.
+and vice versa); the Kafka-open case fails fast without ever calling `send()`. A further,
+dedicated component test (`ReadingIngestCircuitBreakerLatencyComponentTest`, 2026-09-04) closes
+the timing half of this work: both breakers' OPEN-state behavior is proven not just to throw the
+right exception internally but to actually return fast over real HTTP — measured wall-clock
+time of the HTTP call itself, not an internal breaker metric, matching this project's own App
+RTO vs. Infra RTO distinction (`postgres-ha-scope.md`'s Stage 7). Real measured latencies across
+4 runs: `postgres-existence-check` 5–12ms, `kafka-publish` 11–24ms, both comfortably under a
+200ms ceiling chosen to be tight enough to catch a real regression toward the old undeclared-
+default multi-second hang, not just "not literally infinite." All 87 tests in the suite pass,
+including the full Spring context boot with real `resilience4j-spring-boot4` autoconfiguration
+wired in — not mocked.
 
 **Live verification against the real stack (not stopped at unit/component tests), per this
 project's standing practice throughout the HA work**: stopped all 3 Kafka brokers — confirmed the
@@ -78,6 +86,39 @@ rate threshold, confirmed every call after that failed fast (~30ms) with a real 
 recovery through `HALF_OPEN` → `CLOSED` once Kafka came back (real `201`s resumed). Same full
 lifecycle confirmed for the Postgres breaker against a real, sustained, all-3-Patroni-nodes-down
 outage — which is where the bug below was found.
+
+**What's still open: load-test validation of thread-pool protection under sustained concurrent
+failure — not yet done.** Everything above (unit tests, the dedicated latency component test,
+and live verification against real Kafka/Postgres outages) proves the breakers are *correct* —
+they open/close at the right thresholds, fail fast without fabricating false success, and recover
+cleanly. None of it proves the breakers achieve their *original motivating purpose*: this doc's
+own "real risk this specific test didn't stress" note (see the Kafka producer section above) —
+whether a **sustained outage under realistic concurrent load** would tie up enough Tomcat request
+threads to trigger the `Tomcat thread pool saturated` alert, and whether the breaker actually
+prevents that once it's open. All verification so far, unit and live alike, has been **sequential,
+single-call reproduction** — one request at a time, never concurrent load. A breaker that opens
+correctly under sequential probing could still fail to protect the thread pool under real
+concurrent pressure if, for example, enough requests arrive simultaneously *before* the breaker
+has accumulated enough failures to open (the exact ramp-up window this doc's Kafka circuit
+breaker section already flags as a real, un-eliminated cost).
+
+**Scoped as a specific, pick-up-able follow-up, not vague "someday" language**: extend or add a
+`load-tests/` JMeter scenario that drives **Kafka specifically** (not Postgres — Kafka already has
+a clean, already-proven full-outage story from this pass: stop all 3 brokers, confirmed
+synchronous `KafkaException`, confirmed breaker lifecycle) into a sustained failing state under
+realistic concurrent load (matching this project's existing load-test profiles' shape — see
+`load-tests/README.md`), and confirms via Tomcat thread-pool metrics **already scraped through
+Actuator/Micrometer** per `architecture.md` (`tomcat_threads_busy_threads`,
+`tomcat_connections_current` — the same metrics the original HikariCP `connection-timeout`
+investigation and the misconfigured-spike-demo scenario already rely on) that the pool does *not*
+saturate the way it would without the breaker. The natural comparison point, matching
+`misconfigured-spike-demo.sh`'s own before/after technique for `accept-count`: run the identical
+sustained-Kafka-outage-under-load scenario twice, once with the breaker enabled and once with it
+effectively disabled (no such toggle exists yet -- would need one, e.g. an env-var-driven
+override setting `resilience4j.circuitbreaker.instances.kafka-publish.minimum-number-of-calls`
+high enough that it never opens during the test, mirroring the existing
+`docker-compose.redis-retry-isolation-test.yml` override pattern), and compare the two runs'
+thread-pool metrics directly.
 
 ### A severe, pre-existing, unrelated bug found live-testing the Postgres breaker: Postgres outages could silently fabricate `200 OK` responses
 
@@ -552,3 +593,17 @@ once the breaker closes again.~~
    Kafka and Postgres outages. See "Circuit breaker: built" at the top
    of this doc for the full account, including a severe, unrelated bug
    found and fixed along the way.)
+   **This item's own question is closed, but a narrower one it was
+   standing in for is not: load-test validation of thread-pool
+   protection under sustained concurrent failure — not yet done.**
+   Correctness (opens/closes at the right thresholds, fails fast, never
+   fabricates false success, recovers cleanly) is now fully built and
+   live-verified — see "What's still open" under "Circuit breaker:
+   built" at the top of this doc for the precise scope of what remains:
+   whether the breaker actually protects Tomcat's thread pool from
+   exhaustion under *sustained, concurrent* load, the original
+   motivating concern this doc's own Kafka producer section named and
+   never stressed. Every verification so far (unit tests, the dedicated
+   HTTP-latency component test, live Kafka/Postgres outages) has been
+   sequential, one call at a time — never concurrent load. Needs a
+   `load-tests/` JMeter scenario, scoped in that section, to close.

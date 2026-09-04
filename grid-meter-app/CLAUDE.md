@@ -145,7 +145,12 @@ upstream as of Loki 3.7.3.
   different breaker instances to two different code blocks within one
   method. See `docs/resilience-scope.md`'s "Circuit breaker: built"
   section for the full account, including live verification against
-  real Kafka and Postgres outages.
+  real Kafka and Postgres outages. **Correctness is fully verified
+  (sequential unit/component tests, HTTP-level fail-fast latency, live
+  outages); thread-pool protection under sustained *concurrent* load —
+  the original motivating concern — is not yet load-tested.** Don't
+  read this entry as end-to-end validated until that follow-up (scoped
+  in `resilience-scope.md`'s "Open decisions" item 4) lands.
 - **An uncaught `DataAccessException`/`TransactionException` during a
   genuine Postgres outage can silently fabricate a `200 OK` instead of
   erroring — this is a real, confirmed gap in Spring Framework itself
