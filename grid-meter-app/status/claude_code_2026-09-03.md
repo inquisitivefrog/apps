@@ -700,23 +700,112 @@ so explicitly this turn.
     traffic against this target," not just "is the infrastructure
     itself healthy" — added to the "Test-writing pitfalls" section.
 
+## Done (continued — resilience/circuit breaker work, later same day)
+
+- **Implemented Resilience4j circuit breakers for
+  `ReadingService.ingest()`**, picking up `docs/resilience-scope.md`'s
+  previously-scoped-but-never-built design, per an explicit multi-phase
+  task relayed from Claude Chat.
+  - **Phase 0, re-verified live before touching code, not assumed from
+    how long ago the doc was written**: confirmed the
+    `resilience4j-bom` gap is still open at the current release (2.4.0)
+    against `repo1.maven.org` directly, after `search.maven.org`'s own
+    index gave a false "doesn't exist" signal; confirmed
+    `resilience4j-spring-boot4:2.4.0` itself is published and
+    installable (just needs an explicit version pin, not BOM
+    inheritance); checked and rejected the named Spring Cloud fallback
+    (wraps the older `resilience4j-spring-boot3` module on an older
+    Boot 4.0.8, worse-aligned than the direct artifact); `mvn
+    dependency:tree -Dverbose=true` confirmed zero version conflicts.
+  - **Two independent `CircuitBreaker` instances**
+    (`postgres-existence-check`, `kafka-publish`), wired
+    programmatically (not method-level annotations, which can't apply
+    two different breakers to two different code blocks in one
+    method). Kafka's async `send()` needed manual
+    `tryAcquirePermission()`/`onSuccess()`/`onError()` plus a
+    synchronous try/catch that turned out to be load-bearing, not just
+    defensive — a full Kafka outage produced a genuine *synchronous*
+    `KafkaException`, confirmed live. Both throw
+    `CallNotPermittedException` when open, mapped to a fast `503`.
+  - **Live-verified against the real stack**: full `CLOSED` → `OPEN` →
+    `HALF_OPEN` → `CLOSED` lifecycle confirmed for both breakers
+    against a real, full Kafka outage and a real, sustained,
+    all-3-Patroni-nodes-down Postgres outage.
+  - **A severe, pre-existing, unrelated bug found live-testing the
+    Postgres breaker**: a genuine sustained Postgres outage (this
+    project's first-ever total, not failover-only, Postgres test) could
+    make an uncaught `CannotCreateTransactionException` reach
+    `DispatcherServlet` with no matching resolver, fall through to
+    Spring's own `DisconnectedClientHelper`, and get misdiagnosed as
+    "the HTTP client disconnected" — producing a **fabricated `200 OK`
+    with an empty body**, not an error, for a request that never
+    completed. Root-caused via DEBUG-level tracing to a real, narrow
+    gap in Spring Framework itself (spring-web 7.0.8): that helper
+    excludes `DataAccessException` from its check but not the
+    *different* `TransactionException` hierarchy
+    `CannotCreateTransactionException` belongs to. Fixed in
+    `GlobalExceptionHandler` by explicitly claiming both hierarchies,
+    mapped to `503`. New regression test
+    (`PostgresUnavailableComponentTest`), red/green-verified by
+    temporarily disabling the fix and confirming it fails predictably —
+    took real iteration to get a deterministic reproduction (a small,
+    fixed-size Hikari pool was needed to reliably force the exact
+    exception type). Live re-verified after the fix: 8/8 sequential
+    calls against a real sustained outage now correctly return `503`,
+    zero fabricated `200`s.
+  - **HTTP-level fail-fast latency assertions** added for both breakers
+    (`ReadingIngestCircuitBreakerLatencyComponentTest`) — proves the
+    breaker's `OPEN` state is fast *as experienced by a real caller*
+    (wall-clock HTTP time), not just internally correct. Real measured
+    latencies across 4 runs: `postgres-existence-check` 5–12ms,
+    `kafka-publish` 11–24ms, both well under a 200ms ceiling. Found and
+    fixed a real Testcontainers gotcha along the way: a container's
+    host port isn't guaranteed stable across `stop()`/`start()`, but
+    HikariCP's DataSource bean holds whatever URL it was built with at
+    context startup — fixed with `@DirtiesContext(AFTER_EACH_TEST_METHOD)`.
+  - **Load-test thread-pool-protection validation formally scoped as a
+    follow-up, not built this pass**: `docs/resilience-scope.md` now
+    states plainly that correctness is fully verified but the original
+    motivating concern (does the breaker actually protect Tomcat's
+    thread pool under *sustained concurrent* load, not just sequential
+    single-call reproduction) remains untested, with a concrete,
+    pick-up-able scope (a `load-tests/` JMeter scenario driving Kafka
+    into sustained failure under real concurrent load, confirmed via
+    already-scraped Tomcat thread-pool metrics). `docs/resilience-scope.md`'s
+    "Open decisions" item 4 and `CLAUDE.md`'s circuit-breaker entry
+    both updated to distinguish "built and correct" from "not yet
+    load-tested end-to-end."
+  - Full suite: **87/87 tests pass** throughout, re-confirmed fresh at
+    the end of this work.
+
+## Committed and pushed (resilience/circuit breaker work)
+
+4 commits, `7037dbc..228ba44` on top of the earlier `fc6a00b`:
+1. `d878dc9` — circuit breaker implementation (Phase 0 verification,
+   two independent breakers, config, unit tests, live verification).
+2. `dddc458` — the Spring Framework `DisconnectedClientHelper` bug fix,
+   regression test, live re-verification.
+3. `7037dbc` — HTTP-level fail-fast latency assertions for both
+   breakers, plus the `@DirtiesContext` Testcontainers-port fix.
+4. `228ba44` — scoped the remaining load-test validation as an explicit
+   follow-up in `docs/resilience-scope.md` and `CLAUDE.md`.
+
 ## Next
 
-- **The exhaustive repo-wide sweep is now fully closed and pushed** —
-  every Category B/C finding fixed, live-verified, and documented.
-- **The `docker compose kill` incident is closed out** — root-caused,
-  independently re-verified against the full stack, and documented as
-  a standing lesson.
-- **The Redis Lettuce/Kafka-retry hypothesis is now closed** — refuted
-  with direct, isolated, twice-replicated evidence per condition.
-- **The stray-traffic contamination pattern is now fully closed** — the
-  pre-flight guard, its false-positive risk against its own 5 call
-  sites, and the cross-project lesson write-up are all confirmed and
-  documented, not just built and assumed correct.
-- This session's remaining uncommitted work (the
-  `docs/cross-project-lessons.md` entry and this section's own update)
-  awaits an explicit "commit and push" per this session's established
-  pattern.
-- Docker Compose stack is currently up on normal config (no debug
-  overlays active). **This is a clean, fully-verified stopping point
-  for the day** per Chat's own closing assessment.
+- **The exhaustive repo-wide sweep, the `docker compose kill` incident,
+  the Redis Lettuce/Kafka-retry hypothesis, and the stray-traffic
+  contamination pattern are all fully closed** (see "Done" above,
+  earlier in the day) — nothing outstanding from that stretch of work.
+- **Circuit breakers are built, correct, and live-verified — but load-
+  test validation of thread-pool protection under sustained concurrent
+  failure is the one deliberately-scoped-but-not-built follow-up.**
+  Picking this back up: see `docs/resilience-scope.md`'s "What's still
+  open" section (under "Circuit breaker: built") for the precise scope
+  — a `load-tests/` JMeter scenario driving Kafka into sustained
+  failure under real concurrent load, confirmed via Tomcat thread-pool
+  metrics already scraped through Actuator/Micrometer, compared against
+  a before/after run with the breaker's threshold effectively disabled.
+- Everything from today is committed and pushed; working tree clean.
+  Docker Compose stack is up on normal config (no debug overlays
+  active). **Stopping for the evening, per explicit user request** —
+  this is a clean, fully-verified stopping point.
