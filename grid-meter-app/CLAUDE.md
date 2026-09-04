@@ -237,13 +237,35 @@ rate < 1%, p95 latency ceiling).
 
 ## CI
 
-GitHub Actions workflows already exist at the `apps/` repo root
-(`.github/workflows/claude-code-review.yml`, `claude.yml`) — automated
+GitHub Actions workflows exist at the `apps/` repo root
+(`.github/workflows/`): `claude-code-review.yml`/`claude.yml` (automated
 Claude Code review on PRs touching `grid-meter-app/**`, and an `@claude`
-mention responder. No build/test/lint CI pipeline exists yet; one is
-planned per @docs/testing-strategy.md (unit + component tests block merge,
-API tests block merge after a throwaway env, load tests via
-`workflow_dispatch`/nightly and never block).
+mention responder); `grid-meter-app-ci.yml` (unit + component tests,
+black-box API tests against a throwaway deployed stack, frontend
+typecheck/test/build — all three required status checks on `main`, see
+`docs/testing-strategy.md`'s "CI wiring" section); `grid-meter-app-e2e.yml`
+(the Playwright E2E suite — self-hosted, non-blocking, see below);
+`grid-meter-app-load-test.yml` (`workflow_dispatch`/nightly, never blocks,
+per `docs/testing-strategy.md`).
+
+**`grid-meter-app-e2e.yml` runs on a self-hosted runner (this Mac), not a
+GitHub-hosted VM** — needed because the full HA stack (Patroni, Kafka,
+Sentinel, Consul) plus Chromium exceeds what a standard-tier GitHub-hosted
+runner comfortably provides (see `docs/testing-strategy-ha-supplement.md`'s
+resource-measurement pass). **This means the Mac now serves double duty as
+an interactive dev machine and an always-on CI runner** — a push landing
+while a manual verification stack (`docker compose up`, `chaos-demo.sh`, an
+ad hoc investigation script, etc.) is still up on this same machine will
+deterministically collide on ports (80/8080/55432/3001/8500) and fail the
+job's pre-flight check. This is a known, accepted operational tradeoff of
+choosing a self-hosted runner here, not flakiness — the pre-flight check
+(`scripts/preflight-ci-check.sh`) is specifically designed to fail loud and
+clean when this happens (including which container is currently holding
+each conflicting port and how long it's been up, to make "stale leftover,
+safe to kill" vs. "active work in progress" immediately obvious) rather
+than let the job collide confusingly mid-run. Tear down any manual stack
+(`docker compose down -v`) before or after verification work if a push is
+imminent.
 
 ## Session status log
 

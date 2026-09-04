@@ -43,11 +43,28 @@ if ! docker info >/dev/null 2>&1; then
   return 1 2>/dev/null || exit 1
 fi
 
+# On macOS, Docker Desktop proxies every published container port through its own process
+# (lsof shows "com.docke... " for ANY published port, regardless of which container it belongs
+# to) -- so raw lsof output alone never actually identifies what's occupying a port, only that
+# something Docker-shaped is. Cross-referencing against `docker ps` (which does know the real
+# container-to-port mapping) turns "port 80 in use" into "port 80 in use by
+# grid-meter-app-traefik-1, Up 3 hours" -- immediately diagnosable as a stale leftover (safe to
+# kill) vs. a container that just started (likely a concurrently-running job, don't touch it).
+find_port_owner() {
+  docker ps --format '{{.Names}}\t{{.Ports}}\t{{.Status}}' 2>/dev/null \
+    | awk -F'\t' -v p=":${1}->" '$2 ~ p {print $1 " (" $3 ")"; exit}'
+}
+
 conflicts=()
 for port in "${REQUIRED_PORTS[@]}"; do
   listener=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1, $2}')
   if [ -n "$listener" ]; then
-    conflicts+=("port ${port}: ${listener}")
+    owner=$(find_port_owner "$port")
+    if [ -n "$owner" ]; then
+      conflicts+=("port ${port}: container ${owner}")
+    else
+      conflicts+=("port ${port}: ${listener} -- no matching container found; likely a non-Docker process, not a leftover stack")
+    fi
   fi
 done
 
