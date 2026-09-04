@@ -8,8 +8,10 @@
 #
 # Prerequisites:
 #   - Full stack up, including the observability tier:
-#       docker compose up -d --scale api=2 traefik frontend api postgres \
+#       docker compose up -d --scale api=2 traefik frontend api \
 #         kafka-1 kafka-2 kafka-3 redis prometheus loki tempo grafana alloy
+#     (no standalone `postgres` here -- retired after docs/postgres-ha-scope.md's Stage 7
+#     cutover; `api` depends_on patroni-1/2/3 and brings the Patroni/Consul chain up with it)
 #   - Playwright's Chromium downloaded once: npx --yes playwright install chromium
 #     (the `playwright` npm module itself is bootstrapped automatically into
 #     load-tests/node_modules on first run -- see below)
@@ -46,7 +48,15 @@ RECOVERY_SECONDS="${RECOVERY_SECONDS:-20}"
 # for the real multi-broker HA scenarios (tolerate-one-loss, quorum-loss, rolling maintenance) this
 # single-outage demo can no longer exercise on its own now that Kafka isn't a single point of
 # failure.
-LINKS=(traefik api kafka-1 postgres redis)
+#
+# patroni-1 (not "postgres", retired after docs/postgres-ha-scope.md's Stage 7 cutover) for the
+# same reason as kafka-1 above: this now demonstrates single-node loss against the 3-node Patroni
+# cluster, which should be the boring, expected case -- not a stand-in for a genuine total outage.
+# A real full-cluster-down scenario (stopping all three Patroni nodes) would be a legitimate,
+# separate demonstration, but belongs as its own distinctly-named case outside this loop, not
+# folded in here where every other entry means "one node of a clustered service" -- not built
+# unless actually wanted.
+LINKS=(traefik api kafka-1 patroni-1 redis)
 export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
 export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/chaos-demo-$(date +%Y%m%d-%H%M%S)"
@@ -148,10 +158,11 @@ for service in "${LINKS[@]}"; do
                   "load-tests/kafka-ha-demo.sh's real scenario-1 result (20/20 succeeded, zero" \
                   "impact). If this outage DOES visibly affect the app, that's a real regression" \
                   "worth investigating, not the expected/documented behavior anymore." ;;
-    postgres) echo "Watch: reads (GET /meters, /readings) should start failing; the async Kafka" \
-                   "consumer's writes should start erroring too -- check Loki for the actual" \
-                   "exception logged. The 'High HTTP error rate' alert rule should fire if the" \
-                   "resulting error rate clears its 5% threshold for 30s." ;;
+    patroni-1) echo "Watch: with the 3-node Patroni cluster (docs/postgres-ha-scope.md), losing" \
+                    "ONE node should now be a non-event -- Traefik's :55432 entrypoint keeps" \
+                    "routing to whichever node is primary, so reads/writes should keep succeeding" \
+                    "throughout. If this outage DOES visibly affect the app, that's a real" \
+                    "regression worth investigating, not the expected/documented behavior anymore." ;;
     redis) echo "Watch: does the app degrade gracefully (cache-miss fallback to Postgres, per" \
                 "architecture.md) or hard-fail? This is the one link where graceful degradation is" \
                 "the documented expectation -- worth confirming for real." ;;

@@ -14,7 +14,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-docker compose up -d --build traefik api postgres kafka-1 kafka-2 kafka-3 redis
+# No standalone `postgres` here -- that service was retired after docs/postgres-ha-scope.md's
+# Stage 7 cutover (see docker-compose.yml's comment at the old postgres service's former
+# location). `api` itself depends_on patroni-1/2/3, postgres-primary-registrar, and the
+# sentinels, so listing it below already brings up the full Patroni/Consul/registrar chain
+# Traefik's :55432 entrypoint needs -- no need to hand-duplicate that dependency list here.
+docker compose up -d --build traefik api kafka-1 kafka-2 kafka-3 redis
 ./scripts/wait-for-health.sh "http://localhost/actuator/health" 90
 
 
