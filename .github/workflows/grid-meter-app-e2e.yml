@@ -32,6 +32,16 @@ jobs:
       # resolves) scoped to this runner only -- doesn't touch the interactive ~/.docker/config.json
       # used elsewhere on this Mac. Runner-root .env didn't take effect here (only picked up
       # ACTIONS_RUNNER_SVC into the launchd plist at install time, not this), so set explicitly.
+      #
+      # DURABILITY WARNING (2026-09-04): this fix lives entirely in this env var and in the
+      # pre-pulled base images sitting in this Mac's local Docker cache (see
+      # scripts/preflight-ci-check.sh's header for the second half of this gotcha). Neither is
+      # visible from the repo alone. If this runner is ever rebuilt (a fresh `./svc.sh install`,
+      # or a `docker system prune -a` that evicts the cached images), both failure modes come
+      # back silently and this whole keychain root-cause chase has to happen again. If CI starts
+      # failing on "Bring up a clean stack" with a keychain error after a runner rebuild, this is
+      # why -- re-pull the base images listed in preflight-ci-check.sh's header as the
+      # interactive user first.
       DOCKER_CONFIG: /Users/tim/actions-runners/grid-meter-app/.docker-config
     defaults:
       run:
