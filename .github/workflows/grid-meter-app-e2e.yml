@@ -23,6 +23,16 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    env:
+      # This runner's launchd service runs in a non-interactive session that can't unlock the
+      # macOS login keychain -- Docker Desktop's default "desktop" credential helper needs it
+      # even for anonymous pulls of public images, which fails builds outright with
+      # "keychain cannot be accessed... does not allow user interaction". Points Docker at a
+      # separate config (no credsStore, symlinked cli-plugins so `docker compose` still
+      # resolves) scoped to this runner only -- doesn't touch the interactive ~/.docker/config.json
+      # used elsewhere on this Mac. Runner-root .env didn't take effect here (only picked up
+      # ACTIONS_RUNNER_SVC into the launchd plist at install time, not this), so set explicitly.
+      DOCKER_CONFIG: /Users/tim/actions-runners/grid-meter-app/.docker-config
     defaults:
       run:
         working-directory: grid-meter-app
