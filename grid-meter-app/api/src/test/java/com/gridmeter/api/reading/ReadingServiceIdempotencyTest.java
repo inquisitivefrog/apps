@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.gridmeter.api.meter.MeterRepository;
 import com.gridmeter.api.reading.dto.ReadingRequest;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -49,13 +50,17 @@ class ReadingServiceIdempotencyTest {
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
         when(meterRepository.existsById(any())).thenReturn(true);
 
+        // ofDefaults() is fine here -- this test class is scoped to idempotency behavior, not
+        // circuit-breaker behavior (see ReadingServiceTest for that), and none of these tests
+        // drive enough failing calls to trip a breaker either way.
         readingService = new ReadingService(
                 mock(ReadingRepository.class),
                 meterRepository,
                 kafkaTemplate,
                 redisTemplate,
                 "readings",
-                new SimpleMeterRegistry());
+                new SimpleMeterRegistry(),
+                CircuitBreakerRegistry.ofDefaults());
     }
 
     private ReadingRequest anyRequest() {

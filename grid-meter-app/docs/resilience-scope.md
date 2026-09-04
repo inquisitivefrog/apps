@@ -1,5 +1,84 @@
 # grid-meter-app — Resilience scope (retry, circuit breaking, backpressure)
 
+## Circuit breaker: built (2026-09-04) — plus a severe, unrelated bug found and fixed along the way
+
+**Status update to "Open decisions" item 4 below: built, not declined.** Picked up the
+previously-scoped-but-never-built Resilience4j work (see "Circuit breaker" and "Where the
+circuit breaker applies" sections further down, which describe the original design this
+implementation follows).
+
+**Phase 0 re-verification, live against the real registry, not assumed from how long ago the
+doc was written:**
+- The `resilience4j-bom` gap the doc flagged is *still* open as of the actual current release
+  (2.4.0) — confirmed directly against `repo1.maven.org`, not `search.maven.org`'s index, which
+  turned out to be stale and initially gave a false "doesn't exist" signal. `resilience4j-spring-
+  boot4:2.4.0` itself **is** published and installable; the BOM's `dependencyManagement` just
+  doesn't list it, so it needs an explicit version pin rather than BOM-managed inheritance — a
+  minor, manageable gap, not a blocker.
+- The named fallback (`spring-cloud-starter-circuitbreaker-resilience4j`) was checked and
+  rejected: it wraps the *older* `resilience4j-spring-boot3` module paired with Spring Boot
+  4.0.8 (not this project's pinned 4.1.0 line) — worse-aligned than the direct artifact, not a
+  safer alternative.
+- `mvn dependency:tree` (including `-Dverbose=true` for the full project) confirmed zero version
+  conflicts from adding `resilience4j-spring-boot4` — it resolves to the exact same Spring
+  Framework 7.0.8 line already in use everywhere else.
+- Re-confirmed live against the actual pinned `spring-boot-actuator-autoconfigure-4.1.0.jar`:
+  still zero Kafka-related classes, so `ReadingsKafkaHealthIndicator` remains genuinely necessary
+  custom work.
+
+**What was built**: two independent `CircuitBreaker` instances (`postgres-existence-check`,
+`kafka-publish`) wired programmatically into `ReadingService.ingest()`, not via method-level
+`@CircuitBreaker` annotations — the existing `@Retryable` already wraps the whole method, and a
+single shared breaker would conflate two independently-failing dependencies (the exact anti-
+pattern this doc's own "Where the circuit breaker applies" section warns against). Postgres uses
+`CircuitBreaker.executeSupplier()` (a synchronous call); Kafka uses manual
+`tryAcquirePermission()`/`onSuccess()`/`onError()`, since `KafkaTemplate.send()` is asynchronous
+and its real outcome isn't known until its returned future completes. Both wrapped in a
+synchronous try/catch too, not just the async path — confirmed live this was necessary, not just
+defensive: a full Kafka outage produced a genuine *synchronous* `KafkaException` (`ConfigException:
+No resolvable bootstrap urls given in bootstrap.servers`, once all 3 broker hostnames stopped
+resolving via Docker's embedded DNS — the same class of finding as the Redis Sentinel DNS lesson
+elsewhere in this project, now confirmed for Kafka too), not always the async failure the
+`.whenComplete()` path alone would have caught. All `resilience4j.circuitbreaker.instances.*`
+properties declared explicitly in `application.yml`, verified against the real 2.4.0 jar's
+`CommonCircuitBreakerConfigurationProperties$InstanceProperties` field names via `javap`, not
+copied from the doc's own illustrative shape untested.
+
+**Behavior when open**: both breakers throw `CallNotPermittedException`, mapped by
+`GlobalExceptionHandler` to a fast `503`. This is a different layer from Traefik's own edge-level
+`503` shedding (see "Outcome" below) — Traefik's readiness check is deliberately Kafka/Postgres-
+independent since the Traefik fix described there, so it never fires for this case; this handler
+is what actually protects the ingest path specifically.
+
+**Interaction with `PrimaryFailoverSQLExceptionOverride` (`postgres-ha-scope.md` Stage 7),
+checked explicitly rather than assumed to compose cleanly**: they solve genuinely different,
+non-conflicting problems at different layers. The Hikari override evicts one specific stale
+*write* connection on Postgres' `25006` (read-only-transaction) SQLState; the breaker tracks
+aggregate call outcomes across many requests and stops attempting calls once failures cross a
+threshold. `postgres-existence-check` wraps a **read** (`existsById()`), which never triggers the
+override's specific write-rejection trigger at all — the override protects a different, later
+write path this breaker doesn't touch. Where they *do* meet is the general "Postgres becomes
+fully unreachable" case: HikariCP's own `connection-timeout` (5s, already declared) bounds each
+individual connection attempt regardless of breaker state; the breaker bounds how many attempts
+get made across requests once it's seen enough of them fail. No conflict, no double-guarding.
+
+**Testing**: 8 unit tests added to `ReadingServiceTest` (small, fast, explicit
+`CircuitBreakerConfig` — not production's real 10-call window) covering: opens only after
+`minimum-number-of-calls` + `failure-rate-threshold` are both crossed, not before; half-open
+closes on continued success; half-open re-opens on renewed failure; the two breakers are
+genuinely independent in both directions (a Kafka-only failure never opens the Postgres breaker
+and vice versa); the Kafka-open case fails fast without ever calling `send()`. All 85 tests in
+the suite pass, including the full Spring context boot with real `resilience4j-spring-boot4`
+autoconfiguration wired in — not mocked.
+
+**Live verification against the real stack (not stopped at unit/component tests), per this
+project's standing practice throughout the HA work**: stopped all 3 Kafka brokers — confirmed the
+synchronous `KafkaException` above, confirmed the breaker opened exactly at the 10-call/failure-
+rate threshold, confirmed every call after that failed fast (~30ms) with a real `503`, confirmed
+recovery through `HALF_OPEN` → `CLOSED` once Kafka came back (real `201`s resumed). Same full
+lifecycle confirmed for the Postgres breaker against a real, sustained, all-3-Patroni-nodes-down
+outage — which is where the bug below was found.
+
 ## Outcome (2026-08-28)
 
 **Summary: the transactional outbox was built, tested against a real
@@ -405,8 +484,13 @@ once the breaker closes again.~~
    independently of the outbox's fate. Shortening remains undecided but
    is no longer gated on an outbox that won't exist — it would now be
    gated on the circuit breaker alone, if that work resumes.)**
-4. **New (2026-08-28): circuit breaker (Resilience4j) — build or
-   formally decline?** Not yet decided either way. Unlike the outbox,
+4. ~~New (2026-08-28): circuit breaker (Resilience4j) — build or
+   formally decline? Not yet decided either way. Unlike the outbox,
    nothing has been measured that argues against it; it's simply not
    been prioritized yet, and the `resilience4j-spring-boot4` BOM gap
-   hasn't been re-checked. Needs its own scoping pass if picked up.
+   hasn't been re-checked. Needs its own scoping pass if picked up.~~
+   **(Resolved 2026-09-04: built.** Two independent breaker instances
+   wired into `ReadingService.ingest()`, live-verified against real
+   Kafka and Postgres outages. See "Circuit breaker: built" at the top
+   of this doc for the full account, including a severe, unrelated bug
+   found and fixed along the way.)

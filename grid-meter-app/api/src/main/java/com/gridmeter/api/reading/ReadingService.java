@@ -3,12 +3,16 @@ package com.gridmeter.api.reading;
 import com.gridmeter.api.common.ResourceNotFoundException;
 import com.gridmeter.api.meter.MeterRepository;
 import com.gridmeter.api.reading.dto.ReadingRequest;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -45,6 +49,12 @@ public class ReadingService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final String readingsTopic;
     private final Counter deliveryFailureCounter;
+    // docs/resilience-scope.md's "Where the circuit breaker applies": two independent instances,
+    // not one shared breaker for the whole method -- Postgres and Kafka fail independently, and a
+    // Kafka outage tripping the SAME breaker used for the Postgres check would incorrectly start
+    // rejecting requests that never touched Kafka at all.
+    private final CircuitBreaker postgresExistenceCheckBreaker;
+    private final CircuitBreaker kafkaPublishBreaker;
 
     public ReadingService(
             ReadingRepository readingRepository,
@@ -52,12 +62,18 @@ public class ReadingService {
             KafkaTemplate<Object, Object> kafkaTemplate,
             RedisTemplate<String, Object> redisTemplate,
             @Value("${grid-meter.kafka.readings-topic}") String readingsTopic,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            CircuitBreakerRegistry circuitBreakerRegistry) {
         this.readingRepository = readingRepository;
         this.meterRepository = meterRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.redisTemplate = redisTemplate;
         this.readingsTopic = readingsTopic;
+        // Names must match application.yml's resilience4j.circuitbreaker.instances keys exactly --
+        // an unmatched name here silently falls back to Resilience4j's own undeclared defaults
+        // instead of this project's explicitly-declared config, with no error at startup.
+        this.postgresExistenceCheckBreaker = circuitBreakerRegistry.circuitBreaker("postgres-existence-check");
+        this.kafkaPublishBreaker = circuitBreakerRegistry.circuitBreaker("kafka-publish");
         // Exported as reading_delivery_failures_total on /actuator/prometheus (Micrometer's
         // Prometheus naming convention: dots -> underscores, "_total" appended for counters).
         // Backs the "reading delivery failures" rule in observability/alerting/rules.yml, which
@@ -107,7 +123,16 @@ public class ReadingService {
             delay = 200,
             multiplier = 2)
     public ReadingEvent ingest(ReadingRequest request, String idempotencyKey) {
-        if (!meterRepository.existsById(request.meterId())) {
+        // Fails fast with CallNotPermittedException (mapped to 503 by GlobalExceptionHandler) if
+        // the Postgres breaker is open, rather than attempting a call already known likely to
+        // fail or hang -- propagates straight through @Retryable above it, since
+        // CallNotPermittedException isn't in that annotation's includes list; retrying a
+        // known-open breaker would defeat the point of having one. See docs/resilience-scope.md's
+        // "Behavior when open" section for why this doesn't conflict with
+        // PrimaryFailoverSQLExceptionOverride (HikariCP's own, narrower, connection-level fix).
+        boolean meterExists = postgresExistenceCheckBreaker.executeSupplier(
+                () -> meterRepository.existsById(request.meterId()));
+        if (!meterExists) {
             throw new ResourceNotFoundException("Meter not found: " + request.meterId());
         }
         ReadingEvent event = new ReadingEvent(
@@ -150,17 +175,50 @@ public class ReadingService {
         // below, plus the "reading delivery failures" alert (observability/alerting/rules.yml),
         // is the accepted, sufficient signal: an operator learns a reading was lost and roughly
         // when, which is all anyone would act on for data with no real consequence.
-        kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        deliveryFailureCounter.increment();
-                        log.error(
-                                "Reading for meter {} (readingTimestamp={}, value={}) failed to publish to "
-                                        + "Kafka after client-side retries were exhausted -- this reading is "
-                                        + "lost, not just delayed (see docs/resilience-scope.md)",
-                                event.meterId(), event.readingTimestamp(), event.value(), ex);
-                    }
-                });
+        //
+        // Circuit-breaker-gated, independently of the Postgres breaker above (see class-level
+        // comment). Checked via tryAcquirePermission() + manual onSuccess/onError, not
+        // executeSupplier(), because send() is asynchronous -- its real success/failure outcome
+        // isn't known until the returned future completes, arbitrarily later than this call
+        // returns, so the breaker's sliding window has to be updated from inside whenComplete(),
+        // not from whether send() itself returned without throwing. Still wrapped in a try/catch
+        // around the initiating call too: Spring Kafka's KafkaTemplate.send() is documented to
+        // complete its returned future exceptionally rather than throw synchronously, but nothing
+        // guarantees every possible failure path honors that, and a breaker that only ever sees
+        // the async path would silently under-count failures if it doesn't.
+        //
+        // A real, worth-stating-honestly limitation: this breaker does NOT make the first several
+        // failing calls fast. max.block.ms (60s, declared above) still bounds how long send()
+        // itself can block before this code even reaches tryAcquirePermission() on a SUBSEQUENT
+        // call, and delivery.timeout.ms (120s) still bounds how long a single call's outcome takes
+        // to resolve once sent -- both unchanged by this work. The breaker's benefit is specific to
+        // the OPEN state: once enough recent calls have failed, later requests stop paying that
+        // same cost at all, rather than every request during a long outage independently blocking
+        // for up to a minute before failing.
+        if (!kafkaPublishBreaker.tryAcquirePermission()) {
+            throw CallNotPermittedException.createCallNotPermittedException(kafkaPublishBreaker);
+        }
+        long kafkaCallStartNanos = System.nanoTime();
+        try {
+            kafkaTemplate.send(readingsTopic, event.meterId().toString(), event)
+                    .whenComplete((result, ex) -> {
+                        long elapsedNanos = System.nanoTime() - kafkaCallStartNanos;
+                        if (ex != null) {
+                            kafkaPublishBreaker.onError(elapsedNanos, TimeUnit.NANOSECONDS, ex);
+                            deliveryFailureCounter.increment();
+                            log.error(
+                                    "Reading for meter {} (readingTimestamp={}, value={}) failed to publish to "
+                                            + "Kafka after client-side retries were exhausted -- this reading is "
+                                            + "lost, not just delayed (see docs/resilience-scope.md)",
+                                    event.meterId(), event.readingTimestamp(), event.value(), ex);
+                        } else {
+                            kafkaPublishBreaker.onSuccess(elapsedNanos, TimeUnit.NANOSECONDS);
+                        }
+                    });
+        } catch (RuntimeException ex) {
+            kafkaPublishBreaker.onError(System.nanoTime() - kafkaCallStartNanos, TimeUnit.NANOSECONDS, ex);
+            throw ex;
+        }
         return event;
     }
 

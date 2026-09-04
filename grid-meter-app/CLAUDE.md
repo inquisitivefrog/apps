@@ -131,6 +131,21 @@ upstream as of Loki 3.7.3.
   both (bare `date +%N`, `sed -i ''`) over GNU-only shorthand. See
   `docs/testing-strategy.md`'s "GNU-vs-BSD tooling assumptions" section
   for the full account.
+- **Circuit breakers exist per-dependency, not per-method.**
+  `ReadingService.ingest()` has two independent external calls
+  (Postgres, Kafka), and each has its own `CircuitBreaker` instance
+  (`postgres-existence-check`, `kafka-publish`) — a single shared
+  breaker for the whole method would mean a Kafka-only outage
+  incorrectly starts rejecting requests that only needed Postgres. Wired
+  programmatically (`CircuitBreaker.executeSupplier()` for the
+  synchronous Postgres call; manual `tryAcquirePermission()`/
+  `onSuccess()`/`onError()` for Kafka's async `send()`, since its real
+  outcome isn't known until the returned future completes later), not
+  via method-level `@CircuitBreaker` annotations, which can't apply two
+  different breaker instances to two different code blocks within one
+  method. See `docs/resilience-scope.md`'s "Circuit breaker: built"
+  section for the full account, including live verification against
+  real Kafka and Postgres outages.
 
 ## Dev workflow
 

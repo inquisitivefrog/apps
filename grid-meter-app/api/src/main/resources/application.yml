@@ -188,6 +188,39 @@ management:
       # GRID_METER_TRACING_SAMPLING_PROBABILITY for a load test run — see load-tests/README.md.
       probability: ${GRID_METER_TRACING_SAMPLING_PROBABILITY:1.0}
 
+# docs/resilience-scope.md's "Where the circuit breaker applies": ReadingService.ingest() has two
+# independent external calls (Postgres, Kafka), each gets its own breaker instance -- conflating
+# them into one would mean a Kafka-only outage also starts rejecting requests that only needed
+# Postgres. Every property below is declared explicitly rather than left at Resilience4j's own
+# defaults, per this project's standing "never rely on an undeclared default" discipline
+# (CLAUDE.md) -- verified against the actually-resolved 2.4.0 jar's real field names
+# (CommonCircuitBreakerConfigurationProperties$InstanceProperties), not assumed from the doc's own
+# illustrative shape. sliding-window-type/automatic-transition-from-open-to-half-open-enabled
+# happen to match Resilience4j's own defaults (COUNT_BASED / false) -- declared anyway so that's a
+# deliberate choice on record, not an accident. automatic-transition is left false (not true)
+# because this is a continuously-request-driven web service, not a batch job with idle gaps: the
+# next real request after wait-duration-in-open-state elapses is what triggers the half-open
+# check, with no need for a background thread to do it proactively.
+resilience4j:
+  circuitbreaker:
+    instances:
+      postgres-existence-check:
+        sliding-window-type: count-based
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: false
+      kafka-publish:
+        sliding-window-type: count-based
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: false
+
 grid-meter:
   pagination:
     default-size: 20
