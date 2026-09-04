@@ -1,0 +1,12 @@
+{
+  "name": "grid-meter-app-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright E2E tests for grid-meter-app, run against the live Docker Compose stack via Traefik.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

@@ -192,6 +192,13 @@ services:
       resources:
         limits:
           memory: 128m
+    ports:
+      # Host access to the Consul UI (port 8500 free-checked live before adding this).
+      # Only consul-1 is exposed -- one node's UI is enough to see cluster-wide membership
+      # (it shows all 3 agents' status, not just its own), same reasoning as not exposing
+      # Grafana/Prometheus/etc. redundantly per replica. ACLs are disabled (Consul's
+      # default, confirmed live against /v1/agent/self), so no login is expected here.
+      - "8500:8500"
     networks:
       - grid-meter
 
