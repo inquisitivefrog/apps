@@ -21,15 +21,15 @@ data:
   # a plain env-var name instead of a routing/topology gap.
   SPRING_DATA_REDIS_HOST: redis
   SPRING_DATA_REDIS_PORT: "6379"
-  # STOPGAP, discovered while validating this Kafka slice, not a real fix (2026-09-06): the app's
-  # application.yml activates Redis Sentinel mode for every profile except "test" (see that
-  # file's own comment -- Stage 6 of docs/redis-ha-scope.md's app cutover). k8s's redis.yaml is
-  # still a single plain Deployment from before that cutover landed and was never updated to
-  # match -- the app can't start against it at all without this, unrelated to Kafka entirely.
-  # Reusing "test" here is a targeted, side-effect-free borrow (it gates nothing else in
-  # application.yml) to unblock this slice's validation, NOT a decision that k8s's Redis is
-  # "done" -- a real k8s Redis Sentinel HA follow-up (mirroring this Kafka slice) is a separate,
-  # unscoped piece of work.
+  # This environment's Redis is a single plain instance (k8s/redis.yaml), not the Sentinel
+  # topology docker-compose.yml runs -- the app's application.yml activates Redis Sentinel mode
+  # for every profile except "test" (see that file's own comment -- Stage 6 of
+  # docs/redis-ha-scope.md's app cutover), so "test" is set here deliberately to match this
+  # environment's actual topology, the same way SPRING_KAFKA_BOOTSTRAP_SERVERS above is set to
+  # match this environment's actual Kafka topology. See k8s/README.md's "Deliberate
+  # simplifications" section for why Redis stays single-instance here, and
+  # docs/ha-scope.md's "Revisit triggers" for the separate, unscoped k8s Redis Sentinel HA
+  # follow-up this doesn't preclude.
   SPRING_PROFILES_ACTIVE: test
   GRID_METER_TRACING_SAMPLING_PROBABILITY: "1.0"
   JAVA_TOOL_OPTIONS: "-Xmx384m"

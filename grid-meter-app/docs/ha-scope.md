@@ -314,3 +314,17 @@ attempts get made at all once failures start piling up.
   provider) but does not change any decision in *this* doc — the local
   track's Kafka-first, self-hosted, Redis/Postgres-deferred scope stands
   independently, per that doc's own "Two tracks" framing.
+- **New, explicitly unscoped (2026-09-06): a k8s Redis Sentinel HA
+  follow-up, mirroring what just got done for Kafka.** The k8s Kafka
+  slice was itself a "revisit later" item that sat for weeks before
+  actually getting picked up — recorded here specifically so this one
+  doesn't fall out of view the same way. `k8s/kafka.yaml` is now a
+  3-broker StatefulSet + headless Service, bringing `docker-compose.yml`'s
+  proven KRaft topology into `kind`; `k8s/redis.yaml` is still a single
+  plain Deployment, with the app's own Sentinel-mode client code
+  deliberately routed around via `SPRING_PROFILES_ACTIVE: test` (see
+  `k8s/configmap.yaml` and `k8s/README.md`'s "Deliberate simplifications"
+  section) rather than actually built out. Not scoped here — no design
+  proposed, no StatefulSet/headless-Service shape decided — just named so
+  a future session has something concrete to pick up rather than
+  rediscovering the gap from scratch.
