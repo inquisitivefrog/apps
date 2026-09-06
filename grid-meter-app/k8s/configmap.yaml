@@ -7,9 +7,30 @@ metadata:
 data:
   SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gridmeter
   SPRING_DATASOURCE_USERNAME: gridmeter
-  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-  SPRING_REDIS_HOST: redis
-  SPRING_REDIS_PORT: "6379"
+  # 3-broker StatefulSet topology (kafka.yaml) -- each pod addressed individually via the
+  # headless Service's per-pod DNS, matching docker-compose.yml's kafka-1,kafka-2,kafka-3
+  # bootstrap list exactly in shape, just with kind's DNS names instead of Compose's.
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-0.kafka-headless:9092,kafka-1.kafka-headless:9092,kafka-2.kafka-headless:9092
+  # Spring Boot 3+ moved these under spring.data.redis.* (SPRING_DATA_REDIS_* via relaxed env-var
+  # binding) -- SPRING_REDIS_HOST/PORT (the pre-3.0 namespace) silently bound to nothing, since no
+  # explicit ${...} placeholder exists for host/port in application.yml the way the Sentinel keys
+  # have. Found while validating this Kafka slice, unrelated to Kafka: docker-compose.yml never
+  # exercises this path at all (the app always runs in Sentinel mode there), so this had never
+  # actually been proven correct since it was first written -- the same "app-vs-infrastructure,
+  # never actually cut over" shape CLAUDE.md already names as a standing risk, just found here on
+  # a plain env-var name instead of a routing/topology gap.
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_PORT: "6379"
+  # STOPGAP, discovered while validating this Kafka slice, not a real fix (2026-09-06): the app's
+  # application.yml activates Redis Sentinel mode for every profile except "test" (see that
+  # file's own comment -- Stage 6 of docs/redis-ha-scope.md's app cutover). k8s's redis.yaml is
+  # still a single plain Deployment from before that cutover landed and was never updated to
+  # match -- the app can't start against it at all without this, unrelated to Kafka entirely.
+  # Reusing "test" here is a targeted, side-effect-free borrow (it gates nothing else in
+  # application.yml) to unblock this slice's validation, NOT a decision that k8s's Redis is
+  # "done" -- a real k8s Redis Sentinel HA follow-up (mirroring this Kafka slice) is a separate,
+  # unscoped piece of work.
+  SPRING_PROFILES_ACTIVE: test
   GRID_METER_TRACING_SAMPLING_PROBABILITY: "1.0"
   JAVA_TOOL_OPTIONS: "-Xmx384m"
   MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"

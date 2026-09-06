@@ -41,16 +41,21 @@ spec:
                 configMapKeyRef:
                   name: grid-meter-config
                   key: SPRING_KAFKA_BOOTSTRAP_SERVERS
-            - name: SPRING_REDIS_HOST
+            - name: SPRING_DATA_REDIS_HOST
               valueFrom:
                 configMapKeyRef:
                   name: grid-meter-config
-                  key: SPRING_REDIS_HOST
-            - name: SPRING_REDIS_PORT
+                  key: SPRING_DATA_REDIS_HOST
+            - name: SPRING_DATA_REDIS_PORT
               valueFrom:
                 configMapKeyRef:
                   name: grid-meter-config
-                  key: SPRING_REDIS_PORT
+                  key: SPRING_DATA_REDIS_PORT
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_PROFILES_ACTIVE
             - name: GRID_METER_JWT_SECRET
               valueFrom:
                 secretKeyRef:

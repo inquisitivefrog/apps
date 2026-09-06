@@ -50,7 +50,7 @@ kubectl apply -f "$K8S_DIR/ingressroute.yaml"
 echo "== Waiting for rollouts =="
 kubectl rollout status deployment/traefik --timeout=120s
 kubectl rollout status deployment/postgres --timeout=120s
-kubectl rollout status deployment/kafka --timeout=120s
+kubectl rollout status statefulset/kafka --timeout=120s
 kubectl rollout status deployment/redis --timeout=120s
 kubectl rollout status deployment/api --timeout=180s
 kubectl rollout status deployment/frontend --timeout=120s

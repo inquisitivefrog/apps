@@ -1,12 +1,43 @@
-# Single-node KRaft mode (no ZooKeeper), matching docker-compose.yml's kafka service exactly —
-# same env vars, same values, just kafka:9092 resolving via this Service's k8s DNS name instead
-# of Compose's Docker network DNS.
+# 3-broker KRaft StatefulSet, bringing docker-compose.yml's already-proven kafka-1/2/3 topology
+# into kind. A StatefulSet (not a Deployment with replicas: 3) because KRaft's controller quorum
+# voter list needs each voter at a fixed, predictable address that survives pod restarts --
+# Deployment pods get random hash-suffixed names on every reschedule and have no per-pod
+# addressability at all (just one load-balancing Service in front of an undifferentiated pool).
+# A StatefulSet guarantees stable, reused-on-restart ordinal names (kafka-0/1/2); paired with the
+# headless Service below (clusterIP: None), each pod additionally gets its own stable DNS name
+# (kafka-0.kafka-headless, etc.) instead of one shared, round-robining VIP -- exactly what a
+# quorum voter list needs and a plain Deployment+Service structurally cannot provide.
+#
+# Storage stays ephemeral (no volumeClaimTemplates) per the existing slice's documented decision
+# (k8s-terraform-decisions-2026-08-19.md) -- StatefulSet is adopted here purely for its identity/
+# DNS guarantees, not (the more common reason) per-pod persistent storage.
+#
+# No separate plain "kafka" Service -- the headless Service's per-pod DNS names are used directly
+# for bootstrap (SPRING_KAFKA_BOOTSTRAP_SERVERS lists all three by name), matching how
+# docker-compose.yml's kafka-1/2/3 never had a shared alias either.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - name: plaintext
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
+---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: kafka
 spec:
-  replicas: 1
+  serviceName: kafka-headless
+  replicas: 3
   selector:
     matchLabels:
       app: kafka
@@ -18,41 +49,64 @@ spec:
       containers:
         - name: kafka
           image: apache/kafka:4.3.1
+          # KAFKA_NODE_ID needs a bare integer derived from the pod's ordinal -- the one value
+          # in this manifest that pure templating genuinely can't produce (the Downward API can
+          # expose the full pod name, e.g. "kafka-2", but nothing extracts just the trailing
+          # ordinal or does arithmetic on it). Confirmed live against the actual image
+          # (docker inspect + /etc/kafka/docker/configure) that it has no Kubernetes/hostname
+          # awareness of its own -- it's a static KAFKA_*-env-to-server.properties translator via
+          # /etc/kafka/docker/run, nothing more. This wrapper computes the one derived value and
+          # hands off to that same, unmodified entrypoint -- 0-indexed directly off $HOSTNAME
+          # (Kubernetes sets a pod's own hostname to its pod name by default), no +1 offset
+          # needed since Kafka node IDs are arbitrary non-negative integers with no requirement
+          # to start at 1 the way Compose's 1/2/3 numbering happens to.
+          command: ["sh", "-c"]
+          args:
+            - |
+              export KAFKA_NODE_ID=${HOSTNAME##*-}
+              exec /etc/kafka/docker/run
           env:
-            - name: KAFKA_NODE_ID
-              value: "1"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Same literal CLUSTER_ID as docker-compose.yml's brokers -- a shared cluster
+            # identity all voters must agree on, generated once (kafka-storage.sh random-uuid),
+            # not derived per-pod.
+            - name: CLUSTER_ID
+              value: zWOyaccGQkG1ikHT88v3XA
             - name: KAFKA_PROCESS_ROLES
               value: broker,controller
             - name: KAFKA_LISTENERS
               value: PLAINTEXT://:9092,CONTROLLER://:9093
+            # Pure manifest templating, no script needed -- Kubernetes' own "dependent
+            # environment variables" feature ($(VAR) interpolation inside another env var's
+            # value) handles this since POD_NAME is declared above it; unlike KAFKA_NODE_ID,
+            # nothing here needs arithmetic or substring extraction, just field reference +
+            # string concatenation, which the API server itself performs.
             - name: KAFKA_ADVERTISED_LISTENERS
-              value: PLAINTEXT://kafka:9092
+              value: PLAINTEXT://$(POD_NAME).kafka-headless:9092
             - name: KAFKA_CONTROLLER_LISTENER_NAMES
               value: CONTROLLER
             - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
               value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+            # Identical across all 3 pods and known at manifest-authoring time (replica count and
+            # pod names are fixed), so this is also pure templating -- one hardcoded value shared
+            # by every pod, no runtime peer discovery needed, mirroring how Compose hand-writes
+            # the identical voter list into all three of its broker blocks.
             - name: KAFKA_CONTROLLER_QUORUM_VOTERS
-              value: 1@kafka:9093
+              value: 0@kafka-0.kafka-headless:9093,1@kafka-1.kafka-headless:9093,2@kafka-2.kafka-headless:9093
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
+            - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "2"
+            - name: KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE
+              value: "false"
           ports:
             - containerPort: 9092
             - containerPort: 9093
           resources:
             limits:
               memory: 768Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: kafka
-spec:
-  selector:
-    app: kafka
-  ports:
-    - name: plaintext
-      port: 9092
-      targetPort: 9092
-    - name: controller
-      port: 9093
-      targetPort: 9093
