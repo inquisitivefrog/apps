@@ -228,6 +228,24 @@ any readiness check (a sleep, a status query, a "did the command
 succeed" boolean) that doesn't confirm the *actual* condition it's
 meant to represent can race an asynchronous transition the same way.
 
+**A fifth instance (2026-09-08)**: re-verifying `docs/k8s-kafka-ha-scope.md`'s
+kill test against a live `kind` cluster, a `kubectl get pod kafka-1` poll
+checking `status.phase == Running` and `containerStatuses[0].ready == true`
+reported an implausible near-zero recovery time after `kubectl delete pod
+kafka-1`. Root cause: the *old* pod object can still briefly report
+`Running`/`ready: true` during its own graceful termination window, which a
+phase/ready check alone can't distinguish from "a genuinely new pod is up."
+Same shape as the fourth instance above (a status field trusted as a proxy
+for the real condition, not a fixed sleep) -- the specific field here is a
+pod's own status, not a cluster leader's. Fixed by keying the check off the
+pod's `metadata.uid` actually changing first, then confirming
+`Running`+`ready` on that new UID specifically. Corrected recovery time:
+~2.44s (vs. the implausible ~0s the buggy check reported). General lesson
+unchanged, now with a fifth, k8s-specific instance: any readiness check
+built on a resource's own reported status needs to confirm it's checking
+the *right instance* of that resource, not just the field value, whenever
+the old and new instances can transiently report the same status.
+
 ## Test-infrastructure lesson: a polling loop's own per-call cost can dominate the measurement it's trying to take
 
 **Found 2026-09-02, retesting the Kafka RTO variance finding above.** A

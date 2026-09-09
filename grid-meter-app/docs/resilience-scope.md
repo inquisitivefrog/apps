@@ -178,6 +178,29 @@ Patroni-nodes-down outage — every single one now returns a real `503` with a p
 zero fabricated `200`s. Confirmed the app fully recovers (real `200`s resume) once Patroni
 re-elects a leader.
 
+**Follow-up correction (2026-09-08): the same broad handler this fix added needed its own
+more-specific carve-out, one level down from where the lesson above was first written.**
+Found re-verifying `docs/k8s-kafka-ha-scope.md`'s kill test, while cleaning up test data:
+`DELETE /meters/{id}` on a meter with existing readings threw a `DataIntegrityViolationException`
+(the FK constraint on `readings.meter_id` correctly rejecting the delete) — a `DataAccessException`
+subtype, so it was silently caught by `handleDatabaseUnavailable` above and reported as `503`
+"the database is currently unavailable," indistinguishable to any caller from a genuine outage.
+This is the mirror image of the bug this section exists to describe: there, an exception hierarchy
+needed to be *added* to stop falling through Spring's own ambiguous fallback; here, a *broader*
+handler had grown to cover a case it was never meant to (an ordinary, expected client conflict, not
+a database-availability problem). Fixed with a dedicated
+`@ExceptionHandler(DataIntegrityViolationException.class)` mapped to `409 Conflict`, declared
+separately from the `DataAccessException`/`TransactionException` handler — Spring dispatches by
+nearest-match in the exception hierarchy regardless of declaration order, so the more specific
+handler wins for this exception type without needing any ordering annotation. New component test
+(`MeterApiTestBase.delete_meterWithExistingReadings_returns409NotServiceUnavailable`, run via both
+`MeterApiComponentTest` and `MeterApiIT`) — real Postgres, real HTTP layer, real FK violation, not
+mocked. Full suite green (80/80) after the fix. **Standing lesson refined, not superseded**: any
+future global exception handling in this project should assume both directions of this failure
+shape are possible — a hierarchy that's too narrow (falls through to Spring's own ambiguous
+fallback) and a hierarchy that's too broad (catches an unrelated, non-outage exception under the
+same umbrella) — not just the first one this section originally found.
+
 ## Outcome (2026-08-28)
 
 **Summary: the transactional outbox was built, tested against a real

@@ -3,6 +3,7 @@ package com.gridmeter.api.common;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import java.util.List;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.AuthenticationException;
@@ -46,6 +47,25 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(ApiError.of(HttpStatus.SERVICE_UNAVAILABLE.value(), "Service Unavailable",
                         "The database is currently unavailable; try again shortly"));
+    }
+
+    // Found 2026-09-08 re-verifying docs/k8s-kafka-ha-scope.md: deleting a meter that still has
+    // readings throws DataIntegrityViolationException (the FK constraint on readings.meter_id,
+    // V2__create_readings_table.sql, rejecting the delete) -- a subtype of DataAccessException
+    // above, so without this more-specific handler it was silently caught by
+    // handleDatabaseUnavailable and reported as "the database is unavailable" (503) instead of
+    // what it actually is: an ordinary, expected client conflict (a caller trying to delete a
+    // meter with dependent history still attached). This is the exact shape
+    // docs/resilience-scope.md's own standing lesson warns about, one level down from where it
+    // was first written -- the *broad* handler above needed a more-specific carve-out, not the
+    // other way around. Spring dispatches @ExceptionHandler methods by nearest-match in the
+    // exception hierarchy regardless of declaration order, so this method being declared after
+    // the DataAccessException handler above doesn't affect which one wins for this exception type.
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiError> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of(HttpStatus.CONFLICT.value(), "Conflict",
+                        "This resource cannot be deleted because other records still reference it"));
     }
 
     // docs/resilience-scope.md's "Behavior when open": a fast, explicit 503 rather than the
