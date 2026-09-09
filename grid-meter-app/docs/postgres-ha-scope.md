@@ -15,6 +15,14 @@ client). This same app-vs-infrastructure gap applied to the Kafka and
 Redis passes too; see `docs/ha-scope.md`'s standing lesson — Kafka was
 confirmed already clean, Redis's own Stage 6 remains open.
 
+**Note (2026-09-08): this banner's date (2026-09-02) reflects when all 7
+stages first closed, not the doc's actual last edit.** A same-shape-bug
+hardening sweep (fixing hardcoded query targets and missing `set -e`
+guards across ~10 sibling scripts) and the bootstrap-hook follow-up
+verification both landed 2026-09-03, after this banner was written — see
+"Deliverables expected from this pass" at the end of the doc for the
+genuinely final, fully up-to-date closing state.
+
 ## Why this doc exists
 
 `docs/ha-scope.md` deferred Postgres explicitly and separately from

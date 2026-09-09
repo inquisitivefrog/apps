@@ -63,9 +63,12 @@ when there's no second reviewer.
   the TanStack Query hooks) so the real hooks, query keys, and cache
   invalidation run for real against a fresh no-retry `QueryClient` per
   test (`src/testUtils.tsx`). `npm test` (`vitest run`) runs in the
-  existing frontend CI job alongside `tsc -b`/`vite build`. **No E2E tier
-  (Playwright) yet** — deferred until there's a concrete need beyond what
-  component tests + manual browser verification already cover.
+  existing frontend CI job alongside `tsc -b`/`vite build`. **Correction (2026-09-08): an E2E tier
+  (Playwright) now exists** — `.github/workflows/grid-meter-app-e2e.yml`,
+  self-hosted (see `CLAUDE.md`'s "CI" section for why: the full HA stack
+  plus Chromium exceeds a standard GitHub-hosted runner), non-blocking.
+  This paragraph originally deferred it as not-yet-needed; that's no
+  longer the current state.
 
 ## API tooling
 

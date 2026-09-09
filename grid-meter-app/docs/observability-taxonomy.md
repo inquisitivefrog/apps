@@ -193,7 +193,10 @@ Two follow-on scope decisions this taxonomy surfaces but doesn't resolve:
   covers a transactional-outbox pattern** — one was built, measured
   against a real sustained outage, and deliberately retired once the
   redo-path test was applied honestly to this project's actual scope
-  (synthetic data, no billing, no downstream consumer). The circuit
-  breaker itself remains unbuilt and is tracked there as an open,
-  undecided item — distinct from the outbox, which was evaluated and
-  declined, not merely deferred.
+  (synthetic data, no billing, no downstream consumer). The outbox was
+  evaluated and declined, not merely deferred. **Further correction
+  (2026-09-08): the circuit breaker itself is no longer open/undecided
+  either — it was built and live-verified 2026-09-04, see
+  `resilience-scope.md`'s "Circuit breaker: built" section, matching
+  the "Status (2026-09-03): built" note already given above under
+  "Circuit-breaker state-change notices."**

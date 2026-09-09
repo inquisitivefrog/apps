@@ -61,6 +61,16 @@ concern.
   `--scale api=2` story), `frontend`, `postgres`, `kafka` (KRaft mode,
   matching Compose — single broker, no need for a StatefulSet at this
   scope), `redis`
+
+  **Correction (2026-09-06): superseded.** Compose Kafka was already
+  3-broker (`kafka-1/2/3`, `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3`)
+  at the time this was written — "matching Compose — single broker" was
+  wrong even then. `k8s/kafka.yaml` has since been migrated to a
+  3-broker `StatefulSet` + headless Service to actually match Compose's
+  proven topology; see `status/claude_code_2026-09-06.md` and
+  `docs/ha-scope.md`'s "Revisit triggers" for the build and its live
+  kill-test validation. Left in place as a record of the original
+  (incorrect) planning assumption, not as current guidance.
 - ConfigMap for non-secret env vars (mirrors `docker-compose.yml`'s
   `GRID_METER_*` passthrough pattern)
 - Secret for DB credentials / JWT signing key — even though the Compose

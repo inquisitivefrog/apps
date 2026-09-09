@@ -578,17 +578,22 @@ to work**: Lettuce's `ConnectionWatchdog` does not immediately re-resolve
 the master via Sentinel once the old primary dies — it first retries the
 same dead address for several seconds before falling back to asking
 Sentinel for the new one. The cache write still caught up with zero lost
-updates in every run regardless, most plausibly because Spring Kafka's
+updates in every run regardless, ~~most plausibly because Spring Kafka's
 own default consumer retry covers the gap until Lettuce reconnects — a
 "most plausibly," not a certainty, since the two mechanisms weren't
 independently isolated to confirm this explanation over an alternative
-one. **Worth stating precisely why this isn't a designed safety net**:
-the connection-pool layer (Lettuce) and the service-discovery layer
+one.~~ **Refuted 2026-09-03 — see "Isolating the Lettuce/Kafka retry
+hypothesis" below: Kafka's consumer redelivery never fires even once,
+with or without it available. The zero-loss result is fully explained
+by Lettuce's own reconnect completing (~10-11s) with the write landing
+within milliseconds after, not by any Kafka-level retry.** ~~**Worth
+stating precisely why this isn't a designed safety net**: the
+connection-pool layer (Lettuce) and the service-discovery layer
 (Sentinel) don't necessarily fail over in lockstep, and the only reason
 that gap didn't matter here is that Kafka's consumer retry happened to
 sit underneath it. If this app's cache write path were ever changed to
 not have an independent retry mechanism backing it, this same Lettuce
-behavior could produce a real, silent gap instead of a harmless one —
+behavior could produce a real, silent gap instead of a harmless one —~~
 worth remembering as a general shape (a client library's own reconnect
 timing and a coordinator's promotion timing are two separate clocks,
 not one) rather than a Redis-specific curiosity.

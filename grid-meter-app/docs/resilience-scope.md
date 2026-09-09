@@ -543,17 +543,23 @@ once the breaker closes again.~~
 
 ## Testing implications
 
-~~- **Resilience4j unit tests**: mock a failing dependency, assert the
+**Correction (2026-09-08): both items below predate the breaker actually
+being built (2026-09-04) — see "Circuit breaker: built" at the top of
+this doc. Correctness was verified via sequential unit/component tests,
+HTTP-level fail-fast latency checks, and live outages; the two plans
+below describe what was actually run, not a still-open test plan.**
+
+- **Resilience4j unit tests**: mock a failing dependency, assert the
   breaker opens once `minimum-number-of-calls` and `failure-rate-threshold`
   are both crossed, assert half-open behavior (a bounded number of probe
-  calls, closing on success, re-opening on failure).~~ **(Still open —
-  circuit breaker itself is deferred, not declined; see status note
-  above. This test plan stands if/when that work resumes.)**
-- ~~**Component test (Testcontainers)**: kill Postgres or Kafka mid-test,
+  calls, closing on success, re-opening on failure). Done.
+- **Component test (Testcontainers)**: kill Postgres or Kafka mid-test,
   assert requests fail fast (sub-second, not the old ~30s hang) once the
   breaker is open — this is the test that proves the HikariCP timeout and
   the circuit breaker actually work together, not just that each exists
-  independently.~~ **(Same status as above — pending the breaker.)**
+  independently. Done. **Not yet done: load-testing thread-pool
+  protection under sustained *concurrent* failure — see "What's still
+  open" in "Circuit breaker: built" above; that gap is still real.**
 - ~~**Outbox reconciliation test**: kill Kafka, confirm `POST /readings`
   still succeeds (the write lands in the outbox), restore Kafka, confirm
   the reconciler drains the outbox and the reading becomes visible via

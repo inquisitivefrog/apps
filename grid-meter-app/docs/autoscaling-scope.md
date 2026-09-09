@@ -28,12 +28,16 @@ it**:
   replicas, which only helps read-heavy paths and needs read/write query splitting in the app) or
   sharding (a shard-key strategy and cross-shard query handling) — a data-access redesign, not a
   deployment-config change.
-- **Kafka** — runs as a single broker in KRaft mode (`KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1`,
-  one controller voter), a deliberate choice to avoid a separate ZooKeeper JVM on the 24GB budget
-  (see `docs/architecture.md`'s resource budget notes). Real Kafka horizontal scaling means adding
-  *brokers* to one cluster with partition replication across them and controller voters that know
-  about each other ahead of time — a different shape of problem than "run another copy," not a
-  bigger version of the same one.
+- **Kafka** — runs in KRaft mode (`KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3`, three controller
+  voters — `kafka-1/2/3` in Compose, migrated to a matching 3-broker `StatefulSet` in `kind` as of
+  2026-09-06; **correction: this section originally described a single-broker RF=1 setup, which
+  was already stale when written — Compose was 3-broker from the start**), a deliberate choice to
+  avoid a separate ZooKeeper JVM on the 24GB budget (see `docs/architecture.md`'s resource budget
+  notes). Real Kafka horizontal scaling means adding *further* brokers beyond the fixed 3 already
+  running, with partition replication and controller voters that know about each other ahead of
+  time — a different shape of problem than "run another copy," not a bigger version of the same
+  one. The exclusion reasoning is unaffected by the correction above; only the stated current
+  topology was wrong.
 - **Redis** — used here as a shared cache of the latest reading per meter (see
   `docs/architecture.md`'s data flow). Two independent Redis instances would silently split that
   cache: a write lands on one, a read gets routed to the other, and the app serves a stale or
