@@ -66,6 +66,14 @@ at all. Needs explicit sign-off either way (see Open Decisions).
 
 ### 1.3 Automated leak-detection signal — the real blocking prerequisite
 
+**Status (2026-09-10): built** — `observability/alerting/rules.yml`'s
+`heap-after-gc-trend` rule. Verified live: provisioned into a running
+Grafana without error, then polled until it left its initial `NoData`
+startup state and settled into `Normal` (0% projected slope, correctly
+reflecting that this JVM hasn't run a major GC yet — no false signal from
+a flat/empty series). See "Fix" below for the metric choice and its
+live-confirmed rationale.
+
 **Current state**: `soak.jmx`'s own header comment says outright to "watch
 JVM heap trend... in Grafana over the full run" — the design assumes a
 human is watching live. Nobody watches an unattended weekend run at 3am,
@@ -79,8 +87,18 @@ specifically (not raw heap, which oscillates with allocation/collection
 noise) and phrase it as a slope toward a projected exhaustion point, not a
 hard threshold. This is what actually turns "ran for N hours without
 crashing" into "provably didn't leak," and it's needed before any extended
-run is worth executing — without it, even a clean multi-hour run proves
-nothing more than "didn't crash," which was never in doubt.
+run is worth executing. Implementation note: this app's JVM was assumed to
+be running G1 (Java's modern default) until checked live against a real
+`/actuator/prometheus` scrape — it's actually Serial GC (`gc="Copy"`,
+pool id `"Tenured Gen"`, not `"G1 Old Gen"`), a JVM ergonomics choice
+driven by the small `-Xmx384m` heap (`docker-compose.yml`). The rule uses
+Micrometer's `jvm_gc_live_data_size_bytes`/`jvm_gc_max_data_size_bytes`,
+which track old-gen size after a full/major GC under either collector, so
+this doesn't need revisiting if the heap size or GC choice changes later —
+still worth recording as another instance of this project's standing
+"verify the live system, don't assume the default" pattern (`CLAUDE.md`).
+Without this rule, even a clean multi-hour soak run proves nothing more
+than "didn't crash," which was never in doubt.
 
 ### 1.4 JFR recording — root-cause layer, build if a leak is actually found
 

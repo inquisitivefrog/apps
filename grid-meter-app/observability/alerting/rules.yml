@@ -150,6 +150,54 @@ groups:
       # redo-path reasoning that retired the outbox: "permanently lost" doesn't imply "worth
       # interrupting someone about" when the lost thing has no real downstream consequence. The
       # counter/log/this rule together are a durable record to consult if anyone asks, not a page.
+      # Resource-capacity trend alert (docs/observability-taxonomy.md §2), not an incident --
+      # alert_class/severity below deliberately don't page anyone. Built for
+      # docs/testing-expansion-scope.md §1.3: soak.jmx's own header comment used to just say
+      # "watch JVM heap trend in Grafana over the full run", which only worked with a human
+      # staring at a dashboard. This is the automated version.
+      #
+      # jvm_gc_live_data_size_bytes is Micrometer's purpose-built metric for exactly what §1.3
+      # asked for -- old-gen (Tenured Gen, confirmed live against this app's actual JVM: no
+      # -XX:+UseG1GC is set anywhere in docker-compose.yml/k8s, and this app's small -Xmx384m
+      # heap gets Serial GC under JVM ergonomics, not G1 -- "gc=Copy" young-gen pause metric and
+      # a "Tenured Gen" pool id confirmed via a live curl of /actuator/prometheus, not assumed)
+      # size sampled only on full/major GC events, not every scrape -- unlike raw
+      # jvm_memory_used_bytes{area="heap"} (already on the overview dashboard), it doesn't
+      # oscillate with normal eden/survivor allocation churn, so a real upward slope in it means
+      # something is surviving major collections that shouldn't be.
+      #
+      # predict_linear() over a 6h window projects the value 7 days out and expresses it as a %
+      # of jvm_gc_max_data_size_bytes (old-gen capacity after a full GC) -- "projected to hit 80%
+      # by <date>" per the taxonomy doc's framing, not a hard current-value threshold. Reads as
+      # 0% with no slope until this app has actually run long/hard enough to trigger real major
+      # GCs, which is expected and correct: no major GC yet means no post-GC trend to evaluate.
+      - uid: heap-after-gc-trend
+        title: JVM old-gen heap trending toward exhaustion
+        condition: C
+        for: 5m
+        labels:
+          severity: info
+          alert_class: trend
+        annotations:
+          summary: "Old-gen heap size after major GC is on a slope that would reach 80% of capacity within 7 days at the current rate -- a candidate slow leak, not an active incident. Record-only, not paged -- see docs/observability-taxonomy.md and docs/testing-expansion-scope.md §1.3."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 21600, to: 0 }
+            model:
+              refId: A
+              expr: '100 * clamp_min(predict_linear(jvm_gc_live_data_size_bytes[6h], 7 * 24 * 3600), 0) / jvm_gc_max_data_size_bytes'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [80] }
+
       - uid: reading-delivery-failures
         title: Reading delivery failures
         condition: C

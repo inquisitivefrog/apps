@@ -2,10 +2,10 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="soak" enabled="true">
-      <stringProp name="TestPlan.comments">Extended duration at moderate load, to catch slow leaks (connection pool exhaustion, unbounded caches) — see ../docs/testing-strategy.md. Default: 35 threads sustained for 1 hour (override -Jduration for a shorter local check). Watch JVM heap trend and DB/Redis connection counts in Grafana over the full run, not just aggregate throughput. Run via ./run.sh soak.</stringProp>
+      <stringProp name="TestPlan.comments">Extended duration at moderate load, to catch slow leaks (connection pool exhaustion, unbounded caches) — see ../docs/testing-strategy.md and ../docs/testing-expansion-scope.md §1.1/§1.2. Default: 35 threads sustained for 1 hour (override -Jduration for a shorter local check; per testing-expansion-scope.md's resolved §1.2 decision, prefer a much shorter/higher-throughput accelerated run over a long unattended one — same accumulated object count, a fraction of the wall-clock exposure). A separate "token refresh" Thread Group re-authenticates every 45 minutes by default (override -JreauthIntervalMs) so the JWT's 60-minute TTL/no-refresh-token design (docs/architecture.md) doesn't produce the 401 burst a real 1-hour baseline run found at the exact 60-minute mark — see testing-expansion-scope.md §1.1. Watch JVM heap trend (specifically after major GC events, not raw heap — see the Prometheus alert this doc's §1.3 adds) and DB/Redis connection counts in Grafana over the full run, not just aggregate throughput. Run via ./run.sh soak.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
-      <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
         <collectionProp name="Arguments.arguments"/>
       </elementProp>
@@ -118,6 +118,29 @@
           </ResponseAssertion>
           <hashTree/>
         </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="token refresh" enabled="true">
+        <stringProp name="TestPlan.comments">testing-expansion-scope.md §1.1 -- a single background thread that re-runs the shared login fragment (common/login.jmx) every reauthIntervalMs (default 45 min, comfortably under the JWT's 60-minute TTL), overwriting the SAME "accessToken" JMeter Property the setUp login already wrote. "soak load"'s HeaderManager reads that property via ${__P(accessToken)}, a function reference re-evaluated fresh on every single request -- not a value baked in once -- so every one of the 35 worker threads automatically starts using the refreshed token on its very next request with no per-thread token-passing needed. Runs for the same duration as "soak load" (${__P(duration,3600)}) so it stops cleanly at the same time, and requires TestPlan.serialize_threadgroups=false above to actually run concurrently with "soak load" rather than after it.</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+          <boolProp name="LoopController.continue_forever">true</boolProp>
+          <stringProp name="LoopController.loops">-1</stringProp>
+        </elementProp>
+        <stringProp name="ThreadGroup.num_threads">1</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">1</stringProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.duration">${__P(duration,3600)}</stringProp>
+        <stringProp name="ThreadGroup.delay">0</stringProp>
+      </ThreadGroup>
+      <hashTree>
+        <ConstantTimer guiclass="ConstantTimerGui" testclass="ConstantTimer" testname="Re-auth interval" enabled="true">
+          <stringProp name="ConstantTimer.delay">${__P(reauthIntervalMs,2700000)}</stringProp>
+        </ConstantTimer>
+        <hashTree/>
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include login (re-auth)" enabled="true">
+          <stringProp name="IncludeController.includepath">common/login.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
       </hashTree>
     </hashTree>
   </hashTree>
