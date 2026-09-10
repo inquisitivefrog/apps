@@ -4,12 +4,16 @@
 tracks status/progress against that plan's staged approach, not a duplicate
 of its reasoning.
 
-**Status (2026-08-30): All 5 stages complete.** Finding A (old-primary
-split-brain window) FIXED and re-verified 3/3 clean. Finding B (failover
-non-completion) RESOLVED — a race in this project's own test script, not
-a Redis/Sentinel defect, fixed and re-verified 8/8 clean. Stage 5
-(quorum-loss) PASSED 3/3 clean with no fix needed. This pass's remaining
-deliverable is the results narrative in `docs/redis-ha-scope.md`.
+**Status (2026-09-10): all 6 stages plus a k8s follow-up closed.** Finding A
+(old-primary split-brain window) FIXED and re-verified 3/3 clean. Finding B
+(failover non-completion) RESOLVED — a race in this project's own test
+script, not a Redis/Sentinel defect, fixed and re-verified 8/8 clean.
+Stage 5 (quorum-loss) PASSED 3/3 clean with no fix needed. Stage 6
+(application cutover) PASSED 3/3 clean. See "k8s Redis Sentinel HA
+follow-up" near the end of this file for a later, separate investigation
+(2026-09-09/10) that found and fixed 3 real bugs in this project's own
+`scripts/redis-entrypoint.sh` while porting the same topology into `kind`
+— not a Redis/Sentinel defect either, but real evidence worth indexing.
 
 ## Stage 1 — Config audit (complete)
 
@@ -370,3 +374,33 @@ Sentinel -- it first retries the same dead address for several seconds
 -- yet the async cache write still caught up with zero lost updates in
 every run, most plausibly because Spring Kafka's default consumer retry
 covers the gap until Lettuce reconnects.
+
+## k8s Redis Sentinel HA follow-up (2026-09-09/10) -- not a vendor-bug candidate, but real runs, indexed here for the record
+
+**Authoritative narrative**: `docs/k8s-redis-ha-scope.md`. Re-running this
+Stage 4 script as a regression check (before trusting a new k8s port of
+this same Sentinel topology) surfaced 3 real correctness bugs -- but all
+three are in this project's own `scripts/redis-entrypoint.sh`, not in
+Redis/Sentinel itself, so this doesn't change the "no vendor-bug candidate"
+verdict in `docs/vendor-bug-report-process.md`. Indexed here per this
+file's own standing discipline ("update after any run worth keeping"),
+since a fair amount of real chaos-testing evidence accumulated and
+shouldn't sit undocumented just because the conclusion was "our bug, not
+theirs."
+
+| Run (timestamp) | What it was | Verdict |
+|---|---|---|
+| `20260909-134112-stage3` | Routine Stage 3 (single-replica-loss) re-verification before the k8s port | PASS, both sub-tests |
+| `20260909-162406-stage4` | Stage 4 regression against the then-current (k8s-parameterized) script | **SPLIT-BRAIN: YES** -- the original finding |
+| `20260909-162908` .. `163016-stage4` | Fix 1 (`failover_in_progress` flag check) verification | 3/3 clean, didn't exercise Bug 2 |
+| `20260909-163552-stage4` | Fix 1+2 verification | Clean by write-acceptance, but masked -- Bug 3 found here |
+| `20260909-163801`, `163859-stage4` | Fix 1+2+3 verification | 2/2 clean |
+| `20260909-163956-stage4` | Fix 1+2+3, original 30s setup budget | Setup aborted (timing-budget gap, not a split-brain finding) |
+| `20260909-164245`, `165042`, `165216-stage4` | Fix 1+2+3, widened 60-attempt budget | 3/3 clean |
+| `20260910-113508-stage4` | Negative control: exact pre-parameterization script (`git show 2632bd5:...`) | Same mechanism reproduced -- confirms the bug is pre-existing, not introduced by k8s's parameterization |
+| `20260910-114644-stage4` | Final confirming run against the fully-fixed script, checked the same way the original bug was found | **SPLIT-BRAIN: NO**, demoted at t+0.13s -- cleanest result of the whole investigation |
+
+Full mechanism detail (the quorum-vs-single-responder race between a
+failover leader and its followers, the hostname-vs-IP self-recognition
+gap, the narrow pre-failover race, and the cold-bootstrap fallback finding
+observed live) lives in `docs/k8s-redis-ha-scope.md` — not duplicated here.
