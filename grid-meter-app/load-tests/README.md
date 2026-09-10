@@ -10,8 +10,11 @@ Grafana while a run happens).
 - JMeter 5.6.3 on `PATH` (`brew install jmeter` — see
   `docs/tech-stack-versions.md`). `jq` and `awk` (both preinstalled on macOS
   and GitHub's `ubuntu-latest` runners) for `check-thresholds.sh`.
-- The stack up: `docker compose up -d traefik api postgres kafka redis`
-  (matches `scripts/run-black-box-api-tests.sh` in `api/`'s test tier).
+- The stack up: `docker compose up -d --build traefik api kafka-1 kafka-2
+  kafka-3 redis` (matches `scripts/run-black-box-api-tests.sh` — `api`'s own
+  `depends_on` in `docker-compose.yml` pulls in the Patroni/Consul cluster
+  and Redis Sentinels automatically, so they don't need to be named
+  explicitly here).
 - Before a *real* run (not a quick local smoke check), dial down trace
   sampling — `application.yml` defaults `management.tracing.sampling.
   probability` to 100%, fine for normal dev but not for hundreds of
