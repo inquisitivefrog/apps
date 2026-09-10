@@ -1,0 +1,25 @@
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:01.715 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.309 # -tilt #tilt mode exited
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.329 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.333 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.375 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.388 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.390 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.390 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.390 # +new-epoch 1
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.392 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.392 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:21.392 # +vote-for-leader 40ee5f71aacf4afd5d8e9a1492b7cdd78dc2f884 1
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.030 - -role-change slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379 new reported role is master
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.156 # +config-update-from sentinel 40ee5f71aacf4afd5d8e9a1492b7cdd78dc2f884 172.19.0.4 26379 @ mymaster redis 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.156 # +switch-master mymaster redis 6379 172.19.0.5 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.156 * +slave slave 172.19.0.6:6379 172.19.0.6 6379 @ mymaster 172.19.0.5 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.160 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.161 * +slave slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.163 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.163 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.222 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.222 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379 #Name or service not known
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.222 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379 #Name or service not known
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.344 - Accepted 172.19.0.2:56286
+sentinel-3-1  | 1:X 09 Sep 2026 23:50:22.344 - Client closed connection id=182 addr=172.19.0.2:56286 laddr=172.19.0.7:26379 fd=15 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|master user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=44 tot-net-out=585 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1

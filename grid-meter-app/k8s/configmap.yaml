@@ -11,26 +11,18 @@ data:
   # headless Service's per-pod DNS, matching docker-compose.yml's kafka-1,kafka-2,kafka-3
   # bootstrap list exactly in shape, just with kind's DNS names instead of Compose's.
   SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka-0.kafka-headless:9092,kafka-1.kafka-headless:9092,kafka-2.kafka-headless:9092
-  # Spring Boot 3+ moved these under spring.data.redis.* (SPRING_DATA_REDIS_* via relaxed env-var
-  # binding) -- SPRING_REDIS_HOST/PORT (the pre-3.0 namespace) silently bound to nothing, since no
-  # explicit ${...} placeholder exists for host/port in application.yml the way the Sentinel keys
-  # have. Found while validating this Kafka slice, unrelated to Kafka: docker-compose.yml never
-  # exercises this path at all (the app always runs in Sentinel mode there), so this had never
-  # actually been proven correct since it was first written -- the same "app-vs-infrastructure,
-  # never actually cut over" shape CLAUDE.md already names as a standing risk, just found here on
-  # a plain env-var name instead of a routing/topology gap.
-  SPRING_DATA_REDIS_HOST: redis
-  SPRING_DATA_REDIS_PORT: "6379"
-  # This environment's Redis is a single plain instance (k8s/redis.yaml), not the Sentinel
-  # topology docker-compose.yml runs -- the app's application.yml activates Redis Sentinel mode
-  # for every profile except "test" (see that file's own comment -- Stage 6 of
-  # docs/redis-ha-scope.md's app cutover), so "test" is set here deliberately to match this
-  # environment's actual topology, the same way SPRING_KAFKA_BOOTSTRAP_SERVERS above is set to
-  # match this environment's actual Kafka topology. See k8s/README.md's "Deliberate
-  # simplifications" section for why Redis stays single-instance here, and
-  # docs/ha-scope.md's "Revisit triggers" for the separate, unscoped k8s Redis Sentinel HA
-  # follow-up this doesn't preclude.
-  SPRING_PROFILES_ACTIVE: test
+  # k8s Redis Sentinel HA follow-up (docs/k8s-redis-ha-scope.md) -- redis.yaml/sentinel.yaml now
+  # bring Compose's proven Sentinel topology into kind, matching the Kafka StatefulSet migration's
+  # shape. application.yml binds these under spring.data.redis.sentinel.*, but via the literal
+  # env-var names SPRING_REDIS_SENTINEL_MASTER/NODES (not SPRING_DATA_REDIS_SENTINEL_*) --
+  # confirmed against the real placeholder in application.yml and against docker-compose.yml's own
+  # already-working api service, not assumed from the property's Boot-3-namespaced Java path.
+  # No SPRING_PROFILES_ACTIVE entry anymore (removed entirely, not set to something else) --
+  # application.yml's Sentinel block activates on "!test", so simply not activating any profile
+  # here is what turns Sentinel mode on, the same way Compose's api service activates no profile
+  # either.
+  SPRING_REDIS_SENTINEL_MASTER: mymaster
+  SPRING_REDIS_SENTINEL_NODES: sentinel-0.sentinel-headless:26379,sentinel-1.sentinel-headless:26379,sentinel-2.sentinel-headless:26379
   GRID_METER_TRACING_SAMPLING_PROBABILITY: "1.0"
   JAVA_TOOL_OPTIONS: "-Xmx384m"
   MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"

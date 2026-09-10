@@ -35,10 +35,19 @@ echo "== Applying config/secrets =="
 kubectl apply -f "$K8S_DIR/configmap.yaml"
 kubectl apply -f "$K8S_DIR/secret.yaml"
 
+echo "== Generating redis-entrypoint-script ConfigMap from scripts/redis-entrypoint.sh =="
+# Generated at deploy time, not duplicated inline in redis.yaml, so k8s and Compose share one
+# source of truth for the entrypoint script -- same pattern deploy-observability.sh already uses
+# for the dashboard/alert-rules/tempo-config ConfigMaps.
+kubectl create configmap redis-entrypoint-script \
+  --from-file=redis-entrypoint.sh="$REPO_ROOT/scripts/redis-entrypoint.sh" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 echo "== Applying data tier =="
 kubectl apply -f "$K8S_DIR/postgres.yaml"
 kubectl apply -f "$K8S_DIR/kafka.yaml"
 kubectl apply -f "$K8S_DIR/redis.yaml"
+kubectl apply -f "$K8S_DIR/sentinel.yaml"
 
 echo "== Applying api + frontend =="
 kubectl apply -f "$K8S_DIR/api.yaml"
@@ -51,7 +60,8 @@ echo "== Waiting for rollouts =="
 kubectl rollout status deployment/traefik --timeout=120s
 kubectl rollout status deployment/postgres --timeout=120s
 kubectl rollout status statefulset/kafka --timeout=120s
-kubectl rollout status deployment/redis --timeout=120s
+kubectl rollout status statefulset/redis --timeout=120s
+kubectl rollout status statefulset/sentinel --timeout=120s
 kubectl rollout status deployment/api --timeout=180s
 kubectl rollout status deployment/frontend --timeout=120s
 

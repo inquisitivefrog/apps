@@ -1,0 +1,38 @@
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:01.741 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.314 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.325 # -tilt #tilt mode exited
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.333 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.382 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.382 # +odown master mymaster redis 6379 #quorum 2/2
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.382 # +new-epoch 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.382 # +try-failover master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.384 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.384 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.384 # +vote-for-leader 40ee5f71aacf4afd5d8e9a1492b7cdd78dc2f884 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.393 * 7ce91ff7616436d4357389f82499ec8787e593c9 voted for 40ee5f71aacf4afd5d8e9a1492b7cdd78dc2f884 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.393 * 5778ad1a7f1bfb0f399202401b4c5fdaf53119e9 voted for 40ee5f71aacf4afd5d8e9a1492b7cdd78dc2f884 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.455 # +elected-leader master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.455 # +failover-state-select-slave master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.514 # +selected-slave slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.514 * +failover-state-send-slaveof-noone slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:21.572 * +failover-state-wait-promotion slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.072 - -role-change slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379 new reported role is master
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.074 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.074 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.074 # +promoted-slave slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.074 # +failover-state-reconf-slaves master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.156 * +slave-reconf-sent slave 172.19.0.6:6379 172.19.0.6 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.340 - Accepted 172.19.0.2:43492
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.340 - Client closed connection id=184 addr=172.19.0.2:43492 laddr=172.19.0.4:26379 fd=22 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|master user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=44 tot-net-out=750 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:22.512 # -odown master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.103 * +slave-reconf-inprog slave 172.19.0.6:6379 172.19.0.6 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.103 * +slave-reconf-done slave 172.19.0.6:6379 172.19.0.6 6379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.170 # +failover-end master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.170 # +switch-master mymaster redis 6379 172.19.0.5 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.170 * +slave slave 172.19.0.6:6379 172.19.0.6 6379 @ mymaster 172.19.0.5 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.170 * +slave slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.173 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.173 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.461 * +slave slave 172.19.0.2:6379 172.19.0.2 6379 @ mymaster 172.19.0.5 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.463 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 09 Sep 2026 23:50:23.463 * Sentinel new configuration saved on disk

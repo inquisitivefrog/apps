@@ -1,0 +1,26 @@
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.004 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.014 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.052 # +sdown master mymaster redis 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.085 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.088 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.088 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.088 # +new-epoch 1
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.092 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.092 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.092 # +vote-for-leader 0734e2d463714201271f23791bfcd5ac33e0fc52 1
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.116 # +odown master mymaster redis 6379 #quorum 3/2
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:30.116 * Next failover delay: I will not start a failover before Wed Sep  9 23:53:50 2026
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.015 # Failed to resolve hostname 'redis'
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.080 - Accepted 172.19.0.2:53038
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.081 - Client closed connection id=183 addr=172.19.0.2:53038 laddr=172.19.0.4:26379 fd=22 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|master user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=44 tot-net-out=683 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.171 - -role-change slave 172.19.0.3:6379 172.19.0.3 6379 @ mymaster redis 6379 new reported role is master
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.212 # +config-update-from sentinel 0734e2d463714201271f23791bfcd5ac33e0fc52 172.19.0.5 26379 @ mymaster redis 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.212 # +switch-master mymaster redis 6379 172.19.0.3 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.213 * +slave slave 172.19.0.7:6379 172.19.0.7 6379 @ mymaster 172.19.0.3 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.213 * +slave slave redis:6379 redis 6379 @ mymaster 172.19.0.3 6379
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.215 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:31.215 * Sentinel new configuration saved on disk
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:32.087 - Accepted 172.19.0.2:53040
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:32.087 - Client closed connection id=184 addr=172.19.0.2:53040 laddr=172.19.0.4:26379 fd=18 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|master user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=44 tot-net-out=608 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:32.088 - Accepted 172.19.0.2:53044
+sentinel-3-1  | 1:X 09 Sep 2026 23:53:32.088 - Client closed connection id=185 addr=172.19.0.2:53044 laddr=172.19.0.4:26379 fd=18 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=31 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1

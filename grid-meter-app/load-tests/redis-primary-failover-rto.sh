@@ -65,8 +65,13 @@ echo "Finding B: a fixed sleep here raced Sentinel's own replica-discovery poll 
 echo "empirically that discovery normally completes in ~4s but is not reliably bounded by any fixed"
 echo "sleep duration under contention, so this polls for the actual condition instead of guessing"
 echo "a longer number)."
+# Bound widened from 30 to 90 to match scripts/redis-entrypoint.sh's own worst-case cold-bootstrap
+# budget (60 attempts, 1s apart, since the entrypoint's stricter "only trust a clean 'master' flag"
+# check found real-world simultaneous-recreate bootstraps that legitimately took close to its old
+# 30s ceiling to settle) -- a 30s wait here could abort a run whose slow-but-correct setup just
+# hadn't finished yet, not a real problem.
 DISCOVERED=0
-for i in $(seq 1 30); do
+for i in $(seq 1 90); do
   # Dynamic query target -- this script's own force-recreate above brings up all 3 Sentinels
   # fresh, but doesn't guarantee sentinel-1 specifically is the first one ready; a hardcoded
   # target here would also still fail for an unrelated reason if it were left down by an earlier,
@@ -98,7 +103,7 @@ for i in $(seq 1 30); do
   sleep 1
 done
 if [ "$DISCOVERED" -eq 0 ]; then
-  echo "Sentinel still doesn't know about both replicas after 30s -- aborting this run (a setup"
+  echo "Sentinel still doesn't know about both replicas after 90s -- aborting this run (a setup"
   echo "problem, not a Stage 4 finding; re-run once the stack settles)."
   exit 0
 fi

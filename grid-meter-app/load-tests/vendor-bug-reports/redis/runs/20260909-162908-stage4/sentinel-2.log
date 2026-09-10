@@ -1,0 +1,26 @@
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:16.821 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.824 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.886 # +sdown master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.894 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.953 # +odown master mymaster redis 6379 #quorum 2/2
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.953 # +new-epoch 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.953 # +try-failover master mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.958 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.958 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.958 # +vote-for-leader fd328e1d837f2b8ae5a3583d4b5cb7e90efa92bf 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.963 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.970 * 8fd684d934dfa554d4e8890067d9ec264cb6c616 voted for 8fd684d934dfa554d4e8890067d9ec264cb6c616 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:21.971 * 263d53174f2ffceffff51f9b1681b24bcfcdb067 voted for 8fd684d934dfa554d4e8890067d9ec264cb6c616 1
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:22.834 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:22.969 - -role-change slave 172.19.0.4:6379 172.19.0.4 6379 @ mymaster redis 6379 new reported role is master
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.064 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.132 # +config-update-from sentinel 8fd684d934dfa554d4e8890067d9ec264cb6c616 172.19.0.6 26379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.132 # +switch-master mymaster redis 6379 172.19.0.4 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.133 * +slave slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster 172.19.0.4 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.136 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.136 * +slave slave redis:6379 redis 6379 @ mymaster 172.19.0.4 6379
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.140 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.140 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.173 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.173 . -cmd-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.19.0.4 6379 #Name or service not known
+sentinel-2-1  | 1:X 09 Sep 2026 23:29:23.173 . -pubsub-link-reconnection slave redis:6379 redis 6379 @ mymaster 172.19.0.4 6379 #Name or service not known

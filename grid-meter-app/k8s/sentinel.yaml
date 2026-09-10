@@ -1,0 +1,63 @@
+# Redis Sentinel, the coordination half of the redis.yaml/sentinel.yaml pair -- see redis.yaml's
+# header for the shared reasoning (StatefulSet for stable identity, ephemeral storage). A
+# StatefulSet here too, even though Sentinels are themselves stateless coordinators with no data
+# to lose on restart -- kept for naming/addressing symmetry with the data nodes (sentinel-0/1/2)
+# and because Compose's own 3 sentinel-N services are already effectively identical, ordinal-
+# addressed peers; a StatefulSet is the more direct structural port of that shape than a
+# Deployment + a separate discovery mechanism would be.
+#
+# Each Sentinel's initial `sentinel monitor mymaster` target is redis-0's headless DNS name,
+# mirroring Compose's own sentinel-1/2/3 commands, which all hardcode "redis" (the initial
+# primary's Compose service name) as their bootstrap target -- confirmed directly against
+# docker-compose.yml's actual sentinel-N `command:` strings before writing this, not assumed. A
+# fresh Sentinel with no prior state always starts by trusting this initial value; a real failover
+# changes what `sentinel get-master-addr-by-name mymaster` reports from that point on, same as
+# Compose.
+#
+# `resolve-hostnames yes` / `announce-hostnames yes` are carried over unchanged -- required for
+# scripts/redis-entrypoint.sh's own MY_HOSTNAME-vs-Sentinel-reported-master comparison to work at
+# all (without them Sentinel reports/expects raw IPs, which aren't stable across a pod restart the
+# way a headless-Service DNS name is).
+#
+# No persistent volume for /tmp/sentinel.conf -- matches Compose's own treatment (a fresh,
+# writable-layer conf file every start, `rm -f && touch` before `exec`, closing the
+# "Duplicate master name" crash `docs/redis-ha-scope.md`'s Stage 6 found and fixed).
+apiVersion: v1
+kind: Service
+metadata:
+  name: sentinel-headless
+spec:
+  clusterIP: None
+  selector:
+    app: sentinel
+  ports:
+    - port: 26379
+      targetPort: 26379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sentinel
+spec:
+  serviceName: sentinel-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sentinel
+  template:
+    metadata:
+      labels:
+        app: sentinel
+    spec:
+      containers:
+        - name: sentinel
+          image: redis:8.10
+          command: ["sh", "-c"]
+          args:
+            - |
+              rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis-0.redis-headless 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000
+          ports:
+            - containerPort: 26379
+          resources:
+            limits:
+              memory: 32Mi
