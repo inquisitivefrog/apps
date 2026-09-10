@@ -1,0 +1,25 @@
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:21.031 - Accepted 127.0.0.1:32776
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:21.031 - Client closed connection id=28 addr=127.0.0.1:32776 laddr=127.0.0.1:26379 fd=22 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|replicas user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=46 tot-net-out=1347 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:22.182 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.204 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.222 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.253 # +sdown master mymaster redis 6379
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.304 # Failed to resolve hostname 'redis'
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.307 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.307 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.307 # +new-epoch 1
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.310 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.310 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.310 # +vote-for-leader 203bfbb0af294309140ea36bfaff5a329a982539 1
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.324 # +odown master mymaster redis 6379 #quorum 3/2
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:27.324 * Next failover delay: I will not start a failover before Thu Sep 10 18:35:47 2026
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.121 - Accepted 172.19.0.2:52662
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.121 - Client closed connection id=29 addr=172.19.0.2:52662 laddr=172.19.0.7:26379 fd=22 name= age=0 idle=0 flags=A db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=20474 argv-mem=0 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38144 events=r cmd=sentinel|get-master-addr-by-name user=default redir=-1 resp=2 lib-name= lib-ver= io-thread=0 tot-net-in=62 tot-net-out=25 tot-cmds=1 read-events=2 avg-pipeline-len-sum=1 avg-pipeline-len-cnt=1
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.387 - -role-change slave 172.19.0.5:6379 172.19.0.5 6379 @ mymaster redis 6379 new reported role is master
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.471 # +config-update-from sentinel 203bfbb0af294309140ea36bfaff5a329a982539 172.19.0.4 26379 @ mymaster redis 6379
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.471 # +switch-master mymaster redis 6379 172.19.0.5 6379
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.471 * +slave slave 172.19.0.3:6379 172.19.0.3 6379 @ mymaster 172.19.0.5 6379
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.471 * +slave slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.473 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.473 * Sentinel new configuration saved on disk
+sentinel-1-1  | 1:X 10 Sep 2026 18:35:28.517 - -role-change slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379 new reported role is master

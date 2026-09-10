@@ -128,7 +128,7 @@ reproducible two-writer window, not a flake. All three bugs below live in
 `scripts/redis-entrypoint.sh` itself, so all three applied equally to
 Compose the whole time; none is k8s-specific.
 
-### Bug 1 — a stale `get-master-addr-by-name` answer during an active failover
+### Bug 1 — a stale `get-master-addr-by-name` answer during an active failover, and a real quorum-vs-single-responder race underneath it
 
 `SENTINEL get-master-addr-by-name` can and does keep returning the **old**
 master's address for several seconds *after* a new master has already been
@@ -145,8 +145,60 @@ own later runtime `REPLICAOF` call corrected it — the exact two-writer
 window Finding A's original fix exists to prevent, just via a mechanism
 that fix's own design never accounted for.
 
+**Sharper root cause, found on review** (per a direct challenge to confirm
+whether this was a single-Sentinel internal-state lag or a real
+cross-Sentinel disagreement, rather than accepting the first plausible
+explanation): it's the latter, and it's more precise than "the failover is
+still in progress." Cross-checking all 3 Sentinels' own logs from the
+original reproduction (`load-tests/vendor-bug-reports/redis/runs/
+20260909-162406-stage4/sentinel-{1,2,3}.log`) shows **sentinel-1** (the
+elected failover *leader*, which has to actually drive the full
+reconfiguration — select a replica, send `slaveof no one`, wait for
+promotion, reconfigure every other replica) reached its own `+switch-master`
+at `23:24:28.398`, while **sentinel-2 and sentinel-3** (followers, which
+just observe the promoted node's role change) reached theirs **6.25
+seconds earlier**, at `23:24:22.149`. The entrypoint's own log for that
+exact run confirms it queried `sentinel-1` — the slowest one, and, by
+design, always the first one tried (`SENTINEL_HOSTS="sentinel-1 sentinel-2
+sentinel-3"`, and the original loop accepts the first non-empty response
+with no cross-check against the other two). Had the query landed on
+sentinel-2 or sentinel-3 instead, it would have gotten the *correct*
+answer nearly 6.25 seconds sooner. This is a genuine quorum-vs-single-
+responder gap in the entrypoint's original design, not merely "the answer
+lags" — Sentinel's own failover coordination has propagation lag between
+the leader and followers by design (the same reason quorum voting exists
+in Sentinel at all), and querying one specific Sentinel and trusting its
+first answer, with no check that the answer reflects majority/settled
+state, was always a real risk. It just never happened to be triggered in
+Finding A's original 3-run validation.
+
+**Confirmed pre-existing, not introduced by this slice's `SENTINEL_HOSTS`
+parameterization** — checked empirically, not assumed from reading the
+diff. The parameterization changed exactly one line
+(`SENTINEL_HOSTS="sentinel-1 sentinel-2 sentinel-3"` →
+`SENTINEL_HOSTS="${SENTINEL_HOSTS:-sentinel-1 sentinel-2 sentinel-3}"`),
+functionally identical in Compose since the env var is never set there. To
+prove rather than assert this, the exact pre-parameterization script
+(`git show 2632bd5:.../redis-entrypoint.sh`) was swapped in as a negative
+control and run against the identical Stage 4 reproduction: it hit the
+same mechanism, `redis-entrypoint: sentinel-1 reports current master is
+redis:6379 (attempt 1)` — byte-identical log shape to the original finding,
+since that version has no flags-checking at all. This has been latent in
+the original Finding A design since 2026-08-28, undiscovered until this
+session's regression testing happened to hit the exact timing (and Sentinel
+leader-election outcome) that exposed it — a standing gap in the whole
+Redis HA design both Compose and k8s inherited identically, not something
+specific to either environment.
+
 **Fix**: query `SENTINEL master mymaster` for `flags` before ever trusting
-`get-master-addr-by-name`'s answer; retry if `failover_in_progress` appears.
+`get-master-addr-by-name`'s answer; retry if `failover_in_progress` appears
+— refined further below into "must be exactly `master`," which as a side
+effect also defends against the quorum-vs-single-responder gap directly:
+the retry loop tries every Sentinel in `$SENTINEL_HOSTS` order on each
+attempt and accepts the *first one whose own flags are clean*, so a slow
+leader no longer blocks the answer when a follower has already settled —
+not by explicitly requiring multi-Sentinel agreement, but by no longer
+trusting a single lagging responder over a real available one.
 
 ### Bug 2 — a promoted node can never again recognize itself as master
 
@@ -218,7 +270,7 @@ if even that isn't enough.
 
 ## Validation
 
-### Compose Stage 4 regression — 11 runs across the fix's three iterations
+### Compose Stage 4 regression — 12 runs across the fix's three iterations, plus a negative control
 
 | Run (timestamp) | Phase | RTO | Demoted at | Verdict |
 |---|---|---|---|---|
@@ -233,6 +285,7 @@ if even that isn't enough.
 | 164245 | fix 1+2+3, widened budget | 21s\* | 1.07s | NO |
 | 165042 | fix 1+2+3, widened budget | 6s | 0.25s | NO |
 | 165216 | fix 1+2+3, widened budget | 6s | 1.25s | NO |
+| (2026-09-10, unlogged) | **negative control**: exact pre-parameterization script (`git show 2632bd5:...`) swapped in | 6s | not observed | NO by the write-acceptance metric, but same mechanism confirmed via the entrypoint's own log — `sentinel-1 reports current master is redis:6379 (attempt 1)`, byte-identical shape to the original finding |
 
 \* Setup phase took 50-57s in the final three runs (concurrent `kind`
 cluster contention on the same Docker Desktop VM), but the actual

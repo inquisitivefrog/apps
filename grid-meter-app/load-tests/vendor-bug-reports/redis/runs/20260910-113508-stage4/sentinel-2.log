@@ -1,0 +1,22 @@
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:23.231 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.198 # +sdown master mymaster redis 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.222 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.257 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.304 # Failed to resolve hostname 'redis'
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.307 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.307 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.307 # +new-epoch 1
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.311 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.311 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:27.311 # +vote-for-leader 203bfbb0af294309140ea36bfaff5a329a982539 1
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.282 # +odown master mymaster redis 6379 #quorum 3/2
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.282 * Next failover delay: I will not start a failover before Thu Sep 10 18:35:48 2026
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.429 # -sdown master mymaster redis 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.429 # -odown master mymaster redis 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.471 # +config-update-from sentinel 203bfbb0af294309140ea36bfaff5a329a982539 172.19.0.4 26379 @ mymaster redis 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.471 # +switch-master mymaster redis 6379 172.19.0.5 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.471 * +slave slave 172.19.0.3:6379 172.19.0.3 6379 @ mymaster 172.19.0.5 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.471 * +slave slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.473 . Rewritten config file (/tmp/sentinel.conf) successfully
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.473 * Sentinel new configuration saved on disk
+sentinel-2-1  | 1:X 10 Sep 2026 18:35:28.506 - -role-change slave redis:6379 redis 6379 @ mymaster 172.19.0.5 6379 new reported role is master
