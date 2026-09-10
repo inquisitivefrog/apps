@@ -270,7 +270,7 @@ if even that isn't enough.
 
 ## Validation
 
-### Compose Stage 4 regression — 12 runs across the fix's three iterations, plus a negative control
+### Compose Stage 4 regression — 13 runs across the fix's three iterations, a negative control, and a final confirming run
 
 | Run (timestamp) | Phase | RTO | Demoted at | Verdict |
 |---|---|---|---|---|
@@ -298,8 +298,39 @@ The three runs at 162908-163016 are clean but don't actually exercise Bug
 hostname-known node, never a promoted one) — Bug 2 was found and fixed via
 a separate, direct restart test, not via this script. Counting only the
 runs against the fully-fixed script (163801 onward, excluding the one
-setup-timeout abort): **5 of 5 clean**, comfortably past this project's
+setup-timeout abort): **6 of 6 clean**, comfortably past this project's
 3-run correctness bar.
+
+**Final confirming run (2026-09-10, `20260910-114644-stage4`), checked
+precisely the same way the original bug was found** — not just "no errors
+observed," but the restarted node's own role and live write-acceptance
+polled at sub-second resolution, per an explicit request not to let
+"the flags mechanism is individually correct" stand in for "the original
+failure scenario no longer reproduces." **`SPLIT-BRAIN: NO`, demoted at
+`t+0.13s`** — the cleanest result of any run so far: the entrypoint's own
+captured log shows it correctly identified the real master
+(`172.19.0.6`, the promoted `redis-replica-1`) on the very first attempt,
+with clean flags, and started `redis` directly as a replica —
+`role=slave` from the first poll onward, with no window at all where it
+ever claimed to be master (contrast the earlier clean runs, which briefly
+showed `role=master` before a fast-but-nonzero demotion).
+
+**A separate, honest finding from this same run, not conflated with the
+above**: this run's own setup phase (the initial topology-reset step,
+unrelated to the kill test itself) hit a real edge case under current
+resource contention — all 3 Sentinels stayed at
+`s_down,master,disconnected` for the entire 60-attempt budget without
+ever clearing, so `redis` fell through to the no-fallback bare-start path
+(`FALLBACK_REPLICAOF_HOST` is unset for the ordinal-0/default node) rather
+than genuine Sentinel confirmation. This is the entrypoint's own
+already-documented, loud-not-silent behavior for exactly this
+circumstance working as designed, not a new failure mode — and since
+`redis` genuinely was supposed to be primary in the canonical topology,
+it happened to be correct by construction rather than by verification.
+Distinct from Bug 1/3 (which are about trusting a *wrong* answer): this is
+about occasionally getting *no* answer within budget under real
+contention. Not chased further here — the actual kill-test result above
+is unaffected by it.
 
 ### k8s kill test, with a real split-brain probe (2026-09-09)
 
