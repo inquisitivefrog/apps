@@ -117,15 +117,15 @@ implement it.
   covers `/` and `/api`/`/actuator`, matching the app itself. Skipped here
   as out of scope for "the app is reachable," not a placeholder for a
   future add.
-- **Redis stays single-instance** (`redis.yaml`, a plain `Deployment`),
-  unlike `docker-compose.yml`'s Sentinel topology — `configmap.yaml` sets
-  `SPRING_PROFILES_ACTIVE: test` deliberately, matching the app's own
-  `!test`-gated Sentinel activation (`docs/redis-ha-scope.md`'s Stage 6),
-  so it connects to this environment's actual single Redis rather than
-  looking for Sentinels that don't exist here. Same shape as Kafka's own
-  StatefulSet migration (`kafka.yaml`) but not yet done for Redis — see
-  `docs/ha-scope.md`'s "Revisit triggers" for that separate, unscoped
-  follow-up.
+- **Redis now runs the same Sentinel HA topology as `docker-compose.yml`**
+  (`redis.yaml` + `sentinel.yaml`, both `StatefulSet`s + headless
+  Services, mirroring `kafka.yaml`'s own StatefulSet migration) — stale
+  as of this note: this section previously described a single-instance
+  `Deployment` with `SPRING_PROFILES_ACTIVE: test` as a deliberate
+  stopgap; see `docs/k8s-redis-ha-scope.md` for the full design, the
+  entrypoint-script bugs found and fixed porting it into `kind`, and the
+  live kill-test validation. `docs/ha-scope.md`'s "Revisit triggers" entry
+  for this follow-up is now closed.
 
 ## Teardown
 

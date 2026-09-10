@@ -346,6 +346,41 @@ extension argument, avoiding `-P`/`-d`/`--format` entirely) over
 GNU-specific shorthand, even when a GNU-only form would be more
 convenient to write.
 
+## Test-infrastructure lesson: a laptop system-sleep gap can corrupt a `date +%s`-based timing measurement, not just a coarse status field
+
+**A second, distinct instance of "a timing loop's own measurement mechanics corrupted the
+result, not the thing being measured" (2026-09-09)** — related to, but a different mechanism
+from, this doc's own coarse-readiness-signal lessons above. Re-verifying the k8s Redis Sentinel
+StatefulSet slice after an unrelated reboot, a kill-test script launched as a backgrounded tool
+call captured `KILL_TIME=$(date +%s)` before deleting a pod, then computed elapsed time as
+`$(( $(date +%s) - KILL_TIME ))` once a polling loop detected the pod's recovery. The script
+printed **1033 seconds** (over 17 minutes) for what should have been a sub-minute pod recreation
+— confirmed bogus by cross-checking the pod's actual `creationTimestamp` against real wall-clock
+time, which showed the true recreation happened in well under a minute. The likely cause: the
+Mac went to sleep while the backgrounded script's `sleep 1`-based poll loop was waiting (a
+separate tool call scheduled around the same time failed with "temporarily unavailable", timing
+consistent with a suspend event) — `date +%s` correctly reflects real elapsed wall-clock time
+once the system resumes, so a suspend spanning most of a poll loop's run inflates the measured
+delta by the full suspended duration, even though the actual computation took only a few real
+seconds of CPU time before and after the gap.
+
+**Why this is a distinct shape from the fixed-sleep/coarse-signal lessons above**: those are
+about a readiness check trusting a signal that doesn't represent the real condition (an old pod
+still reporting `Ready`, a `patronictl` leader field lagging real convergence). This is about the
+*instrument itself* — two `date +%s` calls bracketing a measurement — silently including time the
+process spent completely suspended, not running at all, which no amount of polling-interval
+tuning or readiness-condition precision can fix, since the corruption happens between the loop's
+iterations, not within them.
+
+**Standing guidance**: treat any `date +%s`-bracketed timing measurement in a script expected to
+run for more than a few seconds as suspect if the reported number is wildly larger than plausible
+for the operation being measured — cross-check it against an independent wall-clock signal (a
+resource's own `creationTimestamp`, a log line's own embedded timestamp) before writing it into
+a doc, the same discipline this project already applies to every other measured number. Where
+practical, run genuinely time-sensitive local chaos/measurement scripts under `caffeinate -i` (or
+equivalent) to prevent the host from sleeping mid-measurement in the first place, rather than
+only catching the corruption after the fact.
+
 ## CI wiring (GitHub Actions)
 
 All three jobs below run on every push/PR touching `grid-meter-app/**`
