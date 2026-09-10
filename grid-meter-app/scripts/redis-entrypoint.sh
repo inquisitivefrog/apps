@@ -75,6 +75,15 @@ echo "redis-entrypoint: I am '$MY_HOSTNAME' -- asking Sentinel who the current m
 # (never trusting a dirty flag) matters more here than shaving a few seconds off startup latency,
 # and every node still has its FALLBACK_REPLICAOF_HOST/PORT (or loud bare-start log) safety net if
 # even that isn't enough.
+#
+# That "if even that isn't enough" case is no longer hypothetical -- observed live 2026-09-10
+# (docs/ha-scope.md's "Revisit triggers"): a cold-bootstrap reset under real contention (this Mac
+# running kind + Compose + the self-hosted CI runner simultaneously) exhausted the full 60 without
+# any Sentinel ever settling to clean flags, and the default node correctly fell through to its
+# bare-start fallback. Not a bug (the fallback is deliberately loud, not silent, and was correct by
+# construction here) -- but a real data point that this budget's fallback path gets exercised more
+# than a happy-path reading alone would suggest, worth keeping in mind if this Mac's contention
+# level or this budget ever needs revisiting.
 max_attempts=60
 attempt=0
 while [ "$attempt" -lt "$max_attempts" ] && [ -z "$MASTER_HOST" ]; do

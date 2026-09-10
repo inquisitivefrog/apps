@@ -314,20 +314,28 @@ attempts get made at all once failures start piling up.
   provider) but does not change any decision in *this* doc — the local
   track's Kafka-first, self-hosted, Redis/Postgres-deferred scope stands
   independently, per that doc's own "Two tracks" framing.
-- **k8s Redis Sentinel HA follow-up: done (2026-09-09), closing the item
-  named here on 2026-09-06.** `k8s/redis.yaml` + new `k8s/sentinel.yaml`
-  now bring `docker-compose.yml`'s proven Sentinel topology into `kind`
-  as StatefulSets + headless Services, mirroring Kafka's own migration —
-  see `docs/k8s-redis-ha-scope.md` for the full design and, more
-  significantly, three real correctness bugs in
-  `scripts/redis-entrypoint.sh`'s Sentinel-lookup logic found and fixed
-  along the way (the shared entrypoint script this slice reuses
-  unmodified from Compose): a stale-answer race during an active
-  failover, a structural inability for any node other than the originally
-  hostname-monitored one to ever recognize itself as master again after
-  being promoted, and a narrower stale-answer race in the moment right
-  after a kill but before Sentinel starts reacting at all. All three
-  applied equally to the Compose topology this script was already
-  running in production — found only because this k8s port's own
-  regression testing re-exercised the same code path under different
-  timing.
+- **k8s Redis Sentinel HA follow-up (named here 2026-09-06): closed,
+  2026-09-09/10.** No longer an open item — see
+  `docs/k8s-redis-ha-scope.md` for the full design, the three real
+  correctness bugs found and fixed in `scripts/redis-entrypoint.sh`
+  (shared unmodified by Compose and k8s, so all three were already live
+  in production), and the final clean re-verification against the exact
+  original failure scenario.
+- **New, forward-looking (2026-09-10): the k8s Redis Sentinel entrypoint
+  fix's cold-bootstrap fallback path has now been observed firing live
+  under real contention, not just reasoned about.** During the fix's own
+  final verification pass, a topology-reset's cold bootstrap (every data
+  node and every Sentinel recreated at once) left all 3 Sentinels at
+  `s_down,master,disconnected` for the entire 60-attempt (60s) retry
+  budget without ever settling — this Mac running `kind` + Compose +
+  the self-hosted CI runner simultaneously, the same triple-duty
+  contention `CLAUDE.md`'s CI section already names as a standing,
+  accepted tradeoff. The default node correctly fell through to its
+  already-documented, loud-not-silent bare-start fallback rather than
+  silently guessing — not a bug, and it happened to be correct by
+  construction here since that node genuinely was the intended primary —
+  but it means the fallback path is exercised more often in practice than
+  a happy-path reading of the 60-attempt budget alone would suggest.
+  Worth keeping in mind if this budget or this Mac's contention level
+  ever needs revisiting — no action needed now, just recorded so the
+  live data point isn't lost to the investigation's own narrative.
