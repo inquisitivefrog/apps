@@ -120,6 +120,230 @@ high enough that it never opens during the test, mirroring the existing
 `docker-compose.redis-retry-isolation-test.yml` override pattern), and compare the two runs'
 thread-pool metrics directly.
 
+**Status (2026-09-11): done — see the dated section below for the full account.** The follow-up
+above was built essentially as scoped (a real `load-tests/` JMeter scenario, Tomcat metrics
+already scraped via Actuator/Micrometer, no new tooling beyond polling those same metrics faster
+than Prometheus's own 15s scrape interval). The before/after breaker-disabled comparison suggested
+above was **not** needed to answer the question — a single real run against the enabled breaker
+already showed the pool reaching its full configured ceiling, which settles "does the breaker
+prevent this" without needing a disabled-breaker control. **The answer is more nuanced than either
+"yes" or "no": correctness (fail-fast under real concurrency) is confirmed; "prevents thread-pool
+saturation" is not — the pool does reach 100% in real, measured bursts, for a reason outside the
+breaker's own control.** Not fixed unilaterally, per this project's own check-in convention — see
+"Open decisions" item 4's update at the bottom of this doc.
+
+## Circuit breaker: load-tested under sustained concurrent Kafka failure (2026-09-11)
+
+Picks up the "What's still open" note directly above. Built
+`load-tests/kafka-outage-concurrent.jmx` (a sixth JMeter profile, structured identically to the
+other five — shared `common/login.jmx`/`provision-meters.jmx`/`warmup.jmx` fragments via Include
+Controller, the same `POST /readings` sampler and `Idempotency-Key: ${__UUID()}` header — but
+driven by a dedicated orchestrating script, `load-tests/kafka-circuitbreaker-loadtest.sh`, rather
+than `run.sh`, since this scenario needs to background JMeter and kill/restore real Kafka brokers
+mid-run, the same shape `misconfigured-spike-demo.sh` already established for a two-phase
+scripted scenario). Instrumentation is two new small scripts, not new tooling in spirit:
+`kafka-cb-loadtest-poller.py` polls `api`'s own `/actuator/prometheus` directly at 0.2s resolution
+(Prometheus's own `scrape_interval` is 15s — far too coarse for a breaker whose
+`minimum-number-of-calls` is 10 and can plausibly open in well under a second; a single fetch
+timed at ~10-20ms before trusting the loop, per `docs/testing-strategy.md`'s "a polling loop's own
+per-call cost can dominate the measurement" standing lesson), and
+`kafka-cb-loadtest-analyze.py` combines that CSV with JMeter's own `results.jtl` to answer both
+questions with real numbers rather than a pass/fail assertion.
+
+**Two real methodology bugs found and fixed before trusting any run — both instances of this
+project's own standing lessons, not new categories:**
+
+1. **A fixed pre-kill sleep raced the SetupThreadGroup's own warmup, exactly the
+   fixed-sleep-vs-unbounded-readiness pattern `docs/testing-strategy.md` already tracks.** This
+   scenario's `TestPlan.serialize_threadgroups=true` means the main load Thread Group can't start
+   until `setUp` (login + 10-meter provisioning + `warmup.jmx`'s 50 sequential, *real*
+   `POST /readings` calls) finishes — and the first dry run killed Kafka while that warmup phase's
+   own real Kafka-touching requests were still in flight, contaminating the exact baseline the
+   pre-kill window exists to establish. Fixed by polling the growing `results.jtl` for the first
+   sample carrying the main group's own label (`POST /readings`, not `warmup.jmx`'s
+   `WARMUP: POST /readings`) before starting the pre-kill countdown, instead of guessing how long
+   setup takes.
+2. **The first real (post-fix) run used an 8-second outage and found nothing — not because the
+   breaker worked, but because the outage was too short to prove anything, exactly the gap
+   `load-tests/README.md`'s own Kafka HA section already documents for `kafka-ha-demo.sh`'s
+   Scenario 2.** Every one of that run's samples returned `201`; `kafka-publish`'s breaker never
+   opened. Root cause: `kafkaTemplate.send()`'s background delivery retries, bounded by the
+   declared `delivery.timeout.ms` (120000ms), silently absorb any outage shorter than that once
+   brokers return — nothing ever completes as a *failure*, so the breaker's sliding window never
+   sees one. Fixed by using a 150-second outage (120s + 30s margin, the identical number
+   `kafka-ha-demo.sh` already uses for the same reason) as the default, not a round "long enough"
+   guess.
+
+**A real mechanism found, empirically, that the original design didn't anticipate: `send()` can
+block synchronously for the full declared `max.block.ms` (60000ms) under a genuine sustained
+outage, and the resulting exception is uncaught.** The circuit-breaker build's own live
+verification (top of this doc) saw a *fast*, synchronous `ConfigException` once all 3 broker
+hostnames stopped resolving via Docker's embedded DNS. Under *sustained concurrent load*, a
+different and slower manifestation of the same "the Kafka client can block the calling Tomcat
+thread synchronously" risk shows up instead: with many requests continuously enqueuing records
+against unreachable brokers, the producer's internal buffer fills, and *new* `send()` calls block
+waiting for buffer space — bounded by `max.block.ms`, exactly as this doc's own Kafka-producer
+section named it, just triggered by buffer exhaustion rather than a stale-metadata refresh. In a
+50-thread diagnostic run, this produced 5 samples that each took almost exactly 60.05–60.06
+seconds before returning **`500`**, not `503` — confirmed via the raw `.jtl`: `GlobalExceptionHandler`
+has no handler for a bare Kafka client exception (`KafkaException`/`TimeoutException`), so it falls
+through to Spring's own default error handling, the same *shape* of gap (an uncaught exception
+reaching an ambiguous Spring default instead of an explicit classification) as the
+`DisconnectedClientHelper`/Postgres finding documented below, just a different hierarchy and a
+different symptom (a bare `500` instead of a fabricated `200`). Named as its own item in "Open
+decisions" below — not fixed here, since it's a genuinely new gap, not something this test was
+scoped to unilaterally patch.
+
+**Two runs, deliberately at two different concurrency levels, to isolate cause from a confound
+found in the first one:**
+
+| Run | Threads | Why | Result |
+|---|---|---|---|
+| 300 (150% of `server.tomcat.threads.max=200`, matching `rapid-spike.jmx`'s own established "force visible saturation" convention) | Confounded — `tomcat_threads_busy_threads` was already pinned at `200/200` **before Kafka was even killed**, simply because 300 concurrent JMeter threads exceed the 200-thread ceiling on their own, Kafka notwithstanding. Kept as a real, honestly-labeled secondary data point (a combined "traffic burst + Kafka outage" scenario), not the answer to the causal question. |
+| 150 (comfortably under the 200-thread ceiling — the pool never approaches saturation from raw concurrency alone) | The clean, causally-isolated primary result. |
+
+**150-thread run (the primary result) — real numbers, `load-tests/results/kafka-cb-loadtest-20260911-095945/`:**
+
+- **Healthy baseline** (before the kill, and during the calm stretches of the outage between
+  breaker-state transitions): `tomcat_threads_busy_threads` sits flat at ~150–153 the entire time —
+  confirming 150 concurrent threads alone never stresses a 200-thread pool, the necessary
+  precondition for treating any later spike as Kafka-outage-driven rather than raw concurrency.
+- **The `kafka-publish` breaker first opened at `t+60.64s`** after the kill (`resilience4j_circuitbreaker_state{name="kafka-publish",state="open"}` observed transitioning `0→1`), not instantly and not on a fixed schedule — bounded by how long the first batch of calls needed to actually *complete* as failures, not by `minimum-number-of-calls=10` alone. The raw `.jtl` confirms the mechanism precisely: **150 of 150 concurrent threads' requests started blocking within the same sub-second window right at the kill**, and **all 150 completed (`500`, the uncaught `max.block.ms` timeout above) in a tight cluster right around `t+60s`** — the same near-simultaneous batch that also supplied the breaker's first 10+ failures.
+- **`tomcat_threads_busy_threads` reached its full configured ceiling — `200/200`, 100% — in two distinct ~10–15 second windows, both precisely aligned with a breaker-state transition**: `t+60–75s` (the first `OPEN`, then the next-request-triggered transition to `HALF_OPEN` at exactly `t+70.64s` — 10.00s after opening, matching the declared `wait-duration-in-open-state: 10s` to the millisecond) and `t+120–145s` (a second full re-open/re-probe cycle, including one probe cycle that failed back to `OPEN` in only 0.21s rather than blocking, showing the failure mode varies run to run even within one outage). Outside those two windows, the pool stayed at its normal ~150–153 baseline for the entire rest of the 150-second outage.
+- **Honest, bounded limit on this finding**: the *precise* reason the reading reaches a full 200 (not merely the raw 150-thread concurrency ceiling) during these specific bursts wasn't further isolated within this test's scope — plausibly some overlap between an old, just-timing-out request and its thread's own immediately-issued next request, but not confirmed at the level of rigor this project holds other mechanism claims to (e.g. the Kafka `external_confirm_s` investigation). The core, load-bearing finding — the pool reaches its full ceiling in bursts tied to the breaker's own open/half-open cycling — is not in question; only the exact arithmetic of *why it's 200 and not 150* is left as an unchased, explicitly-flagged loose end.
+
+**300-thread run (secondary, confounded, `load-tests/results/kafka-cb-loadtest-20260911-095418/`) — kept for a different, real finding it surfaced:** with the pool already saturated by raw concurrency alone, the high-resolution poller's *own* `GET /actuator/prometheus` calls started timing out (a 2-second client-side timeout, for roughly 12 real seconds right at the point of peak contention) — this app has no separate Actuator management port (`server.port: 8080` serves everything), so even the health/metrics endpoint competes for the same saturated Tomcat pool as the business endpoints it's trying to observe. A real, if secondary, operational finding: under severe enough combined load, an operator's own dashboard-refresh or scrape can itself start failing, not just the endpoint under test.
+
+**Question (a) — does the breaker open before the pool saturates? Answered, precisely, and it's the honest "no" the top of this section flagged as a legitimate possible outcome, not a failure to fix silently.** The breaker's correctness is not in question — it opened, and its `minimum-number-of-calls`/`failure-rate-threshold` config was honored exactly (confirmed via the state-gauge transitions above). What's now confirmed wrong is the *assumption* that opening the breaker is sufficient to bound thread-pool pressure: calls that pass `tryAcquirePermission()` *before* the breaker has enough completed failures to open are entirely outside the breaker's control once they're in flight, and if they hit Kafka's own `max.block.ms`-bounded synchronous block, each one can occupy a Tomcat thread for up to a full minute regardless of what the breaker does moments later. Under a genuinely non-oversubscribed 150-thread baseline, this drove the pool to its full configured ceiling twice during one 150-second outage.
+
+**Question (b) — does concurrent traffic get shed fast once open? Yes, confirmed under real concurrency, not just sequentially.** Across the 150-thread run's 228,122 real `503` (`CallNotPermittedException`) responses during the outage: min 1ms, mean 58.8ms, p95 116ms, max 1194ms — an order of magnitude higher than `ReadingIngestCircuitBreakerLatencyComponentTest`'s idealized sequential figure (11–24ms), but still clearly sub-second, with no long tail suggesting pile-up. Checked specifically **during** the two thread-pool-saturation windows above, in case concurrency-driven queueing degraded fast-fail latency too: it didn't — `503`s landing inside those windows were, if anything, slightly *faster* (mean 50.3ms, p95 96ms) than `503`s in the calm stretches (mean 69.3ms, p95 134ms) — no evidence of lock contention or pile-up inside Resilience4j's own state machine at this concurrency level, in either condition.
+
+**What this means for "Open decisions" item 4, closed precisely, not just closed**: correctness under real concurrent load is now confirmed (question (b), unambiguously yes). The original motivating concern — "does the breaker protect the thread pool" — resolves to a real, honest **no, not by itself**, for a reason outside the breaker's own design: it can only act on calls it gets a chance to gate, and a call that already blocked past that gate can hold a thread for up to `max.block.ms` regardless of the breaker's state. Two possible remediations are named here for explicit sign-off, per `CLAUDE.md`'s check-in convention — **neither applied unilaterally**:
+
+1. **Shorten `max.block.ms`** from its current declared 60000ms to something much smaller (e.g. a few seconds) — bounds the worst case per stuck call directly, at the cost of potentially converting a transient, self-resolving delay into a fast failure sooner than necessary during a brief, real broker hiccup. This is the most direct fix, but changes a value this doc already declared deliberately (see the Kafka producer section above) for reasons specific to the *pre-breaker* investigation, not yet re-examined against this finding.
+2. **Accept the current behavior as a bounded, honest cost** — up to 60 seconds per call that happened to start just before the breaker opened, self-resolving, with no data corruption (the request either eventually succeeds or the reading is lost per the already-accepted redo-path decision above) — and revisit only if a real production signal (the `Tomcat thread pool saturated` alert actually firing during a real Kafka outage) makes it worth the tradeoff in (1). Matches this project's own "measure first, decide only if a real gap needs fixing" discipline already applied to the Postgres fencing decision and the Redis `min-replicas-to-write` gap.
+
+A third, smaller, related item is also flagged for sign-off rather than fixed here: **`GlobalExceptionHandler` has no explicit handler for a bare Kafka client exception**, so the `max.block.ms`/`500` path found above returns a generic, inconsistent error shape instead of this app's usual `503`/`ApiError` contract for "a dependency is failing." A narrow `@ExceptionHandler({KafkaException.class})`-style addition, mapped to `503`, would close it — the same shape of fix already applied twice in this doc for the Postgres `DisconnectedClientHelper` gap, just for a different exception hierarchy.
+
+Full evidence: `load-tests/kafka-outage-concurrent.jmx`, `load-tests/kafka-circuitbreaker-loadtest.sh`,
+`load-tests/kafka-cb-loadtest-poller.py`, `load-tests/kafka-cb-loadtest-analyze.py`; raw results
+under `load-tests/results/kafka-cb-loadtest-20260911-{094510,094803,094922,095418,095945}/`
+(the first two are the pre-fix/post-fix methodology-bug runs, kept as evidence of the fix rather
+than deleted, matching `misconfigured-spike-demo.sh`'s own precedent of keeping a "real kink we
+caught" run alongside the corrected one; the third is the 50-thread mechanism-diagnostic run; the
+fourth and fifth are the 300-thread and 150-thread runs analyzed above).
+
+## Circuit breaker: `max.block.ms` shortened + the missing exception handler added, re-verified (2026-09-11)
+
+Closes "Open decisions" items 5 and 6 above. Both were approved for this pass; nothing here was
+built without that sign-off.
+
+**Item 6 first (the exception handler), because item 5's own safety margin needed to be checked
+against a *confirmed* exception type, not an assumed one.** Reproduced the `max.block.ms` timeout
+live (a small, dedicated repro — modest concurrent traffic against a real stopped 3-broker
+cluster, not the full load-test scenario) and captured the actual stack trace before writing
+anything: `KafkaTemplate.doSend()` (`spring-kafka-4.1.0` source, confirmed by pulling the sources
+jar and reading it directly, not assumed from general Kafka-client knowledge) wraps a
+synchronously-completed, already-failed send future as `org.springframework.kafka.KafkaException("Send
+failed", cause)` — **Spring Kafka's own wrapper class, not the raw
+`org.apache.kafka.common.KafkaException`** the original finding's prose loosely suggested — with
+root cause `org.apache.kafka.common.errors.TimeoutException: Topic readings not present in
+metadata after 60000 ms.` Added `@ExceptionHandler(KafkaException.class)` to
+`GlobalExceptionHandler` (importing `org.springframework.kafka.KafkaException`), mapped to `503`
+with the same `ApiError` shape every other "a dependency is failing" response in that class uses —
+placed immediately after `handleCircuitBreakerOpen()`, since the two are conceptually adjacent
+(both concern a Kafka call gated by the same breaker) but structurally unrelated: confirmed via
+`javap` that `KafkaException` (`extends NestedRuntimeException`) and `CallNotPermittedException`
+share no hierarchy, so Spring's nearest-match dispatch can never confuse one for the other — the
+two genuinely can't fire for the same call (one means the call was never attempted; the other
+means it was, and then failed). New `GlobalExceptionHandlerTest` (3 unit tests: the new handler's
+`503`/`ApiError` shape, the two exception classes' confirmed disjoint hierarchy, and a regression
+check that `handleCircuitBreakerOpen()` still behaves independently) plus a **live spot-check
+against a real outage** (not just the unit test): `{"timestamp":"...","status":503,"error":"Service
+Unavailable","message":"A dependency (kafka-publish) is currently failing; try again
+shortly","details":[]}` — the real body, captured mid-outage, not inferred. Full suite: 91/91 green
+(88 pre-existing + 3 new).
+
+**Item 5 — `max.block.ms`, shortened 60000ms → 5000ms — but not for the exact reason the sign-off
+brief itself cited, worth stating precisely rather than quietly using the brief's number
+anyway.** The brief's own RTO figures were checked against the real docs before trusting them
+(per this project's own "Claude Chat has no live repo access, verify before relying on a pasted
+figure" lesson) and two of the three didn't hold up:
+
+- **"~2.44s" turned out to be a different metric from a different investigation entirely** —
+  `docs/k8s-kafka-ha-scope.md`'s k8s pod-*recreation* time after `kubectl delete pod kafka-1`, not
+  a Kafka-client-observed leader-failover RTO. Not a number this decision should have been
+  checked against at all.
+- **`kafka-leader-failover-rto.sh`'s own reported "~3.7–3.9s"** (`docs/postgres-ha-scope.md`,
+  2026-09-03) is real output from a real script, but checking that script's own measurement
+  method (not just trusting its printed number) found it still polls via `kafka-topics.sh
+  --describe` on a 0.5s sleep — the *exact* ~1s-per-call JVM-spawn-cost measurement artifact this
+  project already found and fixed once, in `kafka-ha-demo.sh`'s own sibling Scenario 1 measurement
+  (`docs/testing-strategy-ha-supplement.md`'s "RTO variance retest"). `kafka-leader-failover-rto.sh`
+  itself was never given the equivalent fix. Its ~3.7–3.9s figure is very likely dominated by that
+  same artifact, not real election time — flagged here, not fixed, since re-verifying that
+  specific script is outside this task's scope.
+- **The trustworthy figure is `kafka-ha-demo.sh`'s own log-tail-based measurement** — reading the
+  KRaft controller's actual internal decision timestamp, the version of this measurement this
+  project has already scrutinized hardest: **0.098–0.167s across 9 samples in 3 independent
+  passes**, corroborated by 3 separate real production runs at 0.115s/0.119s/0.155s
+  (`docs/testing-strategy-ha-supplement.md`).
+
+**5000ms clears the real, trustworthy ceiling (0.167s) by roughly 30x** — comfortable margin for a
+genuine in-progress leader election (which also transiently can't resolve fresh topic metadata) to
+never be misclassified as a stuck call. Deliberately picked at the *higher* end of the brief's own
+suggested 3000–5000ms range specifically as a hedge against `kafka-leader-failover-rto.sh`'s
+unconfirmed ~3.7–3.9s figure turning out to have some real signal in it after all — 5000ms would
+still comfortably exceed that number too, where 3000ms would not. Declared explicitly in
+`application.yml` (same "declared, not defaulted" convention as every other value in this file),
+with a comment recording this exact reasoning and both citation corrections, not just the final
+number. Full suite re-run after the change: still 91/91 green — this is a producer-config value,
+not something any existing test asserts a specific timing against.
+
+**Re-verification: the identical primary scenario re-run (150 threads, 150s outage,
+`load-tests/results/kafka-cb-loadtest-20260911-114205/`) — real before/after numbers, not a
+"seemed fine" close-out:**
+
+| | Before (60000ms) | After (5000ms) |
+|---|---|---|
+| Status code on the timeout path | `500` (uncaught, generic body) | `503` (`ApiError`, `"A dependency (kafka-publish) is currently failing"`) |
+| Time to first breaker open | 60.64s | 39.48s |
+| Peak `tomcat_threads_busy_threads` during the outage | `200/200` (100%) | `177/200` (88.5%) |
+| Time spent at/near full saturation (`busy≥190`, 2s buckets, over the whole 150s outage) | ~20–30s (two ~10–15s windows) | **0s** — no bucket ever reaches 190 |
+| Time spent even moderately elevated (`busy≥170`) | ~20–30s | **~2s total** (one single 2-second bucket, peak 177) |
+| Max latency on the slow path | ~60.8s (`500`) | **5893ms** (`503`) — bounded to essentially the new `max.block.ms` ceiling, as designed |
+| `503` fast-fail latency once genuinely `OPEN` (unaffected by this change) | mean 58.8ms, p95 116ms | mean 168.9ms, p95 380ms — higher (more reopen/reprobe cycling under the same 150s window, 7 vs. 3, since each cycle now resolves ~12x faster), but still clearly sub-second, no pile-up |
+
+**This is the expected shrink, confirmed rather than assumed** — per the sign-off brief's own
+instruction to investigate rather than round to "close enough" if it wasn't clean: the two
+full-ceiling saturation bursts are gone entirely (zero 2-second buckets ever reach `busy≥190`
+across the whole outage, versus roughly 20–30 cumulative seconds pinned at `200/200` before), and
+the worst-case latency on the slow path dropped from ~60.8s to 5.9s — tracking the new
+`max.block.ms` ceiling closely, exactly the mechanism this change targets. **The one remaining
+~2-second window (`busy=177`, 88.5%) is an expected residual of the same already-understood
+mechanism, not a new or partially-understood gap** — stated explicitly so it doesn't read as
+ambiguous: it's the very first batch of calls that were already in flight, already past
+`tryAcquirePermission()`, before the outage was even detected, so no config change to the breaker
+itself could have prevented them from blocking at all; this change only controls *how long* that
+first batch blocks (now ≤5s instead of ≤60s), which is exactly what "bound the worst case, don't
+eliminate the mechanism" (this section's own stated goal) means in practice. Not chased further.
+`time_to_open_s` dropping (60.64s → 39.48s) and `reopen_probe_cycles` rising (3 → 7) are both
+side effects of the same change (failures now resolve ~12x faster, so the sliding window fills
+sooner and the breaker cycles through open/half-open more times in the same 150s window) — not
+independent findings.
+
+**"Open decisions" items 5 and 6: both closed.** Item 5 — shortened to 5000ms, checked against
+the real, corrected RTO ceiling (0.167s, ~30x margin) rather than the brief's own uncorrected
+citations; re-verified live to actually bound the worst case (60.8s → 5.9s) without eliminating
+the underlying mechanism, which was never the goal. Item 6 — `GlobalExceptionHandler` now
+explicitly classifies this exception type; confirmed live that a real outage now returns a real
+`503`/`ApiError`, not a bare `500`.
+
+Full evidence: `api/src/main/java/com/gridmeter/api/common/GlobalExceptionHandler.java`,
+`api/src/test/java/com/gridmeter/api/common/GlobalExceptionHandlerTest.java`,
+`api/src/main/resources/application.yml`'s `max.block.ms` comment; re-verification run under
+`load-tests/results/kafka-cb-loadtest-20260911-114205/`.
+
 ### A severe, pre-existing, unrelated bug found live-testing the Postgres breaker: Postgres outages could silently fabricate `200 OK` responses
 
 **Not a circuit-breaker defect — confirmed by reproducing it on a plain, unmodified
@@ -580,9 +804,12 @@ below describe what was actually run, not a still-open test plan.**
   assert requests fail fast (sub-second, not the old ~30s hang) once the
   breaker is open — this is the test that proves the HikariCP timeout and
   the circuit breaker actually work together, not just that each exists
-  independently. Done. **Not yet done: load-testing thread-pool
-  protection under sustained *concurrent* failure — see "What's still
-  open" in "Circuit breaker: built" above; that gap is still real.**
+  independently. Done. **Load-testing thread-pool protection under
+  sustained *concurrent* failure — done (2026-09-11), see "Circuit
+  breaker: load-tested under sustained concurrent Kafka failure" above.
+  Fail-fast correctness is confirmed under real concurrency; the pool
+  reaching its full ceiling in bursts tied to the breaker's own
+  open/half-open cycling is a real, separate finding, not a test gap.**
 - ~~**Outbox reconciliation test**: kill Kafka, confirm `POST /readings`
   still succeeds (the write lands in the outbox), restore Kafka, confirm
   the reconciler drains the outbox and the reading becomes visible via
@@ -622,17 +849,43 @@ below describe what was actually run, not a still-open test plan.**
    Kafka and Postgres outages. See "Circuit breaker: built" at the top
    of this doc for the full account, including a severe, unrelated bug
    found and fixed along the way.)
-   **This item's own question is closed, but a narrower one it was
-   standing in for is not: load-test validation of thread-pool
-   protection under sustained concurrent failure — not yet done.**
-   Correctness (opens/closes at the right thresholds, fails fast, never
-   fabricates false success, recovers cleanly) is now fully built and
-   live-verified — see "What's still open" under "Circuit breaker:
-   built" at the top of this doc for the precise scope of what remains:
-   whether the breaker actually protects Tomcat's thread pool from
-   exhaustion under *sustained, concurrent* load, the original
-   motivating concern this doc's own Kafka producer section named and
-   never stressed. Every verification so far (unit tests, the dedicated
-   HTTP-latency component test, live Kafka/Postgres outages) has been
-   sequential, one call at a time — never concurrent load. Needs a
-   `load-tests/` JMeter scenario, scoped in that section, to close.
+   **The narrower question this item was standing in for is now resolved
+   too (2026-09-11), not left open — see "Circuit breaker: load-tested
+   under sustained concurrent Kafka failure" above for the full account.**
+   Fail-fast correctness under real concurrency is confirmed (hundreds of
+   thousands of real concurrent `503`s, sub-second every time). The
+   original "does the breaker protect the thread pool" framing resolves
+   to a real, measured **no, not by itself**: under a genuinely
+   non-oversubscribed 150-concurrent-thread load, `tomcat_threads_busy_threads`
+   reached its full configured ceiling (`200/200`) twice during one
+   150-second outage, in bursts tied precisely to the breaker's own
+   open/half-open state transitions — driven by calls that already passed
+   `tryAcquirePermission()` before getting stuck in Kafka's own
+   `max.block.ms`-bounded synchronous block, entirely outside the
+   breaker's control once in flight. This is not a defect in the breaker
+   itself (its own thresholds and state machine behaved exactly as
+   configured) — it's a real, now-measured limit on what a circuit
+   breaker gating *new* calls can do about calls that are already stuck.
+5. ~~New (2026-09-11): shorten `max.block.ms` (currently 60000ms) to bound
+   the per-call worst case found above, or accept it as-is?~~ **Resolved
+   (2026-09-11): shortened to 5000ms.** Checked against this project's
+   real, most-scrutinized Kafka failover RTO figures first (0.098–0.167s,
+   `kafka-ha-demo.sh`'s log-tail-based measurement — ~30x margin), not
+   the sign-off brief's own uncorrected citations, two of which didn't
+   hold up on verification (see the dated section below for the full
+   correction). Re-verified live: the same 150-thread/150s-outage
+   scenario now shows zero time at full thread-pool saturation (was
+   ~20–30s) and a worst-case slow-path latency of 5.9s (was ~60.8s) — see
+   "Circuit breaker: `max.block.ms` shortened + the missing exception
+   handler added, re-verified" above for the full before/after.
+6. ~~New (2026-09-11): `GlobalExceptionHandler` has no explicit handler
+   for a bare Kafka client exception~~ **Resolved (2026-09-11).** Added
+   `@ExceptionHandler(KafkaException.class)` (confirmed live which exact
+   class is thrown — `org.springframework.kafka.KafkaException`, not
+   assumed — before writing it), mapped to `503`/`ApiError`, matching
+   this class's existing pattern. Confirmed structurally independent from
+   `CallNotPermittedException` (disjoint hierarchies, can never fire for
+   the same call) and confirmed live against a real outage that the
+   response body is now the real `ApiError` shape, not a bare `500`. See
+   the dated section above for the full account, including the new
+   `GlobalExceptionHandlerTest`.

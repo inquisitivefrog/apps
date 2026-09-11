@@ -6,6 +6,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.KafkaException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.transaction.TransactionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -82,6 +83,29 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(ApiError.of(HttpStatus.SERVICE_UNAVAILABLE.value(), "Service Unavailable",
                         "A dependency (" + ex.getCausingCircuitBreakerName() + ") is currently failing; try again shortly"));
+    }
+
+    // Found 2026-09-11 load-testing the kafka-publish breaker under sustained concurrent failure
+    // (docs/resilience-scope.md's "Circuit breaker: load-tested under sustained concurrent Kafka
+    // failure"): a call that passes kafkaPublishBreaker.tryAcquirePermission() (the breaker is
+    // CLOSED or HALF_OPEN, not yet OPEN) can still hit a genuine Kafka-client-level failure --
+    // confirmed live via a real outage: KafkaTemplate.doSend() wraps a synchronous send() failure
+    // as org.springframework.kafka.KafkaException("Send failed", cause), root cause
+    // org.apache.kafka.common.errors.TimeoutException ("Topic readings not present in metadata
+    // after <max.block.ms> ms") once the declared max.block.ms budget is exhausted. Distinct from
+    // CallNotPermittedException above and never fires for the same call: that one means the
+    // breaker was already OPEN and refused to even attempt the call; this one means the call WAS
+    // permitted, ReadingService.ingest()'s own synchronous try/catch already recorded it as a
+    // breaker failure (onError()) before rethrowing, and without this handler it fell through to
+    // Spring's own default error handling as a bare, inconsistent 500 -- the same *shape* of gap
+    // (an uncaught exception reaching an ambiguous Spring default instead of an explicit
+    // classification) as the Postgres DisconnectedClientHelper finding above, just a different
+    // hierarchy. 503, matching every other "a dependency is failing" response in this class.
+    @ExceptionHandler(KafkaException.class)
+    public ResponseEntity<ApiError> handleKafkaSendFailure(KafkaException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ApiError.of(HttpStatus.SERVICE_UNAVAILABLE.value(), "Service Unavailable",
+                        "A dependency (kafka-publish) is currently failing; try again shortly"));
     }
 
     @ExceptionHandler(ResourceNotFoundException.class)

@@ -173,12 +173,32 @@ upstream as of Loki 3.7.3.
   different breaker instances to two different code blocks within one
   method. See `docs/resilience-scope.md`'s "Circuit breaker: built"
   section for the full account, including live verification against
-  real Kafka and Postgres outages. **Correctness is fully verified
-  (sequential unit/component tests, HTTP-level fail-fast latency, live
-  outages); thread-pool protection under sustained *concurrent* load —
-  the original motivating concern — is not yet load-tested.** Don't
-  read this entry as end-to-end validated until that follow-up (scoped
-  in `resilience-scope.md`'s "Open decisions" item 4) lands.
+  real Kafka and Postgres outages. **Correctness under real concurrent
+  load is now confirmed too (2026-09-11, load-tested — see
+  `resilience-scope.md`'s "Circuit breaker: load-tested under sustained
+  concurrent Kafka failure"): hundreds of thousands of real concurrent
+  `503`s, sub-second every time, no lock contention or pile-up in
+  Resilience4j's own state machine. But the original motivating concern —
+  whether the breaker protects Tomcat's thread pool from exhaustion —
+  resolved to a real, measured "no, not by itself": under a clean
+  150-concurrent-thread load well under `server.tomcat.threads.max=200`,
+  the pool still reached its full `200/200` ceiling twice during one
+  150-second outage, in bursts tied to the breaker's own open/half-open
+  transitions — driven by calls that already passed the breaker's
+  permission check before getting stuck in Kafka's own
+  `max.block.ms`-bounded synchronous block, entirely outside the
+  breaker's control once in flight. **Resolved (2026-09-11)**:
+  `max.block.ms` shortened 60000ms → 5000ms (checked against this
+  project's real, most-scrutinized Kafka failover RTO figures — 0.098–
+  0.167s, ~30x margin — not the round number it might look like), and
+  `GlobalExceptionHandler` gained a handler for
+  `org.springframework.kafka.KafkaException` (confirmed live which class
+  is actually thrown, mapped to `503`/`ApiError` instead of a bare
+  `500`). Re-verified live against the identical 150-thread/150s-outage
+  scenario: zero time at full thread-pool saturation (was ~20–30s),
+  worst-case slow-path latency 5.9s (was ~60.8s) — see
+  `resilience-scope.md`'s dated follow-up section for the full
+  before/after.**
 - **An uncaught `DataAccessException`/`TransactionException` during a
   genuine Postgres outage can silently fabricate a `200 OK` instead of
   erroring — this is a real, confirmed gap in Spring Framework itself

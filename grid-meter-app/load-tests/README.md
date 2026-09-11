@@ -521,3 +521,60 @@ add a `whenComplete`/`ProducerListener` callback on the `send()` call so a
 delivery failure becomes a real, actionable server-side signal (a metric,
 a log line CI/alerting can catch) instead of disappearing into a discarded
 `Future`.
+
+## Kafka circuit-breaker concurrency test (`kafka-circuitbreaker-loadtest.sh`)
+
+A sixth JMeter profile (`kafka-outage-concurrent.jmx`, same shared
+`common/*.jmx` fragments and `POST /readings` sampler as the other five)
+plus a dedicated orchestrating script — not run via `run.sh`, since it
+needs to background JMeter and kill/restore the real 3-broker Kafka
+cluster mid-run, the same shape `misconfigured-spike-demo.sh` already
+uses for a two-phase scenario. Built to answer whether the
+`kafka-publish` Resilience4j circuit breaker (see
+`docs/resilience-scope.md`'s "Circuit breaker: built") actually protects
+Tomcat's thread pool under *real concurrent* Kafka failure, not just the
+sequential single-call reproduction every prior verification used.
+
+Two small Python scripts do the instrumentation:
+`kafka-cb-loadtest-poller.py` polls `api`'s own `/actuator/prometheus`
+directly at 0.2s resolution (Prometheus's own 15s `scrape_interval`,
+`observability/prometheus.yml`, is far too coarse to catch a breaker that
+can open in well under a second), and `kafka-cb-loadtest-analyze.py`
+combines that with JMeter's own `results.jtl` into a real-numbers report.
+
+Usage: `./kafka-circuitbreaker-loadtest.sh` (tunable via `THREADS`/
+`RAMP_UP`/`PRE_KILL_SECONDS`/`OUTAGE_SECONDS`/`RECOVERY_SECONDS` env
+vars — defaults are the values the real findings below were measured
+with, not placeholders). Forces a single `api` replica and reduced
+tracing sampling for the run, restored on exit via a cleanup trap.
+
+**Real findings (2026-09-11) — see `docs/resilience-scope.md`'s "Circuit
+breaker: load-tested under sustained concurrent Kafka failure" for the
+full account, including two real test-methodology bugs found and fixed
+along the way (a fixed-sleep-vs-unbounded-readiness race with the
+SetupThreadGroup's own warmup, and an initial outage duration too short
+to trigger any real breaker activity at all, mirroring the identical gap
+already documented above for `kafka-ha-demo.sh`'s own Scenario 2).**
+Short version: the breaker's own correctness holds under real concurrency
+(hundreds of thousands of real `503`s, sub-second every time, no evidence
+of pile-up). But "does the breaker protect the thread pool" resolves to a
+real, measured **no, not by itself** — under a clean, non-oversubscribed
+150-thread load (comfortably under `server.tomcat.threads.max=200`),
+`tomcat_threads_busy_threads` still reached its full `200/200` ceiling
+twice during one 150-second outage, in bursts tied precisely to the
+breaker's own open/half-open transitions — driven by calls that already
+passed the breaker's permission check before getting stuck in Kafka's
+own `max.block.ms`-bounded synchronous block, entirely outside the
+breaker's control once in flight. **Resolved (2026-09-11)**:
+`max.block.ms` shortened 60000ms → 5000ms (checked against this
+project's real Kafka failover RTO figures first — see
+`docs/resilience-scope.md`, which also corrects two RTO citations that
+didn't hold up on verification) and `GlobalExceptionHandler` gained a
+handler for the actual exception type confirmed live
+(`org.springframework.kafka.KafkaException`), mapped to `503`. Re-ran
+the identical 150-thread/150s-outage scenario after both changes: zero
+time at full thread-pool saturation (was ~20–30s across two windows),
+worst-case slow-path latency 5.9s (was ~60.8s), timeout responses now a
+real `503`/`ApiError` instead of a bare `500` — see
+`docs/resilience-scope.md`'s dated follow-up section for the full
+before/after numbers.

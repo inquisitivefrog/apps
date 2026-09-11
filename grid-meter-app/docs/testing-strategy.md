@@ -283,6 +283,20 @@ persistent client connection, a lighter-weight query) or explicitly
 reporting the real per-iteration cost alongside the result rather than
 implying more precision than the loop actually has.
 
+**A known, not-yet-fixed second instance, named explicitly so it doesn't get lost (2026-09-11)**:
+`load-tests/kafka-leader-failover-rto.sh` still polls for a new leader via the same
+`kafka-topics.sh --describe`-in-a-loop-with-a-0.5s-sleep pattern this section already found and
+fixed once, in `kafka-ha-demo.sh`'s own sibling Scenario 1 measurement (which was rebuilt around
+the log-tail approach described above). `kafka-leader-failover-rto.sh` was never given the
+equivalent fix. Its own reported RTO figure (~3.7–3.9s, `docs/postgres-ha-scope.md`'s 2026-09-03
+entry) is very likely dominated by the same measurement artifact rather than reflecting real
+election time — flagged while checking that figure against `docs/resilience-scope.md`'s
+`max.block.ms` load-test follow-up (2026-09-11), which needed a trustworthy RTO ceiling and used
+`kafka-ha-demo.sh`'s own corrected figures instead for exactly this reason, rather than trust this
+script's number at face value. **Follow-up, not yet done**: port the same log-tail measurement
+technique to `kafka-leader-failover-rto.sh` so its own reported number stops being a suspect
+figure sitting in the codebase.
+
 ## Test-infrastructure lesson: GNU-vs-BSD tooling assumptions in local chaos scripts
 
 **A third named, recurring category of test-script bug for this project

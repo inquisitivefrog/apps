@@ -75,11 +75,49 @@ spring:
       # above) -- max-block-ms is what actually bounds how long ReadingService.ingest()'s
       # kafkaTemplate.send() call can hang the calling Tomcat thread when Kafka is unreachable.
       # send() is fire-and-forget (no .get()), but the producer still blocks synchronously inside
-      # send() itself while it can't fetch fresh cluster metadata for the topic. A real Kafka
-      # stop/restart test (46s outage) showed individual requests blocking up to ~49.8s before
-      # succeeding once Kafka came back -- close to, but under, this 60s default. Written down
-      # deliberately so the ceiling this app is relying on is visible, not an unlisted default a
-      # reader would have to already know the Kafka client's internals to explain.
+      # send() itself while it can't fetch fresh cluster metadata for the topic (or, under
+      # sustained load, while it can't allocate producer-buffer space -- see the 2026-09-11 note
+      # below). A real Kafka stop/restart test (46s outage) showed individual requests blocking
+      # up to ~49.8s before succeeding once Kafka came back -- close to, but under, the original
+      # 60s default.
+      #
+      # Shortened 60000 -> 5000 (2026-09-11), per docs/resilience-scope.md's "Circuit breaker:
+      # load-tested under sustained concurrent Kafka failure" and its "Open decisions" item 5.
+      # That load test found a real, non-theoretical cost of the 60s value: under sustained
+      # concurrent failure, calls that had already passed the kafka-publish breaker's permission
+      # check before it opened could each block a Tomcat thread for the full 60s, and a batch of
+      # ~150 such calls completing near-simultaneously drove tomcat_threads_busy_threads to its
+      # full configured ceiling (200/200) -- entirely outside the breaker's own control once a
+      # call was already in flight.
+      #
+      # 5000ms was checked against this project's own real, measured Kafka partition-leader
+      # failover RTOs before picking it, not assumed safe -- specifically so a genuine, in-progress
+      # leader election (which also transiently can't resolve fresh topic metadata) is never
+      # misclassified as a stuck call. The most-scrutinized real figures, from
+      # docs/testing-strategy-ha-supplement.md's `kafka-ha-demo.sh` RTO investigation (log-tail-based,
+      # reading the controller's own internal decision timestamp -- the version of this
+      # measurement this project trusts, after finding and fixing a `kafka-topics.sh --describe`
+      # polling loop that was mostly measuring its own ~1s-per-call JVM-spawn cost, not real Kafka
+      # election time): 0.098-0.167s across 9 samples in 3 independent passes, corroborated by 3
+      # separate production runs at 0.115s/0.119s/0.155s. 5000ms clears the slowest of these
+      # (0.167s) with roughly 30x margin.
+      #
+      # A sign-off brief for this change also cited `load-tests/kafka-leader-failover-rto.sh`
+      # reporting "~2.44s"; checked and corrected before relying on it, not accepted on faith --
+      # 2.44s is actually `docs/k8s-kafka-ha-scope.md`'s k8s pod-*recreation* time (a different
+      # metric from a different investigation), not a Kafka-client-observed failover RTO.
+      # `kafka-leader-failover-rto.sh` does report its own real number (~3.7-3.9s,
+      # `docs/postgres-ha-scope.md`'s 2026-09-03 entry) -- but that script still polls via
+      # `kafka-topics.sh --describe` on a 0.5s sleep, the exact same measurement-cost pattern
+      # already found and fixed in `kafka-ha-demo.sh`'s own sibling measurement, so its ~3.7-3.9s
+      # figure is very likely dominated by the same polling artifact rather than reflecting real
+      # election time -- not yet fixed to confirm, flagged here rather than trusted. 5000ms was
+      # deliberately chosen at the higher end of the sign-off brief's suggested 3000-5000ms range
+      # specifically to stay safely clear of that unconfirmed, possibly-real 3.7-3.9s figure too,
+      # in case it turns out not to be pure measurement artifact.
+      #
+      # Re-verified live after this change: docs/resilience-scope.md's dated section covers the
+      # same 150-thread/150s-outage scenario re-run with the real before/after numbers.
       # Same treatment as max-block-ms above. This is the OTHER, separate ceiling in the send()
       # lifecycle: max.block.ms only bounds the synchronous send() call itself (metadata fetch);
       # delivery.timeout.ms bounds the producer's own background retry loop for the actual
@@ -95,7 +133,7 @@ spring:
       # so the fix landing alongside this declaration is visibility (a whenComplete callback
       # logging the failure and incrementing a counter/alert), not prevention, by design.
       properties:
-        max.block.ms: 60000
+        max.block.ms: 5000
         delivery.timeout.ms: 120000
     consumer:
       group-id: grid-meter-api
