@@ -138,6 +138,21 @@ implement it.
   Delete` — PVCs are cleaned up automatically when the StatefulSet is torn
   down, deliberately, so a torn-down demo cluster or a `terraform destroy`
   doesn't quietly leave orphaned cloud storage billing in the background.
+  **Two distinct PVC-lifecycle knobs here, verified separately, not
+  conflated**: a pod-level kill test (above) confirms `volumeClaimTemplates`
+  alone preserves data across a pod restart; a separate check — deleting
+  the StatefulSet itself on a throwaway `kind` cluster — confirmed
+  `persistentVolumeClaimRetentionPolicy.whenDeleted: Delete` actually
+  triggers PVC cleanup (all 3 PVCs `Terminating` then gone within
+  seconds), and that `kind`'s own default StorageClass's *own*
+  `reclaimPolicy: Delete` completes the chain (the PVs themselves were
+  also gone afterward, confirmed via `kubectl get pv`) — a third, separate
+  knob from either of the first two. See
+  `docs/cloud-deployment-scope.md`'s dated section for the full
+  three-knob breakdown and a real, version-dependent EKS caveat this
+  surfaced (current EKS no longer marks any StorageClass as default,
+  unlike GKE/AKS/`kind`) that the next Terraform brief needs to account
+  for.
 - **Kafka now has `topologySpreadConstraints`** (`kafka.yaml`, same pass)
   — spreads `kafka-0/1/2` across `topology.kubernetes.io/zone` so a real
   cloud deployment doesn't accidentally land all 3 brokers/controller
@@ -151,8 +166,13 @@ implement it.
   `ScheduleAnyway` spreads brokers across zones when it can and still
   schedules every pod when it can't, confirmed live via the same
   `./k8s/deploy.sh` run above — no scheduling impact on `kind` at all.
-  Revisit to `DoNotSchedule` only if a real 3+-AZ cloud deployment ever
-  needs the harder guarantee enforced rather than preferred.
+  **Stated explicitly, not left implicit**: `ScheduleAnyway` is a soft
+  *preference*, not an enforced guarantee — a real 3-AZ EKS/GKE/AKS node
+  pool should normally still achieve the intended spread under typical
+  conditions, but nothing blocks the scheduler from violating it the way
+  `DoNotSchedule` would. Revisit to `DoNotSchedule` only if a real 3+-AZ
+  cloud deployment ever needs the harder guarantee enforced rather than
+  preferred.
 - **Everything in the `default` namespace** — the vendored
   `traefik-rbac.yaml`'s `ClusterRoleBinding` hardcodes
   `namespace: default` for the Traefik `ServiceAccount`; using a custom

@@ -380,10 +380,11 @@ assumed:**
     `apache/kafka:4.3.1` image (a standalone container run with both env
     vars, then reading the actual generated `server.properties`) that
     both translate correctly, not assumed from the `KAFKA_<DOTTED_PROPERTY>`
-    pattern other vars in the file already use. `persistentVolumeClaimRetentionPolicy.whenDeleted:
-    Delete` — PVCs don't outlive a torn-down StatefulSet, since an
-    orphaned PVC would be a real, easy-to-miss cost leak on a real cloud
-    account, not a safety net worth having by default here.
+    pattern other vars in the file already use.
+    `persistentVolumeClaimRetentionPolicy.whenDeleted: Delete` — PVCs
+    don't outlive a torn-down StatefulSet, since an orphaned PVC would be
+    a real, easy-to-miss cost leak on a real cloud account, not a safety
+    net worth having by default here.
   - **`topologySpreadConstraints`**, keyed on `topology.kubernetes.io/zone`,
     `maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway` — a deliberate
     choice over the stricter `DoNotSchedule`, named explicitly rather than
@@ -391,22 +392,77 @@ assumed:**
     `Pending` on any cluster without 3 real zones available, which
     includes `kind`'s own single node. `ScheduleAnyway` spreads brokers
     across zones when it can and still schedules every pod when it can't.
-    Revisit to `DoNotSchedule` only if a real 3+-AZ cloud deployment ever
-    needs the harder guarantee enforced rather than preferred.
-  - **Live-verified together**, not just applied: a full `./k8s/deploy.sh`
-    run against a fresh `kind` cluster succeeded (all 3 Kafka pods
-    `Running`, all 3 PVCs `Bound` at 12Gi with `Delete` reclaim policy,
-    zero scheduling impact from the spread constraint on a single-node
-    cluster); a real functional check (login → create meter → ingest a
-    reading → confirmed it landed) passed; and a `kubectl delete pod
-    kafka-0` kill test confirmed the *same* PV (`pvc-91ac2cd9-...`,
-    checked by name before and after) re-attached to the recreated pod —
-    not a fresh empty one — with the previously-ingested reading still
-    queryable afterward and real on-disk log data present at the mounted
-    path. `k8s/README.md`'s "Deliberate simplifications" section updated
-    to record both additions and why `kind` itself is unaffected in
-    spirit despite technically gaining incidental persistence within a
-    cluster's own lifetime.
+    **Worth being explicit about the tradeoff this accepts, not just the
+    reasoning behind it**: `ScheduleAnyway` is a soft *preference*, not an
+    enforced guarantee — on a real 3-AZ EKS/GKE/AKS node pool it should
+    normally still achieve the intended 1-broker-per-zone spread under
+    typical scheduling conditions, but nothing *forces* that the way
+    `DoNotSchedule` would; a busy or unbalanced node pool could still land
+    two brokers in the same zone without the scheduler being blocked from
+    doing so. Accepted deliberately (see the `kind`-compatibility reasoning
+    above), not something to assume is a hard guarantee later. Revisit to
+    `DoNotSchedule` only if a real 3+-AZ cloud deployment ever needs the
+    harder guarantee enforced rather than preferred.
+  - **Two separate PVC-lifecycle questions, live-verified independently,
+    not conflated** — worth being precise here, since these are genuinely
+    different knobs with a real cost consequence if confused:
+    1. **Does a pod restart preserve its data?** Yes — a `kubectl delete
+       pod kafka-0` kill test confirmed the *same* PV
+       (`pvc-91ac2cd9-...`, checked by name before and after) re-attached
+       to the recreated pod, not a fresh empty one, with a
+       previously-ingested reading still queryable afterward and real
+       on-disk log data present at the mounted path. This exercises
+       `volumeClaimTemplates` alone, not
+       `persistentVolumeClaimRetentionPolicy`.
+    2. **Does deleting the StatefulSet itself clean up its PVCs, or leak
+       them?** This is `persistentVolumeClaimRetentionPolicy.whenDeleted`'s
+       own job specifically, and it was *not* actually exercised by the
+       pod-kill test above — a real gap in the original verification,
+       caught on review rather than assumed closed. Checked directly, in
+       a dedicated pass, on a throwaway `kind` cluster running only this
+       manifest: all 3 PVCs (`Bound`, 12Gi each) transitioned to
+       `Terminating` and were fully deleted within seconds of
+       `kubectl delete statefulset kafka` — confirming the
+       `whenDeleted: Delete` policy genuinely triggers PVC cleanup, not
+       just a config value that looks right on paper.
+    3. **Does deleting the PVC also delete the underlying disk, or just
+       orphan it?** A third, distinct knob — the *StorageClass's own*
+       `reclaimPolicy` (separate from both of the above; this is the one
+       that actually governs whether real cloud storage cost stops
+       accruing). Checked directly in the same pass: once the 3 PVCs
+       were deleted, `kubectl get pv` showed zero remaining `PersistentVolume`
+       objects — `kind`'s default `standard` StorageClass's own
+       `reclaimPolicy: Delete` completed the chain, so nothing was
+       orphaned on `kind`. **This one doesn't automatically carry over to
+       a real cloud cluster and needs its own confirmation there** — see
+       the note immediately below.
+  - **A real, concrete finding for the next (Terraform) brief, not just a
+    caveat**: checked current AWS/GKE/AKS documentation (not live-verified
+    against a real cluster, since none exists yet) for what each cloud's
+    *default* StorageClass actually is, since this manifest deliberately
+    leaves `storageClassName` unset to use whichever one a cluster marks
+    as its own default. GKE and AKS both reliably auto-provision and
+    auto-mark a default StorageClass (`standard`/`managed-csi`
+    respectively), each with `reclaimPolicy: Delete` — consistent with
+    this manifest's own assumption. **EKS is the one exception, and it's
+    version-dependent, not a settled fact**: EKS historically auto-created
+    and marked a default `gp2` StorageClass (`reclaimPolicy: Delete`,
+    matching the others) — but **as of EKS 1.30, AWS stopped marking any
+    StorageClass as default automatically**. A PVC with no
+    `storageClassName` (exactly what this manifest does) would fail to
+    bind at all on a fresh, current EKS cluster unless the cluster setup
+    explicitly creates and marks a default StorageClass — a real
+    prerequisite for the AWS-first Terraform work this doc's own
+    sequencing calls for next, not something to discover mid-`apply`.
+  - **Live-verified together (the deploy/functional/kill-test pass)**, not
+    just applied: a full `./k8s/deploy.sh` run against a fresh `kind`
+    cluster succeeded (all 3 Kafka pods `Running`, all 3 PVCs `Bound` at
+    12Gi, zero scheduling impact from the spread constraint on a
+    single-node cluster); a real functional check (login → create meter →
+    ingest a reading → confirmed it landed) passed. `k8s/README.md`'s
+    "Deliberate simplifications" section updated to record both additions
+    and why `kind` itself is unaffected in spirit despite technically
+    gaining incidental persistence within a cluster's own lifetime.
 
 **Net result**: the manifest-reuse assumption holds for Kafka now that
 both gaps are closed, was never really in question for Postgres (which
