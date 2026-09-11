@@ -8,9 +8,32 @@
 # (kafka-0.kafka-headless, etc.) instead of one shared, round-robining VIP -- exactly what a
 # quorum voter list needs and a plain Deployment+Service structurally cannot provide.
 #
-# Storage stays ephemeral (no volumeClaimTemplates) per the existing slice's documented decision
-# (k8s-terraform-decisions-2026-08-19.md) -- StatefulSet is adopted here purely for its identity/
-# DNS guarantees, not (the more common reason) per-pod persistent storage.
+# Storage stays ephemeral in the LOCAL kind deployment (k8s-terraform-decisions-2026-08-19.md's
+# "not modeling data durability" call) -- StatefulSet was originally adopted here purely for its
+# identity/DNS guarantees, not (the more common reason) per-pod persistent storage. `kind`'s own
+# node is itself ephemeral, so a real PVC there wouldn't buy any actual durability anyway.
+#
+# volumeClaimTemplates added 2026-09-11 (docs/cloud-deployment-scope.md's gating read-through) --
+# real cloud data shouldn't vanish on an ordinary pod restart the way an interview-demo kind
+# cluster's can, so a cloud deployment needs real per-pod persistent storage this local track never
+# did. See k8s/README.md's "Deliberate simplifications" for why kind itself is intentionally left
+# unchanged (this section documents the cloud-only addition, not a retroactive local requirement).
+#
+# Size (12Gi per broker) derived from this project's own real measured throughput, not a round
+# guess: steady-state.jmx's real validated rate (load-tests/README.md) is ~95 readings/s. A
+# serialized ReadingEvent (id/meterId/readingTimestamp/receivedAt/value/idempotencyKey) measures
+# ~253 bytes as JSON; add the ~36-byte UUID key (meterId, keyed for partition routing) and Kafka's
+# own per-record log-format overhead (record-batch headers, varint offset/timestamp deltas --
+# roughly 60 bytes for a reasonably-batched record) for ~350 bytes/record on disk. With
+# replicas=3 == broker count, every broker holds a full copy of every partition (RF=3 across 3
+# brokers means 3 replicas/broker for 3 partitions), so per-broker volume is the FULL logical
+# topic size, not divided by partition count. log.retention.hours declared explicitly at 72 (3
+# days) below -- a real, demo-appropriate choice (enough history to walk through in an interview,
+# not a production retention policy), not left as Kafka's own undeclared 168-hour (7-day) default,
+# matching this project's standing "declare it, don't rely on an implicit default" discipline.
+# 95/s x 350B x 259200s (72h) ~= 8.6 GB raw log data per broker; +~20-30% headroom for index files
+# (offset/time index) and in-flight, not-yet-deleted segments past the nominal retention boundary
+# ~= ~10.5-11 GB -- rounded up to a clean 12Gi per broker.
 #
 # No separate plain "kafka" Service -- the headless Service's per-pod DNS names are used directly
 # for bootstrap (SPRING_KAFKA_BOOTSTRAP_SERVERS lists all three by name), matching how
@@ -46,6 +69,35 @@ spec:
       labels:
         app: kafka
     spec:
+      # AZ spread added 2026-09-11 (docs/cloud-deployment-scope.md's gating read-through) --
+      # `kind` is effectively single-node, so broker placement across failure domains was never a
+      # live question for the local track; a real EKS/GKE/AKS deployment should spread kafka-0/1/2
+      # across zones so losing one AZ can't take down more than one voter/broker at a time (the
+      # same "one loss, majority survives" reasoning docs/ha-scope.md already established for the
+      # controller-quorum count itself, just applied to physical placement instead of replica
+      # count). topology.kubernetes.io/zone is the standard node label populated by all three
+      # clouds' own cluster-autoscaler/managed node groups.
+      #
+      # whenUnsatisfiable: ScheduleAnyway, not DoNotSchedule -- a deliberate choice, not a default
+      # left unpicked. DoNotSchedule is the stricter, more "correct" HA guarantee (a pod simply
+      # won't schedule somewhere that violates the spread), but it can leave a pod permanently
+      # Pending on any cluster with fewer than 3 zones available -- confirmed this is a real risk
+      # for exactly the cluster this manifest also has to keep working on: `kind`'s single node
+      # doesn't carry meaningful topology.kubernetes.io/zone diversity at all, so a hard constraint
+      # here would risk the local deployment target docs/cloud-deployment-scope.md's own "two
+      # tracks, not a replacement" framing explicitly commits to keeping fully working. ScheduleAnyway
+      # is a best-effort preference instead: the scheduler favors spreading brokers across zones
+      # when it can, but still places every pod when it can't (a single-node kind cluster, a
+      # 2-AZ-only cloud region) rather than blocking the whole StatefulSet from ever becoming
+      # Ready. Revisit to DoNotSchedule if a real 3+-AZ cloud deployment ever needs the harder
+      # guarantee enforced rather than preferred.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: kafka
       containers:
         - name: kafka
           image: apache/kafka:4.3.1
@@ -104,9 +156,55 @@ spec:
               value: "2"
             - name: KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE
               value: "false"
+            # log.dirs/log.retention.hours -- confirmed live against the real apache/kafka:4.3.1
+            # image (a standalone container run with these exact env vars, then reading the
+            # actual generated /opt/kafka/config/server.properties) that this translates correctly
+            # rather than assumed from the KAFKA_<DOTTED_PROPERTY> pattern other vars in this file
+            # already use. A path under /var/lib rather than the image's own unlisted default
+            # (/tmp/kraft-combined-logs) -- deliberately declared, not left as an implicit default
+            # now that this directory is backed by a real PVC below and genuinely needs to survive
+            # a pod restart; mounting a PVC at a path literally named /tmp would be confusing even
+            # though it would still technically work. 72 hours (3 days), not Kafka's own unlisted
+            # 168-hour (7-day) default -- see the volumeClaimTemplates comment above for the full
+            # sizing reasoning this retention window feeds directly into.
+            - name: KAFKA_LOG_DIRS
+              value: /var/lib/kafka/data
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "72"
           ports:
             - containerPort: 9092
             - containerPort: 9093
           resources:
             limits:
               memory: 768Mi
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+  # storageClassName deliberately left unset on the PVC template -- uses whichever StorageClass
+  # each cluster has marked as its own default, keeping this one manifest portable across kind
+  # (local-path-provisioner), EKS (gp2/gp3), GKE (pd-standard/pd-balanced), and AKS (managed-csi)
+  # rather than hardcoding one cloud's class name into a file docs/cloud-deployment-scope.md
+  # already commits to reusing verbatim everywhere. Confirmed this doesn't break the existing
+  # kind deployment: kind ships local-path-provisioner as its own default StorageClass, so a PVC
+  # with no storageClassName still binds and provisions successfully there -- not a no-op exactly
+  # (kind's node-local hostPath volume now technically outlives a pod restart too), but not a
+  # breaking change to the local track either, which stays "not modeling data durability" in
+  # spirit since a `kind delete cluster` still discards it along with the whole node.
+  #
+  # persistentVolumeClaimRetentionPolicy.whenDeleted: Delete (not the k8s default, Retain) --
+  # confirmed as a deliberate choice, not an oversight: this project already treats a torn-down
+  # `kind` cluster and (per cloud-deployment-scope.md's own cost-awareness section) a
+  # `terraform destroy` between interview uses as normal, expected teardown, not an accident to
+  # guard against -- an orphaned PVC silently outliving the StatefulSet it belonged to would be a
+  # real, easy-to-miss cost leak on a real cloud account, the opposite of protecting anything.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 12Gi

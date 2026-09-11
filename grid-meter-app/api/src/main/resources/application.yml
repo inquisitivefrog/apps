@@ -290,24 +290,59 @@ grid-meter:
 # Sentinel promotes a replica -- no separate routing/proxy layer needed the way Postgres needed
 # Traefik + Consul Catalog, since Sentinel awareness lives in the client itself here.
 #
-# Gated behind "!test" (active everywhere EXCEPT ComponentTestSupport's @ActiveProfiles("test")
-# component tests), not applied unconditionally: Spring Boot's relaxed config binding builds a
-# non-null RedisProperties.Sentinel the moment ANY spring.data.redis.sentinel.* key is present
-# ANYWHERE in the merged environment, regardless of value -- which makes RedisAutoConfiguration
-# choose Sentinel mode unconditionally over the standalone host/port ComponentTestSupport tries to
-# register via a real Testcontainers Redis. This silently broke every component test touching
-# Redis (found while building docs/idempotency-scope.md's tests): every write failed trying to
-# reach a Sentinel at localhost:26379, which doesn't exist in the test environment, since
-# ComponentTestSupport only starts a single plain Redis container. This app's own Sentinel/failover
-# behavior is validated separately, against a real docker-compose stack via redis-cli/chaos
-# scripts (docs/redis-ha-scope.md) -- not by this Testcontainers-based component-test layer, whose
-# job is exercising the app's own logic against real dependencies, not re-proving Sentinel itself.
+# Gated behind "!test & !cloud" (active everywhere EXCEPT ComponentTestSupport's
+# @ActiveProfiles("test") component tests and the new "cloud" profile below), not applied
+# unconditionally: Spring Boot's relaxed config binding builds a non-null RedisProperties.Sentinel
+# the moment ANY spring.data.redis.sentinel.* key is present ANYWHERE in the merged environment,
+# regardless of value -- which makes RedisAutoConfiguration choose Sentinel mode unconditionally
+# over the standalone host/port ComponentTestSupport tries to register via a real Testcontainers
+# Redis. This silently broke every component test touching Redis (found while building
+# docs/idempotency-scope.md's tests): every write failed trying to reach a Sentinel at
+# localhost:26379, which doesn't exist in the test environment, since ComponentTestSupport only
+# starts a single plain Redis container. This app's own Sentinel/failover behavior is validated
+# separately, against a real docker-compose stack via redis-cli/chaos scripts
+# (docs/redis-ha-scope.md) -- not by this Testcontainers-based component-test layer, whose job is
+# exercising the app's own logic against real dependencies, not re-proving Sentinel itself.
+#
+# "!cloud" added 2026-09-11 (docs/cloud-deployment-scope.md's gating read-through): a managed
+# cloud Redis (ElastiCache/Memorystore/Azure Cache) is a single endpoint that survives failover
+# via DNS, not client-side Sentinel discovery -- it has no Sentinel process to discover at all, so
+# activating this block against one would be a hard startup failure (Lettuce trying to reach a
+# nonexistent Sentinel), the exact same shape of gap the component-test fix above already worked
+# around for a different reason. See the "cloud" profile block below for the counterpart.
 spring:
   config:
     activate:
-      on-profile: "!test"
+      on-profile: "!test & !cloud"
   data:
     redis:
       sentinel:
         master: ${SPRING_REDIS_SENTINEL_MASTER:mymaster}
         nodes: ${SPRING_REDIS_SENTINEL_NODES:localhost:26379}
+
+---
+# Cloud profile counterpart to the Sentinel block above: a real managed Redis endpoint
+# (ElastiCache/Memorystore/Azure Cache) needs a plain host/port connection, never Sentinel --
+# confirmed against Spring Boot 4.1.0's real DataRedisConnectionConfiguration source (not assumed
+# from the property name alone, per this project's standing "verify the live binding" discipline,
+# same as the SPRING_DATA_REDIS_HOST/PORT rename found during the k8s Kafka HA pass): the
+# connection Mode is STANDALONE precisely when getSentinelConfig() returns null, which it does the
+# moment spring.data.redis.sentinel.master/.nodes are absent from the merged environment -- there
+# is no separate "standalone mode" flag to set, only "the absence of Sentinel config" to arrange,
+# which is exactly what the "!test & !cloud" gate above achieves for this profile. host/port
+# (not a nested block) are the correct top-level property names for Spring Boot 4.1's
+# DataRedisProperties (@ConfigurationProperties("spring.data.redis")), confirmed via javap against
+# the real spring-boot-data-redis-4.1.0.jar, not carried over by assumption from the pre-4.x
+# RedisProperties class this project already found renamed once. No local cluster exists yet to
+# validate a real managed-Redis failover against this profile -- that's expected at this stage
+# (docs/cloud-deployment-scope.md), not a gap; RedisCloudProfileComponentTest confirms the
+# connection factory itself boots in standalone mode (not Sentinel) and can actually ping a
+# real endpoint, not a live cloud failover.
+spring:
+  config:
+    activate:
+      on-profile: "cloud"
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST}
+      port: ${SPRING_DATA_REDIS_PORT:6379}

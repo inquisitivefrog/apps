@@ -102,11 +102,57 @@ implement it.
 
 ## Deliberate simplifications
 
-- **No PersistentVolumeClaim for postgres/kafka** — ephemeral, writing to
+- **No PersistentVolumeClaim for postgres** — still ephemeral, writing to
   the container's own filesystem layer. `kind` clusters are themselves
   ephemeral, so this isn't modeling real data durability either way; not a
   silent gap, a deliberate scope cut for this slice (see
-  `docs/k8s-terraform-decisions-2026-08-19.md`).
+  `docs/k8s-terraform-decisions-2026-08-19.md`). Unchanged by the Kafka
+  entry below — Postgres in this local slice remains a plain `Deployment`
+  with no PVC; a managed Postgres (RDS/Cloud SQL/Azure DB) is the cloud
+  track's own answer to this same durability question instead
+  (`docs/cloud-deployment-scope.md`), not a PVC on this manifest.
+- **Kafka now has real `volumeClaimTemplates`** (`kafka.yaml`, added
+  2026-09-11 per `docs/cloud-deployment-scope.md`'s gating read-through) —
+  a deliberate reversal of this slice's original ephemeral-storage call,
+  scoped specifically to Kafka because that's the one data-tier layer the
+  cloud track self-hosts rather than replaces with a managed service
+  (Postgres and Redis both become managed services in the cloud, so
+  neither needed this treatment). Real cloud data shouldn't vanish on an
+  ordinary pod restart the way an interview-demo `kind` cluster's can.
+  Confirmed this doesn't break the local `kind` deployment: `kind` ships
+  `local-path-provisioner` as its default `StorageClass`, so the PVCs
+  bind and provision there too — live-verified via a full `./k8s/deploy.sh`
+  run, a real functional check (login → create meter → ingest a reading →
+  confirmed it landed), and a `kubectl delete pod kafka-0` kill test
+  confirming the same PV re-attached to the recreated pod (not a fresh
+  one) with the previously-ingested reading still queryable afterward.
+  This is a genuine, if incidental, upgrade for the local track too (a
+  restarted `kafka-N` pod no longer loses its log segments within a
+  cluster's lifetime), not just a cloud-only addition — though a
+  `kind delete cluster` still discards everything along with the node,
+  same as always. Size (12Gi/broker) and retention (72h, newly declared
+  via `KAFKA_LOG_RETENTION_HOURS` rather than left at Kafka's own
+  undeclared 168-hour default) are both derived from this project's real
+  measured throughput — see the manifest's own comment for the full
+  back-of-envelope reasoning. `persistentVolumeClaimRetentionPolicy.whenDeleted:
+  Delete` — PVCs are cleaned up automatically when the StatefulSet is torn
+  down, deliberately, so a torn-down demo cluster or a `terraform destroy`
+  doesn't quietly leave orphaned cloud storage billing in the background.
+- **Kafka now has `topologySpreadConstraints`** (`kafka.yaml`, same pass)
+  — spreads `kafka-0/1/2` across `topology.kubernetes.io/zone` so a real
+  cloud deployment doesn't accidentally land all 3 brokers/controller
+  voters in one availability zone, where losing that single zone could
+  take out more than the "one loss, majority survives" margin
+  `docs/ha-scope.md` already designed the 3-broker quorum around.
+  `whenUnsatisfiable: ScheduleAnyway`, not the stricter `DoNotSchedule` —
+  a deliberate choice: `DoNotSchedule` risks pods stuck permanently
+  `Pending` on any cluster without 3 real zones available, which would
+  include `kind`'s own single node (no meaningful zone diversity at all).
+  `ScheduleAnyway` spreads brokers across zones when it can and still
+  schedules every pod when it can't, confirmed live via the same
+  `./k8s/deploy.sh` run above — no scheduling impact on `kind` at all.
+  Revisit to `DoNotSchedule` only if a real 3+-AZ cloud deployment ever
+  needs the harder guarantee enforced rather than preferred.
 - **Everything in the `default` namespace** — the vendored
   `traefik-rbac.yaml`'s `ClusterRoleBinding` hardcodes
   `namespace: default` for the Traefik `ServiceAccount`; using a custom

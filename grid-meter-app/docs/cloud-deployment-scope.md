@@ -282,3 +282,142 @@ This does not change the *local* HA scope decision itself — Kafka-first,
 self-hosted, Redis/Postgres deferred — the local track keeps its own
 independent purpose (hands-on re-familiarization, see "Two tracks" above)
 regardless of what the cloud track does with managed services.
+
+## Gating read-through: app/manifest readiness for AWS-first work (2026-09-11)
+
+Before any Terraform work starts, this doc's own manifest-reuse assumption
+("the same manifests running on `kind`, EKS, GKE, and AKS alike") needed a
+fresh check against the actual live system, not recalled from when this
+doc was first written (2026-08-27) — both `k8s-kafka-ha-scope.md` and
+`k8s-redis-ha-scope.md` have added real StatefulSet/entrypoint-script
+complexity since then that this doc never re-examined.
+
+**The reuse claim only ever applied to Kafka, not the whole data tier —
+worth stating precisely, since it reframes what actually needed
+checking.** Per this doc's own per-layer strategy above: Postgres and
+Redis both become *managed* services in the cloud
+(RDS/Cloud SQL/Azure DB; ElastiCache/Memorystore/Azure Cache) — neither
+`postgres-ha-scope.md`'s Patroni+Consul work nor `k8s-redis-ha-scope.md`'s
+Sentinel StatefulSet work ports to cloud at all; both get replaced
+outright. Real, valuable work for the local track's own stated purpose,
+but not part of what cloud deployment reuses. Kafka is the only layer
+where manifest reuse is actually claimed, so it's the only layer where
+"does the manifest port cleanly" was the right question to ask.
+
+**Findings, checked live against the actual code and manifests, not
+assumed:**
+
+- **Postgres — confirmed clean, no work needed.** `spring.datasource.url`
+  (`application.yml`) is `${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/gridmeter}`
+  — a fully generic env var with nothing Traefik/Patroni-specific baked
+  into the app itself; pointing it at a real RDS/Cloud SQL/Azure DB
+  connection string needs zero code change. `PrimaryFailoverSQLExceptionOverride`
+  (the HikariCP eviction rule postgres-ha-scope.md's Stage 7 added) is
+  also generic — read directly, not assumed: it only checks for
+  Postgres's raw `25006` (read-only-transaction) SQLState, with no
+  Patroni or Traefik awareness anywhere in the actual code, only in the
+  Javadoc's explanation of why it was originally needed. Should carry
+  over to a managed-Postgres failover as-is. One honest, explicitly-named
+  caveat: that's a reasonable expectation, not yet *live*-verified against
+  a real RDS/Cloud SQL failover specifically, since none exists yet —
+  worth confirming once one does, not a blocker before then.
+- **Redis — a real gap, now closed.** `spring.data.redis.sentinel.master`/
+  `.nodes` was gated `on-profile: "!test"` — active in *every* profile
+  except the Testcontainers-only `test` profile, with no third mode for a
+  managed single-endpoint Redis at all. Confirmed directly in
+  `ComponentTestSupport`: the only place a plain `spring.data.redis.host`/
+  `port` was ever set was that test class's own `@DynamicPropertySource`,
+  not usable for a real deployment. **Built**: a new `cloud` Spring
+  profile. The Sentinel block's gate changed to `!test & !cloud`; a new
+  `on-profile: "cloud"` block sets plain `spring.data.redis.host`/`port`
+  from `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT`. Property names
+  confirmed against the real `spring-boot-data-redis-4.1.0.jar` via
+  `javap` (`@ConfigurationProperties("spring.data.redis")`, plain `host`/
+  `port` fields), not carried over by assumption from the pre-4.x
+  `RedisProperties` class this project already found renamed once. The
+  actual mode-selection mechanism was also confirmed against Spring Boot
+  4.1's real source (`DataRedisConnectionConfiguration.determineMode()`):
+  `Mode.STANDALONE` is chosen precisely because `getSentinelConfig()`
+  returns `null`, which it does the moment no `spring.data.redis.sentinel.*`
+  key exists in the merged environment — exactly what the `!cloud` gate
+  arranges, not a separate "standalone mode" flag to set. New
+  `RedisCloudProfileComponentTest` (its own dedicated Postgres/Kafka/Redis
+  Testcontainers, since it needs `@ActiveProfiles("cloud")` rather than
+  `ComponentTestSupport`'s hardcoded `"test"`) confirms the actual wiring:
+  `LettuceConnectionFactory.isRedisSentinelAware()` is `false`, a real
+  `RedisStandaloneConfiguration` is built with the expected host/port, and
+  a real `PING`/`PONG` round-trip succeeds against a live (if
+  Testcontainers-provided, not yet cloud-provided) endpoint. No local
+  cluster exists yet to validate a real managed-Redis failover against
+  this profile — expected and fine at this stage, per this brief's own
+  scoping; the deliverable here is the app being *capable* of running
+  against a single endpoint, not a live cloud validation.
+- **Kafka — bootstrap-servers config already fine; two real manifest gaps,
+  now closed.** `spring.kafka.bootstrap-servers` is `${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}`
+  — already portable to a cloud broker list with no code change. But
+  `k8s/kafka.yaml` had zero `volumeClaimTemplates` (fully ephemeral, per
+  the original `kind`-slice decision) and zero `affinity`/
+  `topologySpreadConstraints` (no AZ-spread mechanism at all) — both
+  confirmed by reading the live manifest directly, not assumed from the
+  original slice's own age. **Built and live-verified against a real
+  `kind` cluster** (not just applied and trusted):
+  - **`volumeClaimTemplates`**, 12Gi per broker, `ReadWriteOnce`,
+    `storageClassName` deliberately left unset (uses each cluster's own
+    default — `local-path-provisioner` on `kind`, whatever EKS/GKE/AKS
+    provisions later — keeping the one manifest portable rather than
+    hardcoding a cloud-specific class name). Size derived from this
+    project's own real measured throughput, not a round guess:
+    `steady-state.jmx`'s validated ~95 readings/s, a ~253-byte serialized
+    `ReadingEvent` plus key and Kafka's own per-record log overhead
+    (~350 bytes/record on disk), 72 hours of retention (`KAFKA_LOG_RETENTION_HOURS`,
+    newly declared rather than left at Kafka's own undeclared 168-hour
+    default — a real, demo-appropriate choice, not a production retention
+    policy), and RF=3 across 3 brokers meaning every broker holds a full
+    copy of the topic (not divided by partition count) — ~8.6GB raw,
+    rounded up with headroom to 12Gi. `KAFKA_LOG_DIRS` also declared
+    explicitly (`/var/lib/kafka/data`, not the image's own unlisted
+    `/tmp/kraft-combined-logs` default) — confirmed live against the real
+    `apache/kafka:4.3.1` image (a standalone container run with both env
+    vars, then reading the actual generated `server.properties`) that
+    both translate correctly, not assumed from the `KAFKA_<DOTTED_PROPERTY>`
+    pattern other vars in the file already use. `persistentVolumeClaimRetentionPolicy.whenDeleted:
+    Delete` — PVCs don't outlive a torn-down StatefulSet, since an
+    orphaned PVC would be a real, easy-to-miss cost leak on a real cloud
+    account, not a safety net worth having by default here.
+  - **`topologySpreadConstraints`**, keyed on `topology.kubernetes.io/zone`,
+    `maxSkew: 1`, `whenUnsatisfiable: ScheduleAnyway` — a deliberate
+    choice over the stricter `DoNotSchedule`, named explicitly rather than
+    picked silently: `DoNotSchedule` risks a pod stuck permanently
+    `Pending` on any cluster without 3 real zones available, which
+    includes `kind`'s own single node. `ScheduleAnyway` spreads brokers
+    across zones when it can and still schedules every pod when it can't.
+    Revisit to `DoNotSchedule` only if a real 3+-AZ cloud deployment ever
+    needs the harder guarantee enforced rather than preferred.
+  - **Live-verified together**, not just applied: a full `./k8s/deploy.sh`
+    run against a fresh `kind` cluster succeeded (all 3 Kafka pods
+    `Running`, all 3 PVCs `Bound` at 12Gi with `Delete` reclaim policy,
+    zero scheduling impact from the spread constraint on a single-node
+    cluster); a real functional check (login → create meter → ingest a
+    reading → confirmed it landed) passed; and a `kubectl delete pod
+    kafka-0` kill test confirmed the *same* PV (`pvc-91ac2cd9-...`,
+    checked by name before and after) re-attached to the recreated pod —
+    not a fresh empty one — with the previously-ingested reading still
+    queryable afterward and real on-disk log data present at the mounted
+    path. `k8s/README.md`'s "Deliberate simplifications" section updated
+    to record both additions and why `kind` itself is unaffected in
+    spirit despite technically gaining incidental persistence within a
+    cluster's own lifetime.
+
+**Net result**: the manifest-reuse assumption holds for Kafka now that
+both gaps are closed, was never really in question for Postgres (which
+isn't reused, just replaced), and needed genuinely new app-level work for
+Redis (also not reused/replaced by a manifest — replaced by a managed
+service, but the *app* needed a real code path to speak to it) which is
+now built and verified. Full test suite: 92/92 green (91 pre-existing +
+`RedisCloudProfileComponentTest`).
+
+**Explicitly out of scope for this pass, per its own brief**: no
+`terraform/aws/` scaffolding, no real cloud provisioning, and no live
+validation of the `cloud` Redis profile against an actual managed-Redis
+failover (nothing to fail over to yet). This closes the app/manifest-
+readiness gap only — Terraform itself is the next brief.
