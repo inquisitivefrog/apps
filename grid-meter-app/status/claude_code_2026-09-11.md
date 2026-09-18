@@ -86,25 +86,95 @@ approved follow-up (fix the gap, re-verify).
   cost" standing lesson naming this as a known, unfixed second instance, so it doesn't sit
   forgotten in a status log alone.
 
+**Committed as one combined commit, not the two recommended above**: `d227150` — "Load-test
+kafka-publish circuit breaker under concurrent failure, fix the gap it found" — covers both phases
+(the load-test build/finding and the fix/re-verification) in a single commit rather than split.
+Pushed to `origin/main`.
+
+## Done — cloud-deployment gating read-through: closed the app/manifest-readiness gaps ahead of Terraform
+
+Picked up `docs/cloud-deployment-scope.md`'s own stated blocker before any Terraform work starts:
+re-check the doc's "the same manifests running on `kind`, EKS, GKE, and AKS alike" reuse claim
+against the actual current code, not recalled from when the doc was first written (2026-08-27) —
+`k8s-kafka-ha-scope.md` and `k8s-redis-ha-scope.md` have both added real complexity since then that
+the cloud doc never re-examined.
+
+- **Scoped precisely first**: the reuse claim only ever applied to Kafka. Postgres and Redis both
+  become *managed* cloud services (RDS/Cloud SQL/Azure DB; ElastiCache/Memorystore/Azure Cache) per
+  the doc's own per-layer strategy — neither Patroni+Consul nor the Sentinel StatefulSet work ports
+  to cloud at all, so only Kafka's manifest reuse was actually the right thing to check.
+- **Postgres — confirmed clean, no code change needed**: `SPRING_DATASOURCE_URL` and
+  `PrimaryFailoverSQLExceptionOverride` are both fully generic (read directly, not assumed) — no
+  Patroni/Traefik awareness baked in anywhere. Carries over to managed Postgres as-is (not yet
+  live-verified against a real RDS/Cloud SQL failover, since none exists yet — flagged as a real,
+  not-yet-closed caveat, not a blocker).
+- **Redis — a real gap, closed**: `spring.data.redis.sentinel.*` was active in every profile except
+  `test`, with no third mode for a managed single-endpoint Redis at all. Added a new `cloud` Spring
+  profile (`!test & !cloud` gates Sentinel; a new `on-profile: "cloud"` block sets plain
+  `spring.data.redis.host`/`port`). Property names and the actual mode-selection mechanism confirmed
+  against the real `spring-boot-data-redis-4.1.0.jar` and Spring Boot 4.1's real source, not assumed.
+  New `RedisCloudProfileComponentTest` confirms standalone mode, a real `RedisStandaloneConfiguration`,
+  and a live `PING`/`PONG` round-trip.
+- **Kafka — bootstrap-servers config already fine; two real manifest gaps, now closed and
+  live-verified against a real `kind` cluster**: `k8s/kafka.yaml` had zero `volumeClaimTemplates`
+  (fully ephemeral) and zero AZ-spread mechanism. Added `volumeClaimTemplates` (12Gi/broker, sized
+  from this project's own measured throughput — `steady-state.jmx`'s ~95 readings/s, 72h retention,
+  RF=3 — not a guess) and `topologySpreadConstraints` (zone-keyed, `maxSkew: 1`, `ScheduleAnyway`
+  chosen explicitly over `DoNotSchedule` so `kind`'s single node never gets stuck scheduling — a
+  soft preference, not an enforced guarantee, noted explicitly). Live-verified: full `kind` deploy,
+  a real functional check, and a `kubectl delete pod` kill test confirming the same PV re-attaches
+  with data intact.
+- **Full suite: 92/92 green** (91 pre-existing + `RedisCloudProfileComponentTest`).
+- Documented in full in `docs/cloud-deployment-scope.md`'s new "Gating read-through" section.
+  Committed as `32dbef1` — "Close cloud-deployment gaps: Redis cloud profile, Kafka PVCs, Kafka AZ
+  spread" — and pushed.
+
+## Done — same-day correction: PVC lifecycle claim was imprecise, fixed and re-verified
+
+Claude Chat caught that the Kafka PVC work above had only checked `kubectl get pv`'s
+`RECLAIM POLICY` column (the StorageClass's own knob) and never actually exercised
+`persistentVolumeClaimRetentionPolicy.whenDeleted` by deleting the StatefulSet itself — three
+separate lifecycle knobs had been conflated into one "confirmed" claim.
+
+- **Verified live, on a throwaway `kind` cluster, as three distinct checks**: does a pod restart
+  preserve data (yes — same PV re-attaches, already covered above); does deleting the StatefulSet
+  itself trigger PVC cleanup (yes — `whenDeleted: Delete` confirmed for real, all 3 PVCs
+  `Terminating`→deleted within seconds); does deleting the PVC also delete the underlying disk, or
+  just orphan it (confirmed on `kind` — zero orphaned PVs afterward, `kind`'s own default
+  StorageClass `reclaimPolicy: Delete` completes the chain).
+- **A real, version-dependent gap surfaced while checking this, flagged as a prerequisite for the
+  Terraform work about to start**: GKE and AKS both reliably auto-mark a default StorageClass
+  (`reclaimPolicy: Delete`), but **EKS 1.30+ stopped auto-marking any StorageClass as default** —
+  this manifest's deliberately-unset `storageClassName` would fail to bind on a current EKS cluster
+  unless the Terraform-provisioned EKS setup explicitly creates and marks one.
+- Also added an explicit note that `topologySpreadConstraints`' `ScheduleAnyway` is a soft
+  preference, not an enforced guarantee (tightening the wording added above, not a new finding).
+- Committed as `dacb4be` — "Correct PVC reclaim-policy claim, distinguish the three lifecycle
+  knobs" — and pushed. **This is `HEAD`/`origin/main` as of this update.**
+
 ## Open
 
-- **Nothing is committed yet.** The full diff from both phases above is sitting uncommitted in the
-  working tree (see `git status` — 6 modified files, 5 new files). Live-verified and tests green,
-  per this project's own "verify before commit" standard, but not yet checked in — needs explicit
-  go-ahead before committing/pushing, per this project's standing convention of only committing on
-  request.
 - `kafka-leader-failover-rto.sh`'s own JVM-spawn-cost measurement fix — named in
   `docs/testing-strategy.md`, not yet built.
+- **The EKS default-StorageClass gap found above is a real, live prerequisite for the AWS Terraform
+  work about to start** — needs an explicit decision (create+mark a default `gp3` StorageClass as
+  part of the Terraform-provisioned EKS cluster, or set `storageClassName` explicitly in
+  `k8s/kafka.yaml` for the AWS target) before `k8s/kafka.yaml` is applied against a real EKS
+  cluster, not discovered mid-`apply`.
+- Postgres's cloud-readiness claim (`SPRING_DATASOURCE_URL` generic, carries over as-is) is
+  reasoned, not yet live-verified against a real managed-Postgres failover — nothing to fail over to
+  yet; revisit once RDS/Cloud SQL/Azure DB actually exists.
 - Everything else carried over from `status/claude_code_2026-09-10.md` and untouched this
-  session: cloud-deployment (Terraform) scope decision, Part 2/3 of `docs/testing-expansion-scope.md`
-  (HA regression promotion, multi-tenant blast-radius demo, §1.2 soak validation), §4.1/§1.5.
+  session: Part 2/3 of `docs/testing-expansion-scope.md` (HA regression promotion, multi-tenant
+  blast-radius demo, §1.2 soak validation), §4.1/§1.5.
 
 ## Next
 
-- Get explicit go-ahead to commit today's work (recommend splitting into two commits matching the
-  two phases above — the load-test build/finding, then the fix + re-verification — rather than one
-  large commit, matching this project's own "split unrelated changes" convention; these two are
-  related but temporally and logically distinct enough to read better separately).
+- **Cloud-deployment's gating read-through is now closed** — `docs/cloud-deployment-scope.md`
+  itself states "Terraform itself is the next brief." Per the doc's own sequencing: establish the
+  shared `terraform/{aws,gcp,azure}/` directory structure and naming conventions across all three
+  providers first, then build and fully validate **AWS first** (closest match to real prior
+  experience), then replicate the established pattern to GCP, then Azure.
 - Decide whether to pick up `kafka-leader-failover-rto.sh`'s measurement fix now or leave it queued.
 - Resume `docs/testing-expansion-scope.md`'s build order (paused at task #9) whenever this thread
   is closed out.
