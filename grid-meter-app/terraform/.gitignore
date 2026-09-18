@@ -1,0 +1,23 @@
+# Local .terraform directories
+**/.terraform/*
+
+# Terraform state files - never commit, contains resource IDs and sometimes secrets
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Real variable files (may contain account-specific or sensitive values) -
+# commit *.tfvars.example only, never the real *.tfvars
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# CLI config files that may contain credentials
+.terraformrc
+terraform.rc
+
+# Lock file IS committed (records exact provider versions/hashes) -
+# do not ignore .terraform.lock.hcl
