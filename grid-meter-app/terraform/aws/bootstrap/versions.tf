@@ -9,7 +9,7 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
+      source = "hashicorp/aws"
       # Current stable on the Terraform Registry as of 2026-09-17 - verified
       # directly against registry.terraform.io, not assumed.
       version = "~> 6.65"
