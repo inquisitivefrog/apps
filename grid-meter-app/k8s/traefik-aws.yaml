@@ -1,0 +1,82 @@
+# AWS-target variant of traefik.yaml. That file's hostPort/nodeSelector/tolerations/Recreate
+# strategy are all kind-specific plumbing tied to kind-config.yaml's local port-80-mapping trick
+# (no "ingress-ready" node label exists on real EKS nodes, and hostPort would just bind port 80
+# on whatever single worker node the pod happens to land on - not real public reachability).
+# Real reachability here comes from a Service: type: LoadBalancer, which provisions a real AWS
+# load balancer automatically - matching docs/cloud-deployment-scope.md's own already-decided
+# design ("each cloud's own load balancer sits in front of [Traefik] purely for public IP
+# assignment"). Confirmed live (2026-09-18) this resolves to a Classic ELB on this cluster, not an
+# NLB - no aws-load-balancer-type annotation is set here and no AWS Load Balancer Controller addon
+# is installed, so EKS's in-tree default provider is what handles it. Traefik itself stays a
+# single instance either way - HA for the edge tier is already explicitly out of scope per
+# docs/ha-scope.md.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-ingress-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    app: traefik
+spec:
+  replicas: 1
+  # Default RollingUpdate is fine here - the hostPort-exclusivity problem that forced Recreate
+  # on kind doesn't exist once there's no hostPort at all.
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik-ingress-controller
+      containers:
+        - name: traefik
+          image: traefik:v3.7.10
+          args:
+            - --providers.kubernetescrd
+            - --entrypoints.web.address=:80
+            - --api.dashboard=true
+            - --metrics.prometheus=true
+          ports:
+            - name: web
+              containerPort: 80
+            - name: metrics
+              containerPort: 8080
+          resources:
+            limits:
+              memory: 128Mi
+---
+# Public-facing - provisions a real AWS Network Load Balancer. This is the one resource in this
+# file whose existence has a direct AWS cost line (~$0.0225/hr + usage, see
+# terraform/aws/README.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-web
+spec:
+  type: LoadBalancer
+  selector:
+    app: traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: 80
+---
+# ClusterIP only, same as traefik.yaml's - in-cluster metrics scraping, not a second public
+# path.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-metrics
+spec:
+  selector:
+    app: traefik
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080

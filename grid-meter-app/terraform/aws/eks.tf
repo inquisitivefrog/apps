@@ -127,3 +127,16 @@ resource "aws_eks_addon" "coredns" {
   # the node group exists would leave it stuck Pending.
   depends_on = [aws_eks_node_group.main]
 }
+
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "metrics-server"
+
+  # Confirmed live (2026-09-18) via `aws eks describe-addon-versions` that AWS
+  # offers this as a managed addon (v0.9.0-eksbuild.11 default for 1.36) -
+  # not a raw manifest/Helm install. No IRSA needed: it reads kubelet stats
+  # over the existing Kubernetes API, never calls AWS APIs directly. Powers
+  # `kubectl top nodes/pods`, which errors with "Metrics API not available"
+  # without it.
+  depends_on = [aws_eks_node_group.main]
+}

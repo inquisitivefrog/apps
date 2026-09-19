@@ -47,9 +47,9 @@ variable "eks_node_instance_type" {
 }
 
 variable "eks_node_count" {
-  description = "Fixed node count for the managed node group (desired = min = max, no autoscaling) - matches the 'smallest viable, cost-conscious, stand-up/tear-down demo' sizing decision rather than leaving room for surprise scale-out cost."
+  description = "Fixed node count for the managed node group (desired = min = max, no autoscaling). Originally 2 for cost-conscious sizing; bumped to 3 (2026-09-18) after a real live deploy found 2 nodes genuinely overcommitted (one at 94% memory requests) once api's memory limit was corrected to a realistic value - also gives Kafka's 3 brokers a real shot at one-node-per-broker spread across the existing 3 AZs, which 2 nodes structurally couldn't provide regardless of sizing."
   type        = number
-  default     = 2
+  default     = 3
 }
 
 # --- RDS (PostgreSQL, replaces self-hosted Patroni for the cloud target) ---

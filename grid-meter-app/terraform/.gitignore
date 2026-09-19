@@ -9,6 +9,15 @@
 crash.log
 crash.*.log
 
+# Plan output files (terraform plan -out=...) - short-lived by design, can
+# contain sensitive resource attributes in plaintext, never meant to be
+# archived or committed. Covers this project's own history of one-off names
+# (gma-plan, gma-plan2, ...) as well as the conventional tfplan/plan.out.
+*.tfplan
+tfplan*
+plan.out
+gma-plan*
+
 # Real variable files (may contain account-specific or sensitive values) -
 # commit *.tfvars.example only, never the real *.tfvars
 *.tfvars

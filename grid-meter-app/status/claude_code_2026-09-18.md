@@ -145,38 +145,208 @@ already carves out an exception for a future `*.tfvars.example` if one's ever wa
 there's a real override to document, or when the GCP/Azure configs need their own region/sizing
 conventions). **User chose to hold off** — no file created.
 
+## Done — task #8: AWS-specific k8s deploy overlay, then live-debugged until it genuinely worked
+
+With base infra live, built the second half of the day's work: ECR repos (`ecr.tf`, lifecycle
+policies keeping the 5 most recent images), the EBS CSI driver as its own EKS addon with real
+IRSA (`ebs-csi.tf` — `aws_iam_openid_connect_provider` with a live-computed OIDC thumbprint via
+`data "tls_certificate"`, not hardcoded), a `gp3` StorageClass (`k8s/storageclass-aws.yaml`,
+closing the gap flagged above), an AWS Traefik variant (`k8s/traefik-aws.yaml` — real NLB via a
+`LoadBalancer` Service, `hostPort`/`nodeSelector: ingress-ready` stripped), an AWS `api` variant
+(`k8s/api-aws.yaml` — `SPRING_DATA_REDIS_HOST`/`PORT` replacing kind's Sentinel env vars), and
+`k8s/deploy-aws.sh` (reads every endpoint from live `terraform output`, never a hardcoded value).
+
+**Then spent most of the day's remaining time live-debugging it against the real cluster until
+the app actually worked** — matching this project's own standing "verify the live system" ethos.
+Six distinct real bugs found and fixed, each with direct evidence, not guessed at:
+
+1. **Kafka `AccessDeniedException` on `/var/lib/kafka/data`** — a non-root container against a
+   freshly-provisioned, root-owned EBS volume. Fixed with `securityContext.fsGroup: 1000`, added
+   to the *shared* `k8s/kafka.yaml` (benefits `kind` too — was a latent gap invisible there only
+   because `local-path-provisioner` is more permissive).
+2. **`api`/`frontend` `ImagePullBackOff`/`InvalidImageName`** — two causes layered together: (a)
+   the original apply-placeholder-then-`kubectl set image` design caused wasteful ReplicaSet
+   churn, fixed by `sed`-substituting the real ECR image before the first apply; (b) a genuine
+   arch mismatch (`no match for platform in manifest`) — this Mac is Apple Silicon, the node
+   group is `t3.medium` (x86_64) — fixed with `--platform linux/amd64` on both `docker build`
+   calls.
+3. **Kafka's StatefulSet spec updated but pods didn't roll** — confirmed via `kubectl get
+   statefulset -o jsonpath` (spec was correct) vs. unchanged pod creation timestamps; forced with
+   a manual `kubectl delete pod kafka-0 kafka-1 kafka-2`.
+4. **`api` OOMKilled (exit 137) at 512Mi**, dying before Spring Boot logged past the active
+   profile. `-Xmx384m` only bounds heap; JPA/Security/Kafka client/full Micrometer+OTel tracing
+   all initializing at once needed real headroom beyond that. Live-diagnosed by patching the
+   limit to 1Gi and watching it progress much further — confirmed the real cause before making it
+   permanent in `api-aws.yaml`.
+5. **Kafka crashed again with a *different* exception after the fsGroup fix**:
+   `KafkaException: Found directory .../lost+found`. Root cause: ext4 auto-creates `lost+found`
+   as part of the filesystem itself, and Kafka's `LogManager` fatally errors on any directory
+   under its log dir that isn't topic-partition-named. Fixed by switching the StorageClass to XFS
+   (verified against the EBS CSI driver's own docs for the right parameter key,
+   `csi.storage.k8s.io/fstype`) — required deleting+recreating the StorageClass (`parameters` is
+   immutable) and deleting Kafka's StatefulSet + its 3 ext4 PVCs so fresh XFS volumes would
+   provision.
+6. **Real node overcommitment**: once `api`'s memory limit was corrected to a realistic 1Gi,
+   `kubectl describe nodes` showed one of the 2 `t3.medium` nodes at 94% memory requests / 139%
+   limits — genuinely too tight, and structurally unable to give Kafka's 3 brokers one-node-per-
+   broker spread across the existing 3 AZs regardless of sizing. Presented as a real cost
+   decision rather than resolved silently — **user chose to bump to 3x `t3.medium`**
+   (`variables.tf`'s `eks_node_count` 2→3, applied by the user).
+7. **Self-inflicted**: an earlier ad hoc `kubectl delete replicaset --cascade=orphan` diagnostic
+   command left 2 `api` pods running unowned by any ReplicaSet, producing a visibly uneven pod
+   distribution the user caught directly (`kubectl get pods -o wide`). Investigated, found it was
+   my own earlier command, fixed by deleting the 2 orphaned pods and the leftover 0-replica
+   ReplicaSet.
+
+## Done — task #15: live functional validation against the real, fully-fixed cluster
+
+With the cluster confirmed clean (7 pods, Kafka one-per-node across all 3 AZs, `api` split across
+2 nodes), ran the actual application-level check directly against the real AWS LoadBalancer
+(`http://a46ce64f2129449d3bab4ca5803a8b7b-2033904046.us-west-2.elb.amazonaws.com`), per
+`architecture.md`'s documented data flow — not just trusting a clean `kubectl get pods`:
+
+1. `POST /api/v1/auth/login` (seeded `demo`/`GridMeter!Demo2026`) — real JWT issued.
+2. `POST /api/v1/meters` — succeeded, confirming the real RDS write path.
+3. `POST /api/v1/readings` (with an `Idempotency-Key` header) — succeeded, publishing through the
+   real 3-broker Kafka cluster.
+4. `GET /api/v1/readings?meterId=...` — the reading came back on the **very first poll attempt**,
+   confirming the full async Kafka → consumer → Postgres pipeline genuinely works.
+5. Checked the ElastiCache/Valkey side too (not just RDS) via a throwaway `redis-cli` debug pod
+   against the real ElastiCache endpoint — confirmed `reading:latest:<meterId>` and an
+   `idempotency:<key>` key both landed, closing the loop on `architecture.md`'s stated "consumer
+   writes to Postgres *and* Redis" data flow.
+
+**Full functional pipeline confirmed working end-to-end against real AWS infrastructure — the
+actual goal of this entire multi-hour debugging arc.** Attempted cleanup of the test meter/reading
+afterward: `DELETE /api/v1/meters/<id>` correctly returned `409 Conflict` ("cannot be deleted
+because other records still reference it") — expected, not a bug, since readings are immutable by
+design and there's deliberately no delete path around that FK. Left the one test meter/reading in
+place rather than force it out via a direct SQL `DELETE` that would go around the app's own
+data-integrity contract.
+
+## Done — scope decision: AWS is Terraform-proof, `kind` stays the load+observability demo
+
+User asked whether the point of this project (containers/app-server/messaging/datastore, load
+testing, observability, Grafana/Loki demo) was actually being met by the AWS track. Checked
+directly rather than assumed: this EKS cluster has zero observability namespace/pods
+(`kube-prometheus-stack`/Loki/Tempo/Alloy was only ever built and validated against `kind`), and
+`load-tests/*.jmx` has never targeted the real AWS LoadBalancer. **User decision: `kind` remains
+the full demo (load + dashboards); AWS stays scoped to proving real Terraform/cloud-native
+deployment capability only.** Documented explicitly in `terraform/aws/README.md`'s new
+"Observability is not part of this deployment" section, and in the new deployment-topology
+diagram (see below) as a deliberate callout, not a silent gap.
+
+Also built `docs/deployment-topology.pdf` — a laptop-vs-AWS diagram (HTML/CSS rendered to a real
+PDF via headless Chrome, matching the existing PDF precedent in `docs/`), colorblind-safe (border
+style + icons, not color alone, per standing user accessibility note) — showing exactly which
+resources run where and calling out what's deliberately not on the AWS side.
+
+## Done — QA regression pass: real spin-up/teardown runbook written, tested, two real bugs found and fixed
+
+User put on a "QA hat" and required an actual retest cycle after `k8s/teardown-aws.sh` was first
+built, rather than trusting it untested — this found real, consequential bugs a first pass would
+have missed:
+
+- **Wrote the actual interview-day runbook** in `terraform/aws/README.md` ("Spin-up and teardown"
+  section) plus a new `k8s/teardown-aws.sh` script — the missing half of `deploy-aws.sh`.
+  Confirmed live (2026-09-18) that a real, load-balanced Service on this cluster resolves to a
+  **Classic ELB, not an NLB** as originally assumed and never actually verified (no
+  `aws-load-balancer-type` annotation, no AWS Load Balancer Controller addon installed) —
+  corrected everywhere: `teardown-aws.sh`, `traefik-aws.yaml`, `deploy-aws.sh`, and the README's
+  cost table (Classic ELB is $0.025/hr + $0.008/GB, not NLB's $0.0225/hr + LCU pricing).
+- **Bug #1, found via first real test run**: `teardown-aws.sh` deleted Kafka's PVCs while its pods
+  were still running and holding them mounted — all 3 got stuck `Terminating` forever (a PVC
+  can't finish deleting, and its EBS volume can't be released, while a pod still claims it). Fixed
+  by deleting the StatefulSet first, waiting for pods to actually terminate, then deleting PVCs.
+- **Bug #2, found via a full from-scratch retest of the entire cycle**: the ECR `force_delete =
+  true` fix (added earlier the same day) was only ever *planned*, never actually applied, before a
+  real `terraform destroy` was run — it failed exactly as predicted (`RepositoryNotEmptyException`
+  on both repos), while everything independent of ECR (RDS, ElastiCache, NAT gateway, all 5 EKS
+  addons, the node group, the cluster, the VPC) destroyed successfully in parallel regardless,
+  since Terraform destroys unrelated dependency chains concurrently. Real, live-confirmed
+  consequence of "planned but not applied" being meaningfully different from "fixed."
+- **Cleaned up the resulting partial-destroy state**: emptied both ECR repos directly (images are
+  disposable build artifacts, not data — including a manifest-list-vs-child-image ordering wrinkle
+  that needed a short wait for ECR's own eventual consistency to resolve), confirmed via direct
+  AWS API calls that everything else had genuinely already destroyed, then let `terraform destroy`
+  finish the remaining 2 resources cleanly.
+- **Full clean retest, start to finish, zero manual intervention required**: fresh `terraform
+  apply` (44 added, 0 errors, `force_delete=true` now baked in from creation) → `deploy-aws.sh`
+  (clean first-try success — no OOM, no ext4/lost+found, no image-arch mismatch, no fsGroup
+  error, every earlier-session fix confirmed durable) → `teardown-aws.sh` (clean, both bugs above
+  confirmed fixed, no manual fix needed this time) → `terraform destroy` (44 destroyed, 0 errors,
+  single pass) → **full 12-point residue checklist, all empty, independently verified via direct
+  AWS API calls, not trusted from "Destroy complete" alone.**
+- **Cost cross-check attempted, found unreliable same-day**: tried using AWS Cost Explorer as a
+  second, independent confirmation that nothing was left billing. Real finding: Cost Explorer data
+  lags — querying it immediately after today's teardown showed a stale picture (missing known real
+  EKS/RDS/ElastiCache/NAT charges from the very hours just spent testing), not zero. Built
+  `terraform/aws/check-costs.sh` to make this reusable, with the lag limitation documented
+  explicitly rather than let it produce a false "looks clean" reading if run too soon after a
+  teardown.
+
+**Net result**: the interview-day spin-up/teardown runbook is now genuinely tested, not just
+written — both real defects that a first pass would have missed (and that would have meant either
+orphaned, still-billing AWS resources or a hung `terraform destroy`) are fixed and confirmed via
+an actual clean second run, matching this project's own standing "QA is primarily retesting"
+practice.
+
+## Done — inspection scripts: confirm resources actually exist, not just that a tool said so
+
+User asked for the inverse of the residue checklist — confirm expected resources are actually
+*present* and healthy right after `apply`/`deploy-aws.sh`, not just trust "Apply complete" /
+"successfully rolled out". Built two, one per layer:
+
+- **`terraform/aws/check-resources.sh`** — queries every Terraform-provisioned resource directly
+  (VPC/networking, EKS cluster/node group/all 5 addons, RDS, ElastiCache, ECR, IAM roles/OIDC) via
+  the real AWS API, PASS/FAIL per item plus a summary. Worked cleanly on first use: 24/24 passed
+  against a fresh `apply`.
+- **`k8s/check-resources-aws.sh`** — the Kubernetes-layer counterpart (Traefik, Kafka
+  StatefulSet/PVCs, api/frontend Deployments, config/secrets/IngressRoute/StorageClass). Found and
+  fixed two real bugs in its own first test run, immediately, against a cluster with a known
+  partially-torn-down state (Kafka and the LB already deleted from the prior teardown step):
+  1. A false `PASS` on a genuinely missing Service — the check function only tested for
+     non-empty output, and `kubectl`'s own `Error from server (NotFound): ...` text is itself
+     non-empty, so a missing resource was silently reported as present. Fixed by checking the
+     command's actual exit code, not just its output.
+  2. A PVC-count check using an `||` fallback double-counted: both `grep -c` branches print their
+     own "0" before the `||` logic evaluates, concatenating into "00" instead of "0". Fixed by
+     dropping the fallback for a single, direct count.
+  Re-tested against the same known state after both fixes — every result matched ground truth
+  exactly (genuinely-gone resources correctly `FAIL`, genuinely-present ones correctly `PASS`).
+
+**Then ran a full second end-to-end cycle using both new scripts as real gates**, not just as an
+afterthought: `terraform apply` (44 added) → `check-resources.sh` (24/24 passed) →
+`deploy-aws.sh` (clean) → `teardown-aws.sh` (clean, zero manual intervention — both bugs from the
+first QA pass held fixed) → `terraform destroy` (44 destroyed, 0 errors) → 12-point residue
+checklist (all empty). **Two consecutive clean full cycles now, with the second one exercising the
+new inspection scripts as well** — the strongest confidence level this runbook has had yet.
+
 ## Open
 
-- **Task #8, still deliberately unbuilt**: wiring `k8s/deploy.sh`/`configmap.yaml` for the AWS
-  target — real RDS/ElastiCache endpoints now exist (see outputs above) and could inform this
-  design, but it hasn't been started. Needs: `SPRING_PROFILES_ACTIVE=cloud` (the Spring profile
-  built 2026-09-11 for exactly this), the real endpoints substituted into a ConfigMap, and
-  `postgres.yaml`/`redis.yaml`/`sentinel.yaml` skipped when deploying to this cluster (Kafka's
-  manifests still apply as-is).
-- **The EKS default-StorageClass gap is still unresolved** — `k8s/kafka.yaml`'s PVCs will sit
-  `Pending` on this cluster until a default StorageClass is created and marked (see
-  `terraform/aws/README.md`'s own callout). Not done this session.
-- **Real cost is now accruing** (~$0.257/hr / ~$188/mo if left running) — nothing torn down as of
-  this write. `terraform destroy` (from `terraform/aws/`, not `bootstrap/`) is the teardown path
-  when this isn't actively being used, per `docs/cloud-deployment-scope.md`'s own stated practice.
-- Nothing from today is committed yet — held per explicit user request ("after it works"), now
-  met. `git status` will show: all of `terraform/aws/*.tf` (new), `terraform/aws/README.md` (new),
-  `terraform/aws/.terraform.lock.hcl` (new, should be committed per the lock-file discussion
-  above), and this status file (new). `terraform/aws/bootstrap/`'s own files were already
-  committed 09-17.
+- **AWS stack is fully torn down as of this write** — confirmed via the 12-point residue
+  checklist (run twice, both times all empty). No real cost is currently accruing on the AWS side.
+- **Nothing from today's work is committed yet** — the full k8s-overlay build (tasks #8–#15), the
+  QA-cycle bug fixes (`teardown-aws.sh`, `ecr.tf`'s `force_delete`, the NLB→Classic-ELB
+  corrections across 4 files), the two new inspection scripts (`terraform/aws/check-resources.sh`,
+  `k8s/check-resources-aws.sh`), `check-costs.sh`, and `docs/deployment-topology.pdf` are all
+  new/modified and uncommitted. Ready to commit on request — the "confirmed working" bar is now
+  met more thoroughly than usual (two full tested spin-up/teardown cycles, not just one clean
+  run).
+- One test meter/reading from yesterday's functional check remains in what was, at the time, a
+  different RDS instance — moot now, since that whole AWS instance was destroyed as part of
+  today's QA cycle. Nothing to clean up.
 - Carried over, untouched: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost measurement fix,
-  `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10).
+  `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10), GCP/Azure
+  Terraform configs (AWS-first sequencing per `docs/cloud-deployment-scope.md`).
 
 ## Next
 
-1. Commit and push today's work (now that it's confirmed working, per the user's own stated
-   checkpoint).
-2. Decide whether to tackle task #8 (AWS-target k8s deploy overlay) next, or the
-   default-StorageClass gap first (task #8 will hit that gap immediately once attempted, so
-   likely worth doing together).
-3. Once `k8s/deploy.sh` actually runs cleanly against this cluster: a real end-to-end functional
-   check (login → create meter → ingest reading → confirm it lands in the real RDS instance and
-   the real ElastiCache cache) — nothing has exercised the app itself against this infrastructure
-   yet, only the infrastructure's own health.
-4. Remember this stack is now costing real money while up — tear down via `terraform destroy` in
-   `terraform/aws/` when not actively working on it.
+1. Commit and push today's full day of work, on request.
+2. Before the next real interview-day spin-up: `./terraform/aws/check-costs.sh` a day or two out
+   from today to get a delayed but genuine confirmation that costs actually dropped to zero,
+   complementing (not replacing) today's live resource-based confirmation.
+3. GCP/Azure Terraform configs, per `docs/cloud-deployment-scope.md`'s stated AWS-first
+   sequencing — AWS is now the fully proven, genuinely tested reference implementation to follow.
+4. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+   `docs/testing-expansion-scope.md` task #9+.

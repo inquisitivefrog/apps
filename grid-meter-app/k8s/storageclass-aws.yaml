@@ -1,0 +1,27 @@
+# EKS 1.30+ stopped auto-marking any StorageClass as default (unlike kind's local-path-
+# provisioner, and unlike GKE/AKS which both still auto-mark one - confirmed 2026-09-11, see
+# docs/cloud-deployment-scope.md's "Gating read-through" section). k8s/kafka.yaml's PVCs
+# deliberately leave storageClassName unset so the same manifest works across every target - on
+# AWS, this is what "the cluster's own default" resolves to. Also needs the EBS CSI driver addon
+# actually installed (terraform/aws/ebs-csi.tf) - a default StorageClass alone can't provision
+# real storage without it.
+#
+# fstype: xfs, not the EBS CSI driver's own ext4 default - found live 2026-09-18: a freshly
+# ext4-formatted volume gets a `lost+found` directory created automatically as part of the
+# filesystem itself, and Kafka's LogManager fatally errors the moment it scans that directory
+# during startup (it expects every directory under its log dir to be topic-partition-named, with
+# no exception carved out for filesystem-reserved directories). XFS doesn't create lost+found at
+# all, sidestepping the whole class of bug - also a well-established, common real-world choice
+# for Kafka broker storage specifically, not just a workaround.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  type: gp3
+  csi.storage.k8s.io/fstype: xfs

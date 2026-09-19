@@ -9,5 +9,13 @@ terraform {
       # Current stable on the Terraform Registry as of 2026-09-17.
       version = "~> 6.65"
     }
+    tls = {
+      source = "hashicorp/tls"
+      # Used only to compute the EKS cluster's OIDC issuer certificate
+      # thumbprint dynamically (ebs-csi.tf) rather than hardcoding a value -
+      # AWS has rotated the underlying CA before, which broke hardcoded
+      # thumbprints project-wide for anyone who'd pinned one.
+      version = "~> 4.4"
+    }
   }
 }

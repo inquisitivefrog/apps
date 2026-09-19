@@ -69,6 +69,16 @@ spec:
       labels:
         app: kafka
     spec:
+      # Found live 2026-09-18 deploying to a real EKS cluster: apache/kafka:4.3.1 runs as a
+      # non-root user (uid=1000/gid=1000 "appuser", confirmed via `id` inside the running
+      # container), and a freshly-provisioned EBS volume is owned root:root by default --
+      # without fsGroup, the container hits AccessDeniedException writing to /var/lib/kafka/data
+      # on startup. This never surfaced on kind: local-path-provisioner's host-path volumes are
+      # permissive by default, so the same gap was latent there the whole time, just never
+      # triggered. fsGroup tells Kubernetes to chgrp the volume to this group (and set the setgid
+      # bit) on mount, which is what actually lets the non-root process write to it.
+      securityContext:
+        fsGroup: 1000
       # AZ spread added 2026-09-11 (docs/cloud-deployment-scope.md's gating read-through) --
       # `kind` is effectively single-node, so broker placement across failure domains was never a
       # live question for the local track; a real EKS/GKE/AKS deployment should spread kafka-0/1/2
