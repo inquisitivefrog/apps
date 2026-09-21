@@ -253,16 +253,28 @@ terraform apply tfplan   # run by the user, never Claude Code - see "Status" abo
 
 ## Remaining
 
-Both `k8s/deploy-gcp.sh` and `k8s/teardown-gcp.sh` have now run for real (2026-09-21) - see
-"Deploy overlay: now live-debugged and functionally validated" above. What's still open:
+`k8s/deploy-gcp.sh` and `k8s/teardown-gcp.sh` have both run for real (2026-09-21) - see "Deploy
+overlay: now live-debugged and functionally validated" above. `terraform destroy` has also been
+attempted for real: 18 of 22 resources destroyed cleanly, then a real failure -
+**`google_sql_user.main` and `google_sql_database.main` are sibling resources with no ordering
+between them, so Terraform destroyed both in parallel; the `DROP ROLE` call's server-side
+validation ran before the `DROP DATABASE` call had actually finished committing on Cloud SQL's
+backend, so it still saw "5 objects in database gridmeter" depending on the role**, even though
+that database's own destroy had already logged success. Fixed with an explicit
+`depends_on = [google_sql_database.main]` on `google_sql_user.main` - the same "declare the real
+ordering, don't assume the API serializes it for you" shape as this project's other
+undeclared-dependency findings, just surfacing on teardown instead of apply.
 
-1. **`terraform destroy` has not been run** - `teardown-gcp.sh` only clears the
-   kubectl-provisioned resources it exists to clean up (the LB, Kafka's PVCs/disks); the GKE
-   cluster/node pools, Cloud SQL, Memorystore, Artifact Registry, and VPC are all still live and
-   billing. This is the actual remaining cost-accruing gap.
+What's still open:
+
+1. **Re-run `terraform destroy`** with the ordering fix in place - 6 resources remained as of this
+   write (Cloud SQL instance + user, VPC, the PSA global address, the service networking
+   connection, `random_password.cloudsql`); the GKE cluster/node pools, Memorystore, and Artifact
+   Registry are already confirmed gone from the first attempt.
 2. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
-   "No `check-costs-gcp.sh` yet" above - before that `terraform destroy`, if a delayed cost
+   "No `check-costs-gcp.sh` yet" above - before the next full teardown, if a delayed cost
    cross-check is wanted afterward.
 3. A second full spin-up/teardown cycle, matching AWS's own two-cycle confidence bar (its first
-   cycle found 2 real bugs; its second confirmed both fixes held) - GCP has had one clean cycle so
-   far.
+   cycle found 2 real bugs; its second confirmed both fixes held) - GCP has had one clean
+   deploy/teardown cycle and one real destroy-ordering bug found and fixed, not yet a confirming
+   second run.

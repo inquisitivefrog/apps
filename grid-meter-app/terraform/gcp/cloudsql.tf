@@ -78,4 +78,17 @@ resource "google_sql_user" "main" {
   name     = var.cloudsql_user
   instance = google_sql_database_instance.main.name
   password = random_password.cloudsql.result
+
+  # Found via a real live `terraform destroy` failure (2026-09-21): with no
+  # explicit ordering between this resource and google_sql_database.main,
+  # Terraform destroyed both in parallel - the DROP DATABASE call appeared
+  # to complete first (its own destroy log line showed success), but the
+  # DROP ROLE call's own validation still saw "5 objects in database
+  # gridmeter" depending on the role, meaning the database drop hadn't
+  # actually finished committing on Cloud SQL's backend when the role-drop
+  # validation ran. depends_on forces the user (role) to be destroyed only
+  # after the database's own destroy has genuinely completed, not just been
+  # issued - same "declare the real ordering, don't assume the API serializes
+  # it for you" lesson as this project's other undeclared-default findings.
+  depends_on = [google_sql_database.main]
 }

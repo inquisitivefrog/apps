@@ -380,6 +380,33 @@ Closes out the one remaining genuinely-untested piece of the GCP deploy overlay 
 and `teardown-gcp.sh` are now both proven, matching AWS's own two-script confidence level (though
 AWS's runbook has been proven across *two* full cycles; this is GCP's first).
 
+## Done — ran `terraform destroy` for real, found and fixed a real Cloud SQL destroy-ordering race
+
+User ran a real `terraform destroy`. 18 of 22 resources destroyed cleanly (VPC subnet/router/NAT,
+both GKE node pools, the cluster itself, Memorystore, both Artifact Registry repos, Secret
+Manager, both IAM bindings, the node service account) - then a real, live failure:
+`google_sql_user.main` failed to delete with `role "gridmeter" cannot be dropped because some
+objects depend on it - 5 objects in database gridmeter`, even though `google_sql_database.main`'s
+own destroy had already logged "Destruction complete" earlier in the same run.
+
+**Root cause**: `google_sql_database.main` and `google_sql_user.main` are sibling resources with
+no `depends_on` between them in the original config, so Terraform destroyed both in parallel - the
+`DROP DATABASE` call's own destroy log showed success, but the `DROP ROLE` call's server-side
+validation ran before that drop had actually finished committing on Cloud SQL's Postgres backend,
+so it still saw live objects depending on the role. A real destroy-ordering race, not a permissions
+or config-value bug - the same "declare the real ordering, don't assume the API serializes it for
+you" shape as this project's other undeclared-dependency findings, just surfacing on teardown
+instead of apply. Fixed with an explicit `depends_on = [google_sql_database.main]` on
+`google_sql_user.main`, forcing the role drop to wait for the database drop to genuinely complete,
+not just be issued.
+
+Checked remaining state via `terraform plan -destroy`: exactly 6 resources left (Cloud SQL
+instance + user, VPC, the PSA global address, the service networking connection, and
+`random_password.cloudsql`) - `google_sql_database.main` itself is confirmed already fully gone.
+Re-planned and saved a fresh destroy plan for the user to re-apply; real time has passed since the
+original race, so the same failure shouldn't recur even before the `depends_on` fix would have
+prevented it going forward.
+
 ## Open
 
 - **Real GCP infrastructure is live and billing, fully deployed and functionally validated** — VPC,
