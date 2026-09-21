@@ -22,12 +22,12 @@ both — Cloud SQL's edition default and Memorystore's missing service connectio
 and the remaining 5 applied clean on the second pass. Full stack now live: VPC, GKE cluster + node
 pool, Cloud SQL, Memorystore, Artifact Registry, Secret Manager.
 
-**A third real bug was caught only after this — by running `check-resources.sh` against the live
+**A third real bug was caught only after this — by running `check-resources-gcp.sh` against the live
 apply, not by `terraform plan`**: `gke_node_count`'s default of 3 was meant as "3 total, 1 per
 zone" but GKE's own `node_count` semantics are per-zone for a multi-zone node pool, so it actually
 created **9 real e2-medium instances, not 3** — roughly 3x the intended compute cost, running from
 first apply until caught. See "Real findings" below for the fix and the corrected value (1, not
-3). **Fixed and applied the same session** — `check-resources.sh` re-run afterward confirmed
+3). **Fixed and applied the same session** — `check-resources-gcp.sh` re-run afterward confirmed
 exactly 3 real instances live, one per zone, 17/17 checks passing. This is the sharpest instance
 yet of this project's own standing "verify the live system" discipline actually catching something
 real: neither `terraform plan` nor `terraform validate` at any point surfaced this, since the
@@ -124,14 +124,14 @@ against this project:
 - **The sharpest one: `gke_node_count`'s original default (3) actually created 9 real nodes, not
   3** — GKE's `node_count` on a multi-zone node pool is per-zone, not total
   (`total = node_count × len(node_locations)`), confirmed against GKE's own documented behavior
-  only after `check-resources.sh` (run against the real live apply) showed 9 GCE instances where 3
+  only after `check-resources-gcp.sh` (run against the real live apply) showed 9 GCE instances where 3
   were expected. `terraform plan`/`validate` never had a chance to catch this - the HCL was
   syntactically and semantically valid the whole time, just multiplying out to a number I hadn't
   intended. Fixed: `gke_node_count` default changed from 3 to 1 (`variables.tf`), so 1 × 3 zones =
   3 total, matching the intended AWS-parity sizing. Ran actively over-provisioned (and
   over-billing, roughly 3x the intended `e2-medium` compute cost) from the first successful apply
   until this was caught and corrected the same session.
-- **A fourth, smaller bug caught the same way**: `check-resources.sh`'s GCE-instance check
+- **A fourth, smaller bug caught the same way**: `check-resources-gcp.sh`'s GCE-instance check
   originally filtered on a regex against the full cluster/node-pool name
   (`name~^gke-${CLUSTER_NAME}-`) - GCE truncates instance names at 63 characters, so real instance
   names came out as `gke-grid-meter-app-g-grid-meter-app-n-<hash>-<suffix>` (both
@@ -173,7 +173,7 @@ to live-debug, not expect it to work first try.
 
 ## Inspection script
 
-`check-resources.sh` — the GCP counterpart to `terraform/aws/check-resources.sh`: confirms every
+`check-resources-gcp.sh` — the GCP counterpart to `terraform/aws/check-resources-aws.sh`: confirms every
 Terraform-provisioned resource actually exists and is healthy via real `gcloud` calls, not
 `terraform apply`'s own "Apply complete" message. Now covers the full stack this pass creates,
 including Artifact Registry — the only section still missing relative to AWS's script is Workload
@@ -191,16 +191,16 @@ successful-but-empty result can't read as a real value either way — the same f
 AWS's own `k8s/check-resources-aws.sh` found the hard way (2026-09-18), caught here before a live
 resource ever existed to hide behind.
 
-## No `check-costs.sh` yet — GCP has no direct CLI equivalent
+## No `check-costs-gcp.sh` yet — GCP has no direct CLI equivalent
 
-AWS's `check-costs.sh` works because `aws ce get-cost-and-usage` is an always-on, queryable-anytime
+AWS's `check-costs-aws.sh` works because `aws ce get-cost-and-usage` is an always-on, queryable-anytime
 API. GCP has no equivalent built into `gcloud` — the standard mechanism (a Cloud Billing export to
 a BigQuery dataset) has to be configured once, in advance, as a billing-account-level setting
 (Console-only; no `gcloud` command creates the export itself), before there's any exported data to
 query at all. Not built this pass since nothing has been applied yet and there's no cost to
 confirm-zero on; worth setting up before the first real `apply`/`destroy` cycle on this cloud, not
 after, so the export has data by the time a delayed cost check would actually be run (mirrors
-`check-costs.sh`'s own documented 24-48h Cost-Explorer-lag limitation, just with an extra
+`check-costs-aws.sh`'s own documented 24-48h Cost-Explorer-lag limitation, just with an extra
 one-time setup step GCP requires that AWS didn't).
 
 ## Usage
@@ -217,7 +217,7 @@ terraform apply tfplan   # run by the user, never Claude Code - see "Status" abo
 ## Remaining before the k8s deploy overlay can actually be exercised
 
 1. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
-   "No `check-costs.sh` yet" above. Not done yet; do this before the next `terraform destroy` if a
+   "No `check-costs-gcp.sh` yet" above. Not done yet; do this before the next `terraform destroy` if a
    delayed cost cross-check is wanted.
 2. Run `k8s/deploy-gcp.sh` against this now-live cluster and expect to live-debug it - see "Deploy
    overlay: built but genuinely untested" above.

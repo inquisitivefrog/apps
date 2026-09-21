@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kubernetes-layer counterpart to terraform/aws/check-resources.sh - confirms every object
+# Kubernetes-layer counterpart to terraform/aws/check-resources-aws.sh - confirms every object
 # deploy-aws.sh is supposed to create actually exists and is healthy on the real cluster, queried
 # directly via kubectl, not trusted from `kubectl rollout status`'s own "successfully rolled out"
 # message alone. Intended to run right after deploy-aws.sh, before a demo or before

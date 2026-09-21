@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# GCP counterpart to terraform/aws/check-resources.sh: confirms every Terraform-provisioned GCP
-# resource actually exists and is healthy, queried directly against real GCP APIs - not trusting
-# `terraform apply`'s own "Apply complete" message, same "verify the live system" discipline
-# applied everywhere else in this project.
+# GCP counterpart to terraform/aws/check-resources-aws.sh: confirms every Terraform-provisioned
+# GCP resource actually exists and is healthy, queried directly against real GCP APIs - not
+# trusting `terraform apply`'s own "Apply complete" message, same "verify the live system"
+# discipline applied everywhere else in this project.
 #
-# Scoped to what terraform/gcp/'s current base-infra pass actually creates (VPC/GKE/Cloud
-# SQL/Memorystore) - it does NOT check Artifact Registry, Workload Identity, or any k8s-overlay
-# resource, because none of that exists yet (see README.md's "Not yet built this pass"). AWS's own
-# check-resources.sh only grew its ECR/IAM sections once that later phase was actually built -
-# this script's scope is expected to grow the same way, not a gap to fix now.
+# Covers the full stack terraform/gcp/ creates, including Artifact Registry - the only section
+# still missing relative to AWS's script is Workload Identity/IAM, since this build doesn't need
+# pod-level GCP IAM bindings yet. Expected to grow the same way AWS's own check-resources-aws.sh
+# did (its ECR/IAM sections only arrived once that later phase was actually built).
 set -uo pipefail
 
 TF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

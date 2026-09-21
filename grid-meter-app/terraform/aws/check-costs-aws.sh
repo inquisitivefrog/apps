@@ -10,7 +10,7 @@
 # Explorer's own pipeline has caught up. Re-run this a day or two after a teardown for a
 # meaningful answer; running it same-day mostly confirms the lag itself, not a clean account.
 #
-# Usage: ./check-costs.sh [days-back]   (default: 7)
+# Usage: ./check-costs-aws.sh [days-back]   (default: 7)
 set -euo pipefail
 
 # Cost Explorer is a billing-account-wide API - defaulted explicitly here rather than read from

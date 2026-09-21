@@ -198,7 +198,7 @@ is exactly the class of thing that quietly keeps accruing cost. `terraform destr
 the load-balancer/EBS-volume class of resource this whole section exists to catch, and running
 these checks is the only way to actually know rather than assume.
 
-**Optional second, independent cross-check**: `./check-costs.sh` queries real AWS Cost Explorer
+**Optional second, independent cross-check**: `./check-costs-aws.sh` queries real AWS Cost Explorer
 data by service instead of resource-existence APIs. It cannot confirm "zero cost right now" —
 Cost Explorer data lags 24-48h, confirmed live 2026-09-18 querying it immediately after a same-day
 teardown (it showed a stale picture, missing known real charges from that same day, not zero) —
