@@ -11,7 +11,17 @@ See `docs/cloud-deployment-scope.md` for the full per-layer reasoning (why Postg
 managed here but Kafka is self-hosted in-cluster identically across every target — `kind`, AWS,
 and this).
 
-## Status: applied — real GCP infrastructure is live
+## Status: fully torn down (2026-09-21) — applied, live-debugged, functionally validated, then destroyed clean
+
+**Real infrastructure was applied, deployed to, functionally tested end-to-end, and torn down
+again, all in this one session (2026-09-21)** — the full arc AWS's track took multiple sessions to
+reach. Currently: `terraform show` reports empty state, and every resource type this pass created
+was independently confirmed gone via live `gcloud` calls (not just trusted from "Destroy
+complete") — VPC, GKE cluster, Cloud SQL, Memorystore, Artifact Registry, disks, forwarding rules,
+the dedicated node service account. Zero residue, zero cost accruing. See "Deploy overlay" and
+"Remaining" below for the full account of what was found along the way, including two genuinely
+new teardown-time bugs (a Cloud SQL destroy-ordering race and a known upstream Terraform-provider
+bug), both fixed and now baked into this config for the next real cycle.
 
 **Real apply happened 2026-09-21** (user-run, same pattern as AWS — Claude Code's own auto-mode
 classifier blocks `terraform apply` against real infrastructure, and every real apply on this
@@ -280,14 +290,17 @@ identically. Fixed with the documented community workaround -
 `deletion_policy = "ABANDON"` on `google_service_networking_connection` (`network.tf`) - since the
 object carries no ongoing cost and the real peering it represented is already confirmed deleted.
 
+**The re-run succeeded**: the final 2 resources (VPC, PSA global address) destroyed cleanly, and
+`terraform show` confirmed empty state. Independently verified live with `gcloud` across every
+resource type this pass created (VPC, GKE cluster, Cloud SQL, Memorystore, Artifact Registry,
+disks, forwarding rules, the dedicated node service account) - all genuinely gone. **Zero residue,
+zero cost accruing.**
+
 What's still open:
 
-1. **Re-run `terraform destroy`** with both fixes in place - 2 resources remained as of this write
-   (the VPC network and the PSA global address); everything else (GKE, Cloud SQL, Memorystore,
-   Artifact Registry, the service networking connection) is already confirmed gone or abandoned.
-2. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
-   "No `check-costs-gcp.sh` yet" above - before the next full teardown, if a delayed cost
-   cross-check is wanted afterward.
-3. A second full `deploy-gcp.sh` app-layer cycle - the Terraform infra layer has now had two real
+1. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
+   "No `check-costs-gcp.sh` yet" above - before the *next* real apply, so a delayed cost
+   cross-check has data to query once built.
+2. A second full `deploy-gcp.sh` app-layer cycle - the Terraform infra layer has now had two real
    tested cycles (an incidental full re-apply plus this destroy pass), matching AWS's own
    two-cycle confidence bar for that layer; the k8s app-deploy layer has had one.

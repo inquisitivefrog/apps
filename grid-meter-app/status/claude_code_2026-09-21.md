@@ -444,21 +444,30 @@ VPC-side peering it represented was already independently confirmed deleted via 
 `gcloud` path. Re-planned: destroy count dropped from 3 to 2 (VPC network + the PSA address
 reservation), saved for the user to apply.
 
+## Done — confirmed full GCP teardown, zero residue, live-verified not just trusted
+
+The `deletion_policy = "ABANDON"` fix worked: the final `terraform apply` destroyed the remaining
+2 resources (PSA global address, VPC network) cleanly, and `terraform show` confirmed empty state.
+**Then independently verified live** (`gcloud`, not just trusted from "Apply complete") across
+every resource type this session created: VPC, PSA address, GKE cluster, Cloud SQL, Memorystore,
+Artifact Registry, persistent disks, forwarding rules, and the dedicated `grid-meter-app-gke-node`
+service account - all confirmed genuinely gone (404s / empty lists). Only the project's own
+default GCE service account remains, which Terraform never created and isn't this project's to
+clean up. **Zero residue, zero cost accruing as of this write.**
+
 ## Open
 
-- **GCP is nearly fully torn down - 19 of 22 resources confirmed destroyed, 3 remain pending a
-  GCP-side propagation lag** (the PSA global address, the VPC network, and the service networking
-  connection itself - all three genuinely orphan-free per live `gcloud` checks, just blocked by
-  Google's own backend not yet reflecting that Cloud SQL/Memorystore are gone). A `terraform plan
-  -destroy` shows exactly these 3 remaining; a saved plan is ready to re-apply once the lag clears
-  (typically a few minutes).
-- **Both `deploy-gcp.sh` and `teardown-gcp.sh` are proven across real runs now**, and the
-  Cloud-SQL-destroy-ordering fix has been live-confirmed working (the second `terraform destroy`
-  got 19/22 clean, including the previously-failing `google_sql_user.main`). Combined with the
-  incidental second `terraform apply` cycle (16 resources, `check-resources-gcp.sh` 17/17), GCP's
-  infra layer now has two real tested cycles - matching AWS's own two-cycle confidence bar for
-  that layer specifically (the k8s app-deploy layer has had one cycle, not yet a confirming
-  second).
+- **GCP is fully torn down and independently verified clean.** Real infrastructure existed and was
+  exercised for several hours this session (real apply, real live-debugged deploy, real functional
+  validation, real teardown) with no residual cost.
+- **The GCP infra layer now has two real tested cycles** (an incidental full re-apply plus this
+  destroy pass, on top of the original apply), matching AWS's own two-cycle confidence bar for that
+  layer specifically. **The k8s app-deploy layer (`deploy-gcp.sh`) has had one real cycle**, not
+  yet a confirming second - the one piece of AWS's two-cycle bar GCP hasn't fully matched.
+- Three real, genuinely new findings this teardown pass, all fixed and documented: a Cloud
+  SQL/Postgres destroy-ordering race (`depends_on` fix), and a known upstream Terraform-provider
+  bug around `google_service_networking_connection` deletion (`deletion_policy = "ABANDON"`
+  workaround) - neither has an AWS-side equivalent, both genuinely GCP-specific.
 - **No `check-costs-gcp.sh`** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
   `terraform/gcp/README.md`'s "No `check-costs-gcp.sh` yet" section.
@@ -468,17 +477,11 @@ reservation), saved for the user to apply.
 
 ## Next
 
-1. **Retry `terraform destroy`** once the GCP-side propagation lag on the service networking
-   connection clears (wait a few minutes from this write) - only 3 resources remain, a saved plan
-   is ready.
-2. Confirm the destroy via the same residue-checklist discipline AWS's runbook uses, not just
-   trusted from "Destroy complete" - especially worth double-checking given this session's own
-   real destroy-ordering/propagation findings.
-3. A second full deploy-gcp.sh app-layer cycle (not just the Terraform-layer one already done
-   twice), matching AWS's own two-cycle confidence bar completely, whenever there's a reason to
-   stand this up again.
-4. Build `terraform/gcp/check-costs-gcp.sh`'s prerequisite (the BigQuery export) and the script
-   itself, once there's a real teardown to confirm against.
-5. Azure Terraform config, last in the AWS-first sequencing.
-6. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+1. Set up the Cloud Billing BigQuery export (Console-only) before the next real GCP apply, so a
+   delayed cost cross-check (`check-costs-gcp.sh`, once built) has data to query.
+2. A second full `deploy-gcp.sh` app-layer cycle, matching AWS's own two-cycle confidence bar
+   completely, whenever there's a reason to stand this up again.
+3. Build `terraform/gcp/check-costs-gcp.sh` itself once the BigQuery export exists.
+4. Azure Terraform config, last in the AWS-first sequencing.
+5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.
