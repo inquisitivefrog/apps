@@ -20,10 +20,8 @@ terraform {
     }
   }
 
-  # No backend block yet, deliberately - this pass is plan-only (see
-  # README.md). Once terraform/gcp/bootstrap/ is actually applied (a
-  # separate, later user decision, same sequencing as terraform/aws/), add
-  # a backend.tf here with that module's `backend_config_snippet` output,
-  # matching how terraform/aws/backend.tf was created. Until then this
-  # config runs on local state.
+  # Remote state backend lives in backend.tf, generated from
+  # terraform/gcp/bootstrap's own output after that module was applied
+  # (2026-09-21) - kept as a separate file rather than inlined here,
+  # matching terraform/aws/'s versions.tf + backend.tf split.
 }
