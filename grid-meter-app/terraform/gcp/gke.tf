@@ -17,6 +17,21 @@ resource "google_project_iam_member" "gke_node_sa" {
   member  = "serviceAccount:${google_service_account.gke_node.email}"
 }
 
+# Found via a real live deploy-gcp.sh failure (2026-09-21): roles/container.nodeServiceAccount
+# alone does NOT include Artifact Registry pull permission - every api/frontend pod failed with
+# ErrImagePull, "403 Forbidden" fetching the pull OAuth token, confirmed via `kubectl describe
+# pod`'s events. This is the direct GCP equivalent of AWS's
+# aws_iam_role_policy_attachment.eks_node_registry_policy
+# (AmazonEC2ContainerRegistryReadOnly) - omitted here originally because AWS's managed node role
+# needed 3 explicit policy attachments (worker/CNI/registry) and this got missed by analogy to
+# the GCP side needing only 1 role for the same worker/logging/monitoring bundle; registry pull
+# is a genuinely separate permission on GCP that has no equivalent bundling.
+resource "google_project_iam_member" "gke_node_artifact_registry" {
+  project = var.gcp_project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.gke_node.email}"
+}
+
 # --- Cluster ---
 # Zonal (single-zone control plane), not regional - covered by GKE's own
 # free-tier credit ($74.40/month per billing account, confirmed live via
@@ -118,6 +133,42 @@ resource "google_container_node_pool" "main" {
     # would let any pod on the node ride that SA's access regardless of
     # what the SA's own IAM roles are scoped to (confirmed live via web
     # search against GCP's node-service-account security guidance).
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
+      "https://www.googleapis.com/auth/devstorage.read_only",
+    ]
+  }
+
+  depends_on = [google_project_iam_member.gke_node_sa]
+}
+
+# --- Extra single-zone node pool: real node-overcommitment fix ---
+# Found via a real live deploy-gcp.sh run (2026-09-21): with all 3 e2-medium nodes at 74-94%
+# memory *requests* already (Kafka's 3x768Mi + api's 2x1Gi + frontend's 2x64Mi + Traefik's 128Mi,
+# on top of GKE's own system-pod reservation per node), kafka-2 couldn't schedule at all
+# ("0/3 nodes are available: 3 Insufficient memory"). Same shape of finding as AWS's node
+# overcommitment (terraform/aws/variables.tf's eks_node_count comment) - presented as a real
+# sizing/cost decision rather than resolved silently, per this project's own standing practice.
+# User chose a 4th e2-medium node over a larger machine type (e2-standard-2) - GKE's node_count on
+# the main pool is per-zone (see that variable's own comment on the live bug this already
+# corrected once), so a single pool can't give one specific zone an extra node on its own; this
+# second pool is scoped to one zone only (matching the cluster's own control-plane zone,
+# gcp_zone) to add exactly 1 more node there, landing at 4 total rather than a uniform 6
+# (node_count=2 across all 3 zones) that would have added CPU capacity nobody asked for.
+resource "google_container_node_pool" "extra" {
+  name    = "${var.project_name}-nodes-extra"
+  cluster = google_container_cluster.main.id
+
+  node_count     = 1
+  node_locations = [var.gcp_zone]
+
+  node_config {
+    machine_type    = var.gke_node_machine_type
+    disk_size_gb    = var.gke_node_disk_size_gb
+    disk_type       = var.gke_node_disk_type
+    service_account = google_service_account.gke_node.email
+
     oauth_scopes = [
       "https://www.googleapis.com/auth/logging.write",
       "https://www.googleapis.com/auth/monitoring",

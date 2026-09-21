@@ -14,14 +14,16 @@
 # `export USE_GKE_GCLOUD_AUTH_PLUGIN=True` - every kubectl call fails outright without it (see
 # terraform/gcp/README.md's Prerequisites section).
 #
-# UNTESTED against a real cluster as of 2026-09-21, same caveat as deploy-gcp.sh - reasoned
-# through and checked for gcloud command/flag correctness, not run against real GCP resources.
-# In particular, which exact GCP load-balancer resource type a plain `type: LoadBalancer` Service
-# resolves to (legacy target-pool-based external LB vs. the newer backend-service-based external
-# passthrough Network LB) is NOT confirmed live - AWS's identical assumption (NLB) turned out
-# wrong when finally checked (it was a Classic ELB). This script queries forwarding rules by IP
-# address, which exists for either flavor, specifically to avoid needing to guess which one -
-# still worth re-verifying live before trusting this the way AWS's finding is trusted.
+# deploy-gcp.sh has been live-debugged and functionally validated (2026-09-21, see
+# terraform/gcp/README.md), which also answered this script's own open question: a plain
+# `type: LoadBalancer` Service resolves to the legacy target-pool-based external Network LB here
+# (confirmed via `gcloud compute forwarding-rules list`'s target field pointing at
+# `targetPools/...`, not a backend service) - worth having actually checked, since AWS's identical
+# assumption ("it'll be an NLB") turned out wrong when finally checked there (it was a Classic
+# ELB). This teardown script itself is still UNTESTED against a real teardown as of this write,
+# though - reasoned through and checked for gcloud command/flag correctness, not run. It queries
+# forwarding rules by IP address, which exists for either LB flavor, specifically so it didn't
+# need to guess which one before this was confirmed.
 set -euo pipefail
 
 K8S_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

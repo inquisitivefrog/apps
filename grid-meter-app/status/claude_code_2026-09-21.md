@@ -310,33 +310,93 @@ With the plugin in place, `kubectl get nodes` confirmed all 3 real nodes `Ready`
 `FAIL` - no crashes, no false positives - the same meaningful bar established for
 `check-resources-gcp.sh`'s Terraform-layer counterpart earlier this session.
 
+## Done — ran `deploy-gcp.sh` for real, live-debugged through 4 new GCP-specific bugs, then fully validated the app end-to-end
+
+User asked to run `deploy-gcp.sh` for real. Docker Desktop wasn't running - started it and polled
+for the daemon rather than assuming a fixed wait, matching this project's own standing test-
+infrastructure lesson. AWS's proactively-applied fixes (XFS StorageClass, `--platform
+linux/amd64`, 1Gi api memory) all held up correctly on the very first run - none of AWS's original
+6 bugs recurred here. Four **new**, genuinely GCP-specific bugs did, each found live and fixed the
+same session:
+
+1. **Artifact Registry repository paths were missing an image-name segment** - a real structural
+   difference from ECR (repo IS the image there; a GCP repo is a namespace holding one or more
+   separately-named images), not a config mistake in isolation. Docker's own error was opaque
+   (`400 Bad Request` on a HEAD request); the real cause (`NAME_INVALID: Missing image name`) only
+   surfaced by going around docker entirely and hitting the registry API directly with `curl`.
+   Fixed by appending `/api`/`/frontend` to `outputs.tf`'s Artifact Registry outputs - an
+   output-only Terraform change, confirmed via `terraform plan` itself stating "without changing
+   any real infrastructure" before applying.
+2. **Buildx's default provenance/SBOM attestations get rejected by Artifact Registry** - confirmed
+   via web search as a known, documented compatibility gap, not project-specific. Fixed with
+   `--provenance=false --sbom=false`, plus switched to `docker buildx build --push` (bypasses this
+   Mac's containerd image store's local OCI round-trip, a second contributing factor specific to
+   this dev machine's Docker Desktop configuration).
+3. **The GKE node service account's `roles/container.nodeServiceAccount` role doesn't include
+   Artifact Registry pull permission** - every `api`/`frontend` pod failed `ErrImagePull` with a
+   `403 Forbidden` on the pull OAuth token, confirmed via `kubectl describe pod` events. Missed
+   originally because AWS's node role needed 3 separate policy attachments (worker/CNI/registry)
+   while GCP's single `container.nodeServiceAccount` role covers logging/monitoring in one grant -
+   registry pull turned out to need its own separate grant regardless, no bundling equivalent.
+   Fixed with a new `roles/artifactregistry.reader` IAM binding.
+4. **Real node overcommitment, the same shape of finding as AWS's** (all 3 `e2-medium` nodes at
+   74-94% memory requests, `kafka-2` unable to schedule at all). Presented as a real sizing/cost
+   decision rather than resolved silently - user chose a 4th `e2-medium` node over a larger machine
+   type. Implemented as a second, single-zone node pool rather than bumping the main pool's
+   `node_count` (that field is per-zone - a uniform bump would have added 3 nodes, not 1).
+
+**Then ran the full functional validation AWS's task #15 did**, against the real LoadBalancer IP:
+login (real JWT), create a meter (real Cloud SQL write), post a reading with an `Idempotency-Key`
+(published through the real 3-broker in-cluster Kafka), then poll `GET /readings` - **came back on
+the first attempt**, confirming the full async Kafka → consumer → Postgres pipeline. Spun up a
+throwaway `redis-cli` pod against the real Memorystore endpoint and confirmed both
+`reading:latest:<meterId>` and `idempotency:<key>` landed there too, closing the loop on
+`architecture.md`'s documented Postgres-and-Redis consumer write. Attempted cleanup: `DELETE
+/api/v1/meters/<id>` correctly returned `409 Conflict` (same immutable-readings FK constraint
+AWS's precedent found) - left the one test meter/reading in place.
+
+**Also closed out a standing open question from earlier in the session**: with the LB actually
+live, checked directly (`gcloud compute forwarding-rules list`) rather than continuing to guess -
+confirmed this resolves to the legacy target-pool-based external Network LB, not the newer
+backend-service-based one. Updated `teardown-gcp.sh`'s own comment to state this as confirmed
+rather than an open assumption.
+
+**GCP's deploy overlay is now at the same confidence level as AWS's** - the "built but genuinely
+untested" caveat from earlier in this session no longer applies to `deploy-gcp.sh` (though
+`teardown-gcp.sh` itself remains genuinely untested, a separate real gap still open below).
+
 ## Open
 
-- **Real GCP infrastructure is live and billing, correctly sized** — VPC, GKE cluster (3 nodes,
-  one per zone) + node pool, Cloud SQL, Memorystore, Artifact Registry, all confirmed healthy via
-  `check-resources-gcp.sh` (17/17 pass, re-run after the node-count fix landed). This is a
-  materially different state than every earlier status write this session described - no longer
-  plan-only, and the 9-node overshoot is resolved and live-confirmed, not just planned.
-- **`k8s/check-resources-gcp.sh` now exists and is live-smoke-tested (15/15 correctly FAIL against
-  the app-undeployed cluster)**, but `deploy-gcp.sh`/`teardown-gcp.sh` themselves are still
-  genuinely untested — see the "Done" section above and `terraform/gcp/README.md`'s "Deploy
-  overlay: built but genuinely untested". Nothing here has AWS's live-debugged confidence level
-  yet - now buildable for real, since the cluster it needs actually exists, and
-  `gke-gcloud-auth-plugin` (the real missing prerequisite found this session) is installed.
+- **Real GCP infrastructure is live and billing, fully deployed and functionally validated** — VPC,
+  GKE cluster (4 nodes: 1/zone + 1 extra in `gcp_zone`), Cloud SQL, Memorystore, Artifact Registry,
+  and now the full app itself (Traefik, Kafka, api, frontend) all running and confirmed working
+  end-to-end against real endpoints. The most complete state this session has described - no
+  longer plan-only, no longer just infra-only.
+- **`teardown-gcp.sh` is the one piece of the GCP deploy overlay still genuinely untested** -
+  `deploy-gcp.sh` is now proven; a real teardown cycle (and therefore the two-script
+  spin-up/teardown runbook AWS has, matching its "Spin-up and teardown" README section) hasn't
+  been exercised yet.
 - **No `check-costs-gcp.sh`** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
   `terraform/gcp/README.md`'s "No `check-costs-gcp.sh` yet" section.
+- **Real cost is now accruing on the GCP side** (4 real `e2-medium` nodes, Cloud SQL, Memorystore,
+  the LoadBalancer) - the stack has not been torn down as of this write, unlike AWS's disciplined
+  "torn down between sessions" pattern. Worth a deliberate teardown decision, not left running
+  indefinitely by default.
 - Carried over, untouched: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost measurement fix,
   `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10), Azure
   Terraform config (still fully unstarted).
 
 ## Next
 
-1. Run `deploy-gcp.sh` and expect to live-debug it, same as AWS's first real `deploy-aws.sh` run —
-   then a live functional pass through the app's real endpoints (mirroring AWS's task #15), and
-   `teardown-gcp.sh` to confirm the two-script cycle actually works end-to-end.
-2. Set up the Cloud Billing BigQuery export before the first real `teardown-gcp.sh` +
-   `terraform destroy` cycle, not after - needed for any future delayed cost cross-check.
-3. Azure Terraform config, last in the AWS-first sequencing.
-4. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+1. Decide whether to tear this down now (`teardown-gcp.sh`, then `terraform destroy`) or keep it
+   running for further work - real cost is accruing either way. Set up the Cloud Billing BigQuery
+   export first if a delayed cost cross-check is wanted after teardown.
+2. Run `teardown-gcp.sh` for the first time and expect to live-debug it - this closes out the
+   GCP deploy overlay to the same confidence level AWS's spin-up/teardown runbook has (two full
+   tested cycles, not just one).
+3. Build `terraform/gcp/check-costs-gcp.sh`'s prerequisite (the BigQuery export) and the script
+   itself, once there's a real teardown to confirm against.
+4. Azure Terraform config, last in the AWS-first sequencing.
+5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

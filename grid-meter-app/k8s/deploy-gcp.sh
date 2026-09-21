@@ -13,13 +13,13 @@
 # kubectl was pointed at this real cluster; every kubectl call fails outright without it (see
 # terraform/gcp/README.md's Prerequisites section).
 #
-# terraform/gcp/'s infra is now live and applied (2026-09-21) - this script itself is still
-# UNTESTED against a real deploy, though: unlike deploy-aws.sh (live-debugged through 6 real bugs
-# before it worked cleanly), this has only been reasoned through and checked for command/flag
-# correctness. Known, directly-transferable AWS findings have been applied proactively (XFS
-# StorageClass, --platform linux/amd64, 1Gi api memory - see storageclass-gcp.yaml/api-gcp.yaml's
-# own comments) - but treat a first real run of this script the way AWS's first real deploy-aws.sh
-# run was treated: expect to live-debug, not expect it to work first try.
+# Live-debugged and functionally validated end-to-end (2026-09-21) - see terraform/gcp/README.md's
+# "Deploy overlay: now live-debugged and functionally validated" section for the full account (4
+# real GCP-specific bugs found and fixed: Artifact Registry paths needing an image-name segment,
+# Buildx attestations rejected by GAR, the node SA missing artifactregistry.reader, and real node
+# overcommitment needing a 4th node). AWS's proactively-applied fixes (XFS StorageClass, --platform
+# linux/amd64, 1Gi api memory) all held up correctly on the first real run - none of AWS's original
+# 6 bugs recurred here.
 set -euo pipefail
 
 K8S_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,10 +55,28 @@ echo "== Building + pushing images (tag: latest, platform: linux/amd64) =="
 # an arm64-only image at all. AWS's identical build confirmed "no match for platform in manifest"
 # live on its first real deploy attempt with this exact mismatch - built in here proactively
 # rather than waiting to rediscover it.
-docker build --platform linux/amd64 -t "$AR_API_URL:latest" "$REPO_ROOT/api"
-docker build --platform linux/amd64 -t "$AR_FRONTEND_URL:latest" "$REPO_ROOT/frontend"
-docker push "$AR_API_URL:latest"
-docker push "$AR_FRONTEND_URL:latest"
+#
+# --provenance=false --sbom=false: found live (2026-09-21) on this deploy's first real run - the
+# default Buildx build attaches provenance/SBOM attestation manifests to the image, which Artifact
+# Registry rejected outright at push time (400 Bad Request on the attestation manifest's own
+# digest, after every real image layer had already pushed successfully) - a known, documented
+# compatibility gap between newer Buildx attestation formats and Artifact Registry, not something
+# specific to this project's config. AWS's ECR never hit this (no attestation-manifest rejection
+# seen there), so this flag has no AWS-side equivalent to mirror - a genuinely new, GCP-specific
+# finding.
+#
+# `docker buildx build --push` instead of `docker build` + `docker push`: found live the same
+# session, immediately after the fix above - with the attestation manifest gone, the push still
+# failed with a 400 on a HEAD request to the "latest" tag itself. Root cause: this machine's
+# Docker Desktop uses the containerd image store (`docker info`'s driver-type:
+# io.containerd.snapshotter.v1), which round-trips the built image through a local OCI-format
+# store before a separate `docker push` re-uploads it - a known compatibility gap with Artifact
+# Registry's manifest handling for images that took that path. `buildx build --push` pushes
+# directly to the registry from the build itself, never touching the local containerd store's OCI
+# export format at all - confirmed as the standard, documented workaround for this exact failure
+# shape (GAR + containerd image store), not specific to this project.
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false --push -t "$AR_API_URL:latest" "$REPO_ROOT/api"
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false --push -t "$AR_FRONTEND_URL:latest" "$REPO_ROOT/frontend"
 
 echo "== Applying Traefik CRDs + RBAC (shared with kind/AWS) =="
 kubectl apply -f "$K8S_DIR/traefik-crds.yaml"

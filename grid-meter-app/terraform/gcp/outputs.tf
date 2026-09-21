@@ -55,13 +55,13 @@ output "cloudsql_password_secret_id" {
 }
 
 output "artifact_registry_api_repository" {
-  description = "Artifact Registry repository URL for the api image, in docker-push format (region-docker.pkg.dev/project/repo). Used by k8s/deploy-gcp.sh."
-  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.api.repository_id}"
+  description = "Full pushable image path for the api image (region-docker.pkg.dev/project/repo/image). Found live (2026-09-21, first real deploy-gcp.sh run): unlike AWS ECR, where the repository itself IS the image, an Artifact Registry repository is a namespace that holds one or more separately-named images - a path missing the trailing image-name segment gets NAME_INVALID (\"Missing image name\") from the registry, surfacing as an opaque 400 Bad Request on the docker client's own HEAD-request probe rather than a clear error. This repo holds exactly one image, named 'api'. Used by k8s/deploy-gcp.sh."
+  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.api.repository_id}/api"
 }
 
 output "artifact_registry_frontend_repository" {
-  description = "Artifact Registry repository URL for the frontend image. Used by k8s/deploy-gcp.sh."
-  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.frontend.repository_id}"
+  description = "Full pushable image path for the frontend image - see artifact_registry_api_repository's description for why the trailing /frontend image-name segment is required. Used by k8s/deploy-gcp.sh."
+  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.frontend.repository_id}/frontend"
 }
 
 output "memorystore_host" {

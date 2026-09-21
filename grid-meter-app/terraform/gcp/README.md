@@ -63,7 +63,7 @@ check (not just trusting the fix's "Apply complete") confirmed it actually lande
 | Resource | Sizing | Replaces (locally) | AWS equivalent |
 |---|---|---|---|
 | VPC (custom mode), 1 subnet + secondary ranges, Cloud Router/NAT | — | — | VPC, 3 AZs, 1 NAT gateway |
-| GKE cluster (zonal control plane) + managed node pool | 3x `e2-medium`, one per zone across 3 zones (fixed size, no autoscaling) | The `kind` cluster | EKS, 3x `t3.medium` |
+| GKE cluster (zonal control plane) + 2 managed node pools | 4x `e2-medium` total - `main` pool 1/zone across 3 zones + a 4th `extra` pool node in `gcp_zone` only (fixed size, no autoscaling) | The `kind` cluster | EKS, 3x `t3.medium` |
 | Cloud SQL PostgreSQL | `db-f1-micro`, zonal (not regional HA), 20GB PD-SSD | Self-hosted Patroni + Consul | RDS `db.t4g.micro` |
 | Memorystore for Valkey | `SHARED_CORE_NANO`, `CLUSTER_DISABLED` (single shard) | Self-hosted Redis + Sentinel | ElastiCache `cache.t4g.micro` |
 | Secret Manager secret | Cloud SQL's generated password | — | RDS's `manage_master_user_password` (Secrets Manager) |
@@ -149,37 +149,64 @@ against this project:
   all. Fixed by filtering on GKE's own `goog-k8s-cluster-name` label instead - stable, not
   truncated, and present on every GKE-managed instance.
 
-## Deploy overlay: built but genuinely untested
+## Deploy overlay: now live-debugged and functionally validated (2026-09-21)
 
-`k8s/deploy-gcp.sh`/`teardown-gcp.sh`, `k8s/storageclass-gcp.yaml`, `k8s/traefik-gcp.yaml`,
-`k8s/api-gcp.yaml` are all written and syntax-checked (`bash -n`, plus live `gcloud`
-command/flag smoke tests against this real project where practical), but **none of it has run
-against a real cluster** — `terraform/gcp/` is still plan-only, so there's nothing to deploy onto
-yet. This is a materially different confidence level than AWS's equivalent scripts, which were
-live-debugged through 6 real bugs (fsGroup, image-arch mismatch, a stuck StatefulSet rollout, an
-OOM-sized memory limit, ext4's `lost+found` breaking Kafka, node overcommitment) before they
-worked cleanly — see `status/claude_code_2026-09-18.md`.
+`k8s/deploy-gcp.sh` has run for real against the live cluster, was live-debugged through 4 real
+bugs (below) until it worked cleanly, and the full app was then functionally validated end-to-end
+against real endpoints - the GCP counterpart of AWS's task #8-#15 arc, now at the same confidence
+level.
 
-**Known, directly-transferable AWS findings were applied proactively rather than left to be
-rediscovered**: `k8s/storageclass-gcp.yaml` uses XFS (not the GCE PD CSI driver's ext4 default) to
-sidestep the exact same Kafka `lost+found` bug AWS hit; `k8s/deploy-gcp.sh` builds images with
-`--platform linux/amd64` for the same Apple-Silicon-build-host-vs-x86_64-node-pool mismatch AWS
-hit; `k8s/api-gcp.yaml` starts at `memory: 1Gi`, not kind's `512Mi`, for the same JVM-startup-
-footprint OOM AWS hit. One genuine GCP-specific step with no AWS equivalent: `deploy-gcp.sh`
-explicitly un-defaults GKE's own built-in `standard-rwo` StorageClass before applying the XFS one,
-since (unlike EKS, which ships with no default at all) GKE auto-marks one at cluster creation, and
-two StorageClasses can't both carry `is-default-class` without an ambiguous result.
+**Known, directly-transferable AWS findings were applied proactively and held up as designed**:
+`k8s/storageclass-gcp.yaml`'s XFS StorageClass, `deploy-gcp.sh`'s `--platform linux/amd64` build
+flag, and `k8s/api-gcp.yaml`'s `memory: 1Gi` all worked correctly on the first real run - none of
+AWS's original 6 bugs recurred here.
 
-**What's still genuinely unverified**: which exact GCP load-balancer resource type a plain
-`type: LoadBalancer` Traefik Service resolves to (`teardown-gcp.sh` queries forwarding rules by IP
-specifically to sidestep needing to guess — AWS's own identical assumption, "it'll be an NLB",
-turned out wrong when finally checked live); whether Artifact Registry's `terraform destroy`
-behavior on a non-empty repo needs a `force_delete`-equivalent flag the way ECR does (checked the
-provider schema — no such attribute exists — but not live-confirmed the way AWS's finding was);
-and the entire live functional path (does the app actually serve traffic end-to-end through Cloud
-SQL/Memorystore/Kafka) that AWS's task #15 validated directly against real endpoints. Treat a
-first real run of `deploy-gcp.sh` the way AWS's first real `deploy-aws.sh` run was treated: expect
-to live-debug, not expect it to work first try.
+**Four new, genuinely GCP-specific bugs found live, all fixed the same session**:
+
+1. **Artifact Registry repository paths are missing an image-name segment** - a real, structural
+   difference from ECR (where the repository IS the image), not a bug in this project's config.
+   Docker's own error was opaque (`unknown: unexpected status from HEAD request ...: 400 Bad
+   Request`); the real cause only surfaced via a direct `curl GET` against the registry API:
+   `NAME_INVALID: Missing image name. Pulls should be of the form docker pull
+   HOST-NAME/PROJECT-ID/REPOSITORY/IMAGE`. Fixed by appending `/api` and `/frontend` to
+   `outputs.tf`'s `artifact_registry_*_repository` values - Terraform output changes only, zero
+   infrastructure impact, confirmed via `terraform plan`'s own "without changing any real
+   infrastructure" message.
+2. **Buildx's default provenance/SBOM attestations get rejected by Artifact Registry** - a
+   separate 400 on the attestation manifest's own digest, after every real image layer had already
+   pushed successfully. A known, documented Buildx-vs-GAR compatibility gap (confirmed via web
+   search, not specific to this project). Fixed with `--provenance=false --sbom=false`, and
+   switched from `docker build` + `docker push` to `docker buildx build --push` (pushes directly
+   to the registry, bypassing this Mac's containerd image store's local OCI round-trip - a second,
+   independent contributor to registry-push friction on this specific setup).
+3. **The GKE node service account's `roles/container.nodeServiceAccount` role does not include
+   Artifact Registry pull permission** - every `api`/`frontend` pod failed `ErrImagePull` with a
+   `403 Forbidden` fetching the pull OAuth token (confirmed via `kubectl describe pod`'s events).
+   The direct GCP equivalent of AWS's `AmazonEC2ContainerRegistryReadOnly` node-role policy
+   attachment, omitted here originally since GCP's `container.nodeServiceAccount` role bundles
+   logging/monitoring in a way AWS's node role needed 3 separate policy attachments for - registry
+   pull turned out to need its own separate grant regardless. Fixed with a new
+   `roles/artifactregistry.reader` `google_project_iam_member`.
+4. **Real node overcommitment, same shape as AWS's finding**: with all 3 original `e2-medium`
+   nodes at 74-94% memory *requests* already, `kafka-2` couldn't schedule at all
+   ("0/3 nodes are available: 3 Insufficient memory"). Presented as a real sizing/cost decision
+   rather than resolved silently, matching this project's own standing practice - **user chose a
+   4th `e2-medium` node over a larger machine type**. Implemented as a second, single-zone node
+   pool (`google_container_node_pool.extra`, scoped to `gcp_zone` only) rather than bumping the
+   main pool's `node_count`, since that field is per-zone (see `gke_node_count`'s own comment on
+   the earlier live bug this already corrected once) - a uniform bump would have added 3 nodes
+   (6 total), not the 1 actually needed.
+
+**Full functional pipeline confirmed working end-to-end against real GCP infrastructure**,
+mirroring AWS's task #15 exactly: `POST /api/v1/auth/login` (real JWT), `POST /api/v1/meters`
+(real Cloud SQL write), `POST /api/v1/readings` with an `Idempotency-Key` (published through the
+real 3-broker in-cluster Kafka), `GET /api/v1/readings?meterId=...` (came back on the **first
+poll attempt**, confirming the full async Kafka → consumer → Postgres pipeline), and a throwaway
+`redis-cli` debug pod confirming both `reading:latest:<meterId>` and `idempotency:<key>` landed in
+Memorystore/Valkey - closing the loop on `architecture.md`'s "consumer writes to Postgres *and*
+Redis" data flow. Attempted cleanup: `DELETE /api/v1/meters/<id>` correctly returned `409
+Conflict` (same immutable-readings FK constraint AWS's precedent found) - left the one test
+meter/reading in place rather than force it out via a direct SQL `DELETE`.
 
 ## Inspection script
 
