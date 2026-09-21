@@ -10,6 +10,10 @@
 #      problem - deleting the PVCs (StorageClass reclaimPolicy: Delete, storageclass-gcp.yaml) is
 #      what actually triggers the CSI driver to call Compute Engine's DeleteDisk.
 #
+# Needs `gke-gcloud-auth-plugin` installed and on $PATH, plus
+# `export USE_GKE_GCLOUD_AUTH_PLUGIN=True` - every kubectl call fails outright without it (see
+# terraform/gcp/README.md's Prerequisites section).
+#
 # UNTESTED against a real cluster as of 2026-09-21, same caveat as deploy-gcp.sh - reasoned
 # through and checked for gcloud command/flag correctness, not run against real GCP resources.
 # In particular, which exact GCP load-balancer resource type a plain `type: LoadBalancer` Service

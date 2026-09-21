@@ -267,20 +267,65 @@ bug:
   real live instance via `gcloud compute instances describe ... --format="yaml(labels)"`).
   Re-ran the full script after both fixes: 17/17 pass.
 
+## Done — renamed `check-resources.sh`/`check-costs.sh` scripts with a `<platform>` suffix
+
+User pointed out `terraform/aws/check-resources.sh` and `terraform/gcp/check-resources.sh` had
+identical filenames, differing only by directory - genuinely confusing alongside
+`k8s/check-resources-aws.sh`, which already carried an `-aws` suffix. Renamed via `git mv` for
+consistency: `terraform/aws/check-resources.sh` → `check-resources-aws.sh`,
+`terraform/aws/check-costs.sh` → `check-costs-aws.sh`, `terraform/gcp/check-resources.sh` →
+`check-resources-gcp.sh`. Updated every cross-reference (both READMEs, self-referencing usage
+comments, `k8s/check-resources-aws.sh`'s own comment), re-ran the GCP script under its new name
+against the live infrastructure to confirm nothing broke (17/17 still pass). Left historical
+`status/*.md` files untouched - point-in-time records of what things were named then, not living
+docs to keep in sync.
+
+## Done — pushed 7 local commits to `origin/main`; SSH agent needed re-adding
+
+Local `main` was 7 commits ahead of `origin/main` with nothing pushed. First push attempt failed
+- `Permission denied (publickey)` - the known "SSH agent loses loaded keys after a reboot on this
+Mac" pattern from a prior session's memory. User re-added the key (`ssh-add
+--apple-use-keychain`), second push succeeded cleanly (`5a88d51..ae0145a`).
+
+## Done — built and live-smoke-tested `k8s/check-resources-gcp.sh`; found a real missing prerequisite
+
+Mirrors `k8s/check-resources-aws.sh` exactly (Traefik, Kafka StatefulSet/PVCs, `api`/`frontend`
+Deployments, config/secret/IngressRoute/StorageClass), two adjustments: GCP's LB is IP-based
+(`.status.loadBalancer.ingress[0].ip`, not `.hostname`), and the default StorageClass is
+`pd-balanced-xfs`, not `gp3`.
+
+**Live-smoke-tested against the real GKE cluster** (not just `bash -n`) - fetched real kubeconfig
+credentials to enable this, which immediately surfaced a genuine missing prerequisite:
+`gke-gcloud-auth-plugin` isn't installed, and every `kubectl` call against a GKE cluster fails
+outright without it (Google deprecated the older exec-auth path GKE's kubeconfig relies on).
+`deploy-gcp.sh`/`teardown-gcp.sh` would have failed on their very first `kubectl` call. Installed
+it (`gcloud components install gke-gcloud-auth-plugin`), found it lands at
+`/opt/homebrew/share/google-cloud-sdk/bin` - not on `$PATH` by default, and
+`export USE_GKE_GCLOUD_AUTH_PLUGIN=True` is also required. Documented as a new Prerequisites item
+in `terraform/gcp/README.md`, and referenced from both `deploy-gcp.sh`'s and `teardown-gcp.sh`'s
+own header comments.
+
+With the plugin in place, `kubectl get nodes` confirmed all 3 real nodes `Ready`. Ran
+`check-resources-gcp.sh` against this real (but app-undeployed) cluster: all 15 checks correctly
+`FAIL` - no crashes, no false positives - the same meaningful bar established for
+`check-resources-gcp.sh`'s Terraform-layer counterpart earlier this session.
+
 ## Open
 
 - **Real GCP infrastructure is live and billing, correctly sized** — VPC, GKE cluster (3 nodes,
   one per zone) + node pool, Cloud SQL, Memorystore, Artifact Registry, all confirmed healthy via
-  `check-resources.sh` (17/17 pass, re-run after the node-count fix landed). This is a materially
-  different state than every earlier status write this session described - no longer plan-only,
-  and the 9-node overshoot is resolved and live-confirmed, not just planned.
-- **k8s deploy overlay is built but genuinely untested against a real cluster** — see the "Done"
-  section above and `terraform/gcp/README.md`'s "Deploy overlay: built but genuinely untested".
-  Nothing here has AWS's live-debugged confidence level yet - now buildable for real, since the
-  cluster it needs actually exists.
-- **No `check-costs.sh` for GCP** — needs a one-time Cloud Billing-export-to-BigQuery setup first
+  `check-resources-gcp.sh` (17/17 pass, re-run after the node-count fix landed). This is a
+  materially different state than every earlier status write this session described - no longer
+  plan-only, and the 9-node overshoot is resolved and live-confirmed, not just planned.
+- **`k8s/check-resources-gcp.sh` now exists and is live-smoke-tested (15/15 correctly FAIL against
+  the app-undeployed cluster)**, but `deploy-gcp.sh`/`teardown-gcp.sh` themselves are still
+  genuinely untested — see the "Done" section above and `terraform/gcp/README.md`'s "Deploy
+  overlay: built but genuinely untested". Nothing here has AWS's live-debugged confidence level
+  yet - now buildable for real, since the cluster it needs actually exists, and
+  `gke-gcloud-auth-plugin` (the real missing prerequisite found this session) is installed.
+- **No `check-costs-gcp.sh`** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
-  `terraform/gcp/README.md`'s "No `check-costs.sh` yet" section.
+  `terraform/gcp/README.md`'s "No `check-costs-gcp.sh` yet" section.
 - Carried over, untouched: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost measurement fix,
   `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10), Azure
   Terraform config (still fully unstarted).

@@ -8,11 +8,15 @@
 #
 # Prerequisite: terraform/gcp/ must already be applied (see terraform/gcp/README.md) - this
 # script reads its outputs directly rather than duplicating any endpoint/name as a literal here.
+# Also needs `gke-gcloud-auth-plugin` installed and on $PATH, plus
+# `export USE_GKE_GCLOUD_AUTH_PLUGIN=True` - found missing live (2026-09-21) the first time
+# kubectl was pointed at this real cluster; every kubectl call fails outright without it (see
+# terraform/gcp/README.md's Prerequisites section).
 #
-# UNTESTED against a real cluster as of 2026-09-21 - terraform/gcp/ is still plan-only, so unlike
-# deploy-aws.sh (live-debugged through 6 real bugs before it worked cleanly), this script has only
-# been reasoned through and checked for command/flag correctness, not run against a live GKE
-# cluster. Known, directly-transferable AWS findings have been applied proactively (XFS
+# terraform/gcp/'s infra is now live and applied (2026-09-21) - this script itself is still
+# UNTESTED against a real deploy, though: unlike deploy-aws.sh (live-debugged through 6 real bugs
+# before it worked cleanly), this has only been reasoned through and checked for command/flag
+# correctness. Known, directly-transferable AWS findings have been applied proactively (XFS
 # StorageClass, --platform linux/amd64, 1Gi api memory - see storageclass-gcp.yaml/api-gcp.yaml's
 # own comments) - but treat a first real run of this script the way AWS's first real deploy-aws.sh
 # run was treated: expect to live-debug, not expect it to work first try.

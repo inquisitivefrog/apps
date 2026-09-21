@@ -47,6 +47,16 @@ check (not just trusting the fix's "Apply complete") confirmed it actually lande
    `cloudresourcemanager`, `secretmanager`, `artifactregistry`.
 4. Terraform >= 1.11.0 (this dev machine runs 1.13.2).
 5. `kubectl` installed, for interacting with the cluster once it exists.
+6. **`gke-gcloud-auth-plugin`** (`gcloud components install gke-gcloud-auth-plugin`) — found
+   missing live (2026-09-21) the first time `kubectl` was pointed at the real cluster: Google
+   deprecated the older exec-auth path GKE's kubeconfig used to rely on directly, so without this
+   plugin every `kubectl` command against a GKE cluster fails outright
+   (`exec: executable gke-gcloud-auth-plugin not found`) - `deploy-gcp.sh`/`teardown-gcp.sh` would
+   have failed on their very first `kubectl` call without it. Also needs
+   `export USE_GKE_GCLOUD_AUTH_PLUGIN=True` in the shell (or set permanently via `gcloud config
+   set` per Google's own docs), and the plugin's install location
+   (`/opt/homebrew/share/google-cloud-sdk/bin` on this Mac) needs to be on `$PATH` - neither is
+   automatic after `gcloud components install`.
 
 ## What this creates (once applied)
 
