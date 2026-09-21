@@ -253,8 +253,11 @@ bug:
   real API semantics. Ran at ~3x the intended `e2-medium` compute cost from the first successful
   apply until caught this same session. Fixed: `gke_node_count` default 3 → 1 (`variables.tf`,
   `gke.tf`'s comment corrected too) - re-planned against the real live state: a single clean
-  in-place `node_count: 3 -> 1` update, 0 to add, 1 to change, 0 to destroy. **Plan is saved
-  (`tfplan`), ready for the user to apply - not yet applied as of this write.**
+  in-place `node_count: 3 -> 1` update, 0 to add, 1 to change, 0 to destroy. **User applied it
+  (4m6s) - re-ran `check-resources.sh` afterward and confirmed live: exactly 3 real instances now,
+  one per zone (`us-central1-a/b/c`), 17/17 checks passing.** Not just trusted from "Apply
+  complete" - the same "verify the live system" discipline that caught the bug in the first place
+  is what confirmed the fix.
 - **A fourth, smaller bug in `check-resources.sh` itself, found investigating the above**: the
   GCE-instance check's `name~^gke-${CLUSTER_NAME}-` regex never matched anything, silently -
   GCE truncates instance names at 63 characters, so real names came out
@@ -266,14 +269,11 @@ bug:
 
 ## Open
 
-- **Real GCP infrastructure is live and billing** — VPC, GKE cluster + node pool, Cloud SQL,
-  Memorystore, Artifact Registry, all confirmed healthy via `check-resources.sh` (17/17 pass).
-  This is a materially different state than every earlier status write this session described -
-  no longer plan-only.
-- **Urgent-but-already-fixed: node pool was running 9 nodes instead of 3 from first apply until
-  caught this session** - the corrected plan (`node_count: 3 -> 1`) is saved as `tfplan` in
-  `terraform/gcp/`, ready to apply, but **not yet applied as of this write** - confirm this landed
-  before trusting node count/cost figures anywhere else in this doc or the README.
+- **Real GCP infrastructure is live and billing, correctly sized** — VPC, GKE cluster (3 nodes,
+  one per zone) + node pool, Cloud SQL, Memorystore, Artifact Registry, all confirmed healthy via
+  `check-resources.sh` (17/17 pass, re-run after the node-count fix landed). This is a materially
+  different state than every earlier status write this session described - no longer plan-only,
+  and the 9-node overshoot is resolved and live-confirmed, not just planned.
 - **k8s deploy overlay is built but genuinely untested against a real cluster** — see the "Done"
   section above and `terraform/gcp/README.md`'s "Deploy overlay: built but genuinely untested".
   Nothing here has AWS's live-debugged confidence level yet - now buildable for real, since the
@@ -287,17 +287,11 @@ bug:
 
 ## Next
 
-1. **Apply the saved `tfplan` in `terraform/gcp/`** to correct the node pool from 9 nodes down to
-   the intended 3 - this is the single most time-sensitive item, since real over-cost has been
-   accruing since the first successful apply.
-2. Run `check-resources.sh` again after that lands, to confirm exactly 3 nodes (not 9, not some
-   other count) - don't trust the fix without re-verifying live, same discipline that caught the
-   bug in the first place.
-3. Run `deploy-gcp.sh` and expect to live-debug it, same as AWS's first real `deploy-aws.sh` run —
+1. Run `deploy-gcp.sh` and expect to live-debug it, same as AWS's first real `deploy-aws.sh` run —
    then a live functional pass through the app's real endpoints (mirroring AWS's task #15), and
    `teardown-gcp.sh` to confirm the two-script cycle actually works end-to-end.
-4. Set up the Cloud Billing BigQuery export before the first real `teardown-gcp.sh` +
+2. Set up the Cloud Billing BigQuery export before the first real `teardown-gcp.sh` +
    `terraform destroy` cycle, not after - needed for any future delayed cost cross-check.
-5. Azure Terraform config, last in the AWS-first sequencing.
-6. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+3. Azure Terraform config, last in the AWS-first sequencing.
+4. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

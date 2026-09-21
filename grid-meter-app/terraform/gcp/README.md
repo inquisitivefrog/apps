@@ -27,11 +27,13 @@ apply, not by `terraform plan`**: `gke_node_count`'s default of 3 was meant as "
 zone" but GKE's own `node_count` semantics are per-zone for a multi-zone node pool, so it actually
 created **9 real e2-medium instances, not 3** — roughly 3x the intended compute cost, running from
 first apply until caught. See "Real findings" below for the fix and the corrected value (1, not
-3). This is the sharpest instance yet of this project's own standing "verify the live system"
-discipline actually catching something real: neither `terraform plan` nor `terraform validate` at
-any point surfaced this, since the resource's field is genuinely correct HCL, just misunderstood
-sizing math on my part - a real, live resource *count* was the only place this was ever going to
-be visible.
+3). **Fixed and applied the same session** — `check-resources.sh` re-run afterward confirmed
+exactly 3 real instances live, one per zone, 17/17 checks passing. This is the sharpest instance
+yet of this project's own standing "verify the live system" discipline actually catching something
+real: neither `terraform plan` nor `terraform validate` at any point surfaced this, since the
+resource's field is genuinely correct HCL, just misunderstood sizing math on my part - a real,
+live resource *count* was the only place this was ever going to be visible, and only a second live
+check (not just trusting the fix's "Apply complete") confirmed it actually landed.
 
 ## Prerequisites
 
