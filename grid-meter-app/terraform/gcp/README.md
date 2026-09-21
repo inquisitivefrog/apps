@@ -251,13 +251,18 @@ terraform plan -out tfplan
 terraform apply tfplan   # run by the user, never Claude Code - see "Status" above
 ```
 
-## Remaining before the k8s deploy overlay can actually be exercised
+## Remaining
 
-1. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
-   "No `check-costs-gcp.sh` yet" above. Not done yet; do this before the next `terraform destroy` if a
-   delayed cost cross-check is wanted.
-2. Run `k8s/deploy-gcp.sh` against this now-live cluster and expect to live-debug it - see "Deploy
-   overlay: built but genuinely untested" above.
-3. Confirm current free-trial credit balance periodically while this stays up - GKE nodes, Cloud
-   SQL, and Memorystore are all real, billed infrastructure now (no meaningful Always-Free
-   coverage at this sizing, same as AWS's ElastiCache/RDS/EKS-node costs).
+Both `k8s/deploy-gcp.sh` and `k8s/teardown-gcp.sh` have now run for real (2026-09-21) - see
+"Deploy overlay: now live-debugged and functionally validated" above. What's still open:
+
+1. **`terraform destroy` has not been run** - `teardown-gcp.sh` only clears the
+   kubectl-provisioned resources it exists to clean up (the LB, Kafka's PVCs/disks); the GKE
+   cluster/node pools, Cloud SQL, Memorystore, Artifact Registry, and VPC are all still live and
+   billing. This is the actual remaining cost-accruing gap.
+2. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
+   "No `check-costs-gcp.sh` yet" above - before that `terraform destroy`, if a delayed cost
+   cross-check is wanted afterward.
+3. A second full spin-up/teardown cycle, matching AWS's own two-cycle confidence bar (its first
+   cycle found 2 real bugs; its second confirmed both fixes held) - GCP has had one clean cycle so
+   far.

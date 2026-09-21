@@ -362,8 +362,23 @@ backend-service-based one. Updated `teardown-gcp.sh`'s own comment to state this
 rather than an open assumption.
 
 **GCP's deploy overlay is now at the same confidence level as AWS's** - the "built but genuinely
-untested" caveat from earlier in this session no longer applies to `deploy-gcp.sh` (though
-`teardown-gcp.sh` itself remains genuinely untested, a separate real gap still open below).
+untested" caveat from earlier in this session no longer applies to `deploy-gcp.sh`.
+
+## Done — ran `teardown-gcp.sh` for real for the first time: clean, no bugs found
+
+User asked to run it. Confirmed kubectl context was pointed at the real GKE cluster first, then
+ran it end to end: deleted the `traefik-web` LoadBalancer Service and polled until the real GCP
+forwarding rule was actually gone (not just the `kubectl delete` acknowledgment); deleted Kafka's
+StatefulSet, waited for its pods to actually terminate, deleted the 3 PVCs, and polled until all 3
+real persistent disks were actually gone. **Both steps confirmed clean on the first real try** -
+no bugs found, unlike `deploy-gcp.sh`'s four. `api` pods degraded to `0/1` afterward since they
+depend on Kafka being reachable - expected collateral of tearing down mid-cluster, not a bug,
+since the whole cluster is the next thing to go via a real `terraform destroy` (not run this
+session - that's a deliberate, separate, user-run step per the script's own design).
+
+Closes out the one remaining genuinely-untested piece of the GCP deploy overlay - `deploy-gcp.sh`
+and `teardown-gcp.sh` are now both proven, matching AWS's own two-script confidence level (though
+AWS's runbook has been proven across *two* full cycles; this is GCP's first).
 
 ## Open
 
@@ -372,31 +387,34 @@ untested" caveat from earlier in this session no longer applies to `deploy-gcp.s
   and now the full app itself (Traefik, Kafka, api, frontend) all running and confirmed working
   end-to-end against real endpoints. The most complete state this session has described - no
   longer plan-only, no longer just infra-only.
-- **`teardown-gcp.sh` is the one piece of the GCP deploy overlay still genuinely untested** -
-  `deploy-gcp.sh` is now proven; a real teardown cycle (and therefore the two-script
-  spin-up/teardown runbook AWS has, matching its "Spin-up and teardown" README section) hasn't
-  been exercised yet.
+- **Both `deploy-gcp.sh` and `teardown-gcp.sh` are now proven, clean on their most recent runs** -
+  the GCP deploy overlay is at AWS's confidence level for a first cycle. AWS's own runbook has
+  been proven across *two* full cycles (its first found 2 real bugs, its second confirmed both
+  fixes held) - GCP has had one clean cycle so far, not yet a second confirming repeat.
+- **`terraform destroy` has NOT been run yet** - `teardown-gcp.sh` only cleared the
+  kubectl-provisioned resources (LB, Kafka's PVCs/disks) it exists to clean up; the GKE
+  cluster/node pools, Cloud SQL, Memorystore, Artifact Registry, and VPC are all still live and
+  billing as of this write. This is the actual remaining cost-accruing gap, not
+  `teardown-gcp.sh`'s own scope.
 - **No `check-costs-gcp.sh`** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
   `terraform/gcp/README.md`'s "No `check-costs-gcp.sh` yet" section.
-- **Real cost is now accruing on the GCP side** (4 real `e2-medium` nodes, Cloud SQL, Memorystore,
-  the LoadBalancer) - the stack has not been torn down as of this write, unlike AWS's disciplined
-  "torn down between sessions" pattern. Worth a deliberate teardown decision, not left running
-  indefinitely by default.
 - Carried over, untouched: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost measurement fix,
   `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10), Azure
   Terraform config (still fully unstarted).
 
 ## Next
 
-1. Decide whether to tear this down now (`teardown-gcp.sh`, then `terraform destroy`) or keep it
-   running for further work - real cost is accruing either way. Set up the Cloud Billing BigQuery
-   export first if a delayed cost cross-check is wanted after teardown.
-2. Run `teardown-gcp.sh` for the first time and expect to live-debug it - this closes out the
-   GCP deploy overlay to the same confidence level AWS's spin-up/teardown runbook has (two full
-   tested cycles, not just one).
-3. Build `terraform/gcp/check-costs-gcp.sh`'s prerequisite (the BigQuery export) and the script
+1. **Run `terraform destroy`** (real, hard-to-reverse - a user-run step, not Claude Code, same
+   pattern as every other real apply/destroy this session) to actually stop the remaining real
+   cost. Set up the Cloud Billing BigQuery export first if a delayed cost cross-check is wanted
+   afterward.
+2. Confirm the destroy via the same residue-checklist discipline AWS's runbook uses, not just
+   trusted from "Destroy complete."
+3. A second full spin-up/teardown cycle, matching AWS's own two-cycle confidence bar, whenever
+   there's a reason to stand this up again.
+4. Build `terraform/gcp/check-costs-gcp.sh`'s prerequisite (the BigQuery export) and the script
    itself, once there's a real teardown to confirm against.
-4. Azure Terraform config, last in the AWS-first sequencing.
-5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+5. Azure Terraform config, last in the AWS-first sequencing.
+6. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

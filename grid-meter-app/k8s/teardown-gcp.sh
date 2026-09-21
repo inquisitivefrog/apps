@@ -20,10 +20,10 @@
 # (confirmed via `gcloud compute forwarding-rules list`'s target field pointing at
 # `targetPools/...`, not a backend service) - worth having actually checked, since AWS's identical
 # assumption ("it'll be an NLB") turned out wrong when finally checked there (it was a Classic
-# ELB). This teardown script itself is still UNTESTED against a real teardown as of this write,
-# though - reasoned through and checked for gcloud command/flag correctness, not run. It queries
-# forwarding rules by IP address, which exists for either LB flavor, specifically so it didn't
-# need to guess which one before this was confirmed.
+# ELB). This teardown script itself has now run for real too (2026-09-21) - clean on the first
+# try, both the forwarding rule and all 3 persistent disks confirmed actually gone via live
+# polling, no bugs found. It queries forwarding rules by IP address, which exists for either LB
+# flavor, specifically so it didn't need to guess which one before this was confirmed.
 set -euo pipefail
 
 K8S_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
