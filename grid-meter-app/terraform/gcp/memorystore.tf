@@ -31,4 +31,9 @@ resource "google_memorystore_instance" "main" {
   }
 
   deletion_protection_enabled = false # Same reasoning as gke.tf/cloudsql.tf - needs to destroy cleanly for a demo.
+
+  # Found via a real, live apply failure (2026-09-21): the PSC auto-connection
+  # errors ("No service connection policy is associated...") if this doesn't
+  # exist yet - see network.tf's google_network_connectivity_service_connection_policy.
+  depends_on = [google_network_connectivity_service_connection_policy.memorystore]
 }

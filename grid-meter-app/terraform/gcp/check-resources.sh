@@ -70,7 +70,14 @@ echo "-- GKE --"
 check "GKE cluster status" gcloud container clusters describe "$CLUSTER_NAME" --zone "$ZONE" --format="value(status)"
 check "GKE node pool status" gcloud container node-pools describe grid-meter-app-nodes --cluster "$CLUSTER_NAME" --zone "$ZONE" --format="value(status)"
 check "GKE node service account" gcloud iam service-accounts describe "grid-meter-app-gke-node@${PROJECT_ID}.iam.gserviceaccount.com" --format="value(email)"
-check "GCE worker instances (expect 3, RUNNING)" gcloud compute instances list --filter="name~^gke-${CLUSTER_NAME}- AND status=RUNNING" --format="value(name)" --zones="us-central1-a,us-central1-b,us-central1-c"
+# Found via a real live apply (2026-09-21): GCE truncates instance names at 63 chars, so a
+# name-regex filter against the full cluster/node-pool name silently matched nothing
+# ("gke-grid-meter-app-gke-..." never appears - real instances are named
+# "gke-grid-meter-app-g-grid-meter-app-n-<hash>-<suffix>", both components truncated). Filtering
+# on GKE's own goog-k8s-cluster-name label instead - stable, not truncated, and exists on every
+# GKE-managed instance (confirmed via `gcloud compute instances describe ... --format="yaml(labels)"`
+# against a real node).
+check "GCE worker instances (expect 3, RUNNING)" gcloud compute instances list --filter="labels.goog-k8s-cluster-name=${CLUSTER_NAME} AND status=RUNNING" --format="value(name)"
 echo
 
 echo "-- Data tier --"

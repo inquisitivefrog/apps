@@ -71,9 +71,9 @@ variable "gke_node_machine_type" {
 }
 
 variable "gke_node_count" {
-  description = "Nodes per zone in gke_node_locations (3 zones x 1 = 3 total nodes). Started at 3 directly rather than repeating AWS's 2-then-3 live-debugging cycle (terraform/aws/variables.tf's eks_node_count comment) - that finding (2 nodes structurally can't give Kafka's 3 brokers one-node-per-zone regardless of sizing, and a corrected realistic api memory limit alone pushed one node to 94% memory requests) is a directly transferable lesson, not something worth re-discovering on a second cloud."
+  description = "Nodes PER ZONE in gke_node_locations, not a total - GKE's own documented node_count semantics for a multi-zone node pool (confirmed live 2026-09-21, after a real apply created 9 actual GCE instances, not the intended 3: total nodes = node_count x len(node_locations)). 1 here x 3 zones = 3 total nodes, matching AWS's eks_node_count=3 exactly (terraform/aws/variables.tf) - that AWS value was itself already the post-live-debugging-corrected number (2 nodes were found genuinely overcommitted, 2026-09-18), so 1x3=3 here is the direct transfer of that lesson, not a fresh guess. The original version of this variable set the default to 3 (intending '3 total'), actually producing 9 real nodes at ~3x the intended e2-medium cost until caught by this project's own check-resources.sh run against the live apply - see status/claude_code_2026-09-21.md for the full account."
   type        = number
-  default     = 3
+  default     = 1
 }
 
 variable "gke_node_disk_size_gb" {

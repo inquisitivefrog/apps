@@ -33,6 +33,17 @@ resource "google_sql_database_instance" "main" {
   depends_on = [google_service_networking_connection.private_service_access]
 
   settings {
+    # Declared explicitly after a real, live apply failure (2026-09-21):
+    # `edition` is `optional, computed` in the provider schema, and this
+    # project/account's implicit default resolved to ENTERPRISE_PLUS, which
+    # rejects db-f1-micro outright ("Invalid Tier (db-f1-micro) for
+    # (ENTERPRISE_PLUS) Edition" - error 400, not a plan-time warning).
+    # ENTERPRISE is the classic edition that actually supports the
+    # shared-core tiers (db-f1-micro/db-g1-small) this project's
+    # cost-conscious sizing depends on - another live instance of this
+    # project's standing "undeclared defaults" lesson (CLAUDE.md), found
+    # via a real apply, not caught by `terraform plan` or `validate`.
+    edition           = "ENTERPRISE"
     tier              = var.cloudsql_tier
     disk_size         = var.cloudsql_disk_size_gb
     disk_type         = "PD_SSD"

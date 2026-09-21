@@ -3,7 +3,13 @@
 Weekend catch-up session: reconfirmed where the AWS track left off, ran the delayed
 `check-costs.sh` cross-check, cleaned up a stale temp file, then started the GCP Terraform track
 (`docs/cloud-deployment-scope.md`'s stated AWS-first sequencing) — scaffolded `terraform/gcp/`
-and `terraform/gcp/bootstrap/`, deliberately plan-only, no real GCP resources created.
+and `terraform/gcp/bootstrap/`, built the k8s deploy overlay, then **the user ran the real
+applies**: `bootstrap/` applied cleanly, the main config applied in two passes (19 resources, 2
+real failures found and fixed, then a clean 5-resource follow-up), and **real GCP infrastructure
+is now live** — VPC, GKE cluster (3 nodes across 3 zones once a real node-count bug is corrected —
+see below), Cloud SQL, Memorystore, Artifact Registry. A third real bug, caught only by running
+`check-resources.sh` against the live apply (not by `terraform plan`), found the cluster was
+actually running 9 nodes, not 3 - fixed same session, fix plan-ready pending the user's apply.
 
 ## Done — resumed context, confirmed nothing was actually left uncommitted
 
@@ -197,18 +203,81 @@ Known transferable AWS bugs (XFS, `--platform`, 1Gi memory) were applied proacti
 left to be rediscovered; what's still genuinely unverified is documented in
 `terraform/gcp/README.md`'s new "Deploy overlay: built but genuinely untested" section.
 
+## Done — user applied `terraform/gcp/bootstrap/` and the main config for real; two real bugs found and fixed live
+
+User ran every real apply themselves, matching the AWS pattern exactly (Claude Code's classifier
+blocks `terraform apply` against real infra) - I prepared plans and reviewed output, never ran an
+apply.
+
+- **`bootstrap/` applied clean**: the GCS state bucket now exists live
+  (`grid-meter-app-tfstate-project-4c5a8821-da4c-4c68-97f`). Wired up `backend.tf` from its
+  output, re-initialized with `-migrate-state` (nothing to migrate - no local state had
+  accumulated, since only `plan` had run before), replanned against the real remote backend:
+  still a clean 19 to add.
+- **Main config's first real apply: 31 of 33 resources succeeded, 2 real failures** - both were
+  live-API errors `terraform plan`/`validate` had no way to surface in advance:
+  1. **Cloud SQL rejected `db-f1-micro`** - `Invalid Tier (db-f1-micro) for (ENTERPRISE_PLUS)
+     Edition`. The `edition` field is `optional, computed` in the provider schema, and this
+     account's implicit default resolved to `ENTERPRISE_PLUS`, which doesn't support shared-core
+     tiers - another live instance of this project's own standing "declare load-bearing defaults
+     explicitly" pattern (now found this many times across this project that it's worth quoting
+     verbatim from CLAUDE.md: it keeps finding the exact same shape of gap). Fixed:
+     `edition = "ENTERPRISE"` declared explicitly in `cloudsql.tf`.
+  2. **Memorystore for Valkey's PSC connection needs an explicit
+     `google_network_connectivity_service_connection_policy`** (`service_class =
+     "gcp-memorystore"`) to exist first - `desired_auto_created_endpoints` alone isn't sufficient;
+     failed with "No service connection policy is associated with project...". Added to
+     `network.tf`, `google_memorystore_instance.main` now depends on it.
+  - Both resources already-created (VPC, GKE cluster - 8m3s, node pool - 12m5s, Artifact Registry
+    x2, service account, IAM binding, Secret Manager secret+version) stayed untouched. Fixed both
+    bugs, replanned (5 to add, 0 to change, 0 to destroy), user re-applied - clean, full stack now
+    live.
+
+## Done — ran `check-resources.sh` against the real live apply, found a third real bug (and a fourth in the check script itself)
+
+Matching this project's own standing discipline - verify live, don't trust "Apply complete" -
+ran the just-built inspection script against the real infrastructure immediately after the apply
+completed. **16/17 passed; the one failure led to a genuinely serious finding**, not a script
+bug:
+
+- **`gke_node_count`'s original default (3) actually created 9 real `e2-medium` nodes, not 3** -
+  GKE's `node_count` field on a multi-zone node pool is documented as *per zone*, not total
+  (`total = node_count × len(node_locations)`). The variable's own description at the time
+  asserted "3 zones x 1 = 3 total nodes" while the default was set to 3 - a real reasoning
+  contradiction I wrote into the file without catching it myself; only a live `gcloud compute
+  instances list` (9 real running VMs, 3 per zone) and cross-referencing GKE's own documented
+  `node_count` semantics surfaced it. **This is the sharpest version yet of this project's
+  "verify live, don't assume" lesson**: the HCL was syntactically and semantically valid the
+  entire time - `terraform plan`/`validate` had genuinely nothing to flag, because there was
+  nothing wrong with the config in isolation, only with what it actually produced against GKE's
+  real API semantics. Ran at ~3x the intended `e2-medium` compute cost from the first successful
+  apply until caught this same session. Fixed: `gke_node_count` default 3 → 1 (`variables.tf`,
+  `gke.tf`'s comment corrected too) - re-planned against the real live state: a single clean
+  in-place `node_count: 3 -> 1` update, 0 to add, 1 to change, 0 to destroy. **Plan is saved
+  (`tfplan`), ready for the user to apply - not yet applied as of this write.**
+- **A fourth, smaller bug in `check-resources.sh` itself, found investigating the above**: the
+  GCE-instance check's `name~^gke-${CLUSTER_NAME}-` regex never matched anything, silently -
+  GCE truncates instance names at 63 characters, so real names came out
+  `gke-grid-meter-app-g-grid-meter-app-n-<hash>-<suffix>` (both `grid-meter-app-gke` and
+  `grid-meter-app-nodes` truncated), never matching the full-name regex. Fixed by filtering on
+  GKE's own `goog-k8s-cluster-name` label instead (stable, not truncated, confirmed present on a
+  real live instance via `gcloud compute instances describe ... --format="yaml(labels)"`).
+  Re-ran the full script after both fixes: 17/17 pass.
+
 ## Open
 
-- **Both `terraform/gcp/bootstrap/` and `terraform/gcp/` are plan-only** — no real GCP resources
-  exist yet from this work, and no cost is accruing on the GCP side. `.terraform/`,
-  `.terraform.lock.hcl`, and no `terraform.tfstate` beyond what `terraform init`/`plan` created
-  locally.
-- **No `backend.tf` for the main config yet** — deliberately deferred until `bootstrap/` is
-  actually applied (a real, later, separate user decision), matching the AWS track's own
-  chronology exactly.
+- **Real GCP infrastructure is live and billing** — VPC, GKE cluster + node pool, Cloud SQL,
+  Memorystore, Artifact Registry, all confirmed healthy via `check-resources.sh` (17/17 pass).
+  This is a materially different state than every earlier status write this session described -
+  no longer plan-only.
+- **Urgent-but-already-fixed: node pool was running 9 nodes instead of 3 from first apply until
+  caught this session** - the corrected plan (`node_count: 3 -> 1`) is saved as `tfplan` in
+  `terraform/gcp/`, ready to apply, but **not yet applied as of this write** - confirm this landed
+  before trusting node count/cost figures anywhere else in this doc or the README.
 - **k8s deploy overlay is built but genuinely untested against a real cluster** — see the "Done"
   section above and `terraform/gcp/README.md`'s "Deploy overlay: built but genuinely untested".
-  Nothing here has AWS's live-debugged confidence level yet.
+  Nothing here has AWS's live-debugged confidence level yet - now buildable for real, since the
+  cluster it needs actually exists.
 - **No `check-costs.sh` for GCP** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
   `terraform/gcp/README.md`'s "No `check-costs.sh` yet" section.
@@ -218,14 +287,17 @@ left to be rediscovered; what's still genuinely unverified is documented in
 
 ## Next
 
-1. User decision: apply `terraform/gcp/bootstrap/` for real (free, GCS-only), wire up
-   `backend.tf`, then decide whether/when to apply the main config for real — same two-stage
-   pattern AWS went through, whenever ready to spend real trial credit on it. Set up the Cloud
-   Billing BigQuery export before that first real apply, not after.
-2. Once applied: run `deploy-gcp.sh` and expect to live-debug it, same as AWS's first real
-   `deploy-aws.sh` run — then `check-resources.sh`, a live functional pass through the app's real
-   endpoints (mirroring AWS's task #15), and `teardown-gcp.sh` to confirm the two-script cycle
-   actually works end-to-end.
-3. Azure Terraform config, last in the AWS-first sequencing.
-4. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+1. **Apply the saved `tfplan` in `terraform/gcp/`** to correct the node pool from 9 nodes down to
+   the intended 3 - this is the single most time-sensitive item, since real over-cost has been
+   accruing since the first successful apply.
+2. Run `check-resources.sh` again after that lands, to confirm exactly 3 nodes (not 9, not some
+   other count) - don't trust the fix without re-verifying live, same discipline that caught the
+   bug in the first place.
+3. Run `deploy-gcp.sh` and expect to live-debug it, same as AWS's first real `deploy-aws.sh` run —
+   then a live functional pass through the app's real endpoints (mirroring AWS's task #15), and
+   `teardown-gcp.sh` to confirm the two-script cycle actually works end-to-end.
+4. Set up the Cloud Billing BigQuery export before the first real `teardown-gcp.sh` +
+   `terraform destroy` cycle, not after - needed for any future delayed cost cross-check.
+5. Azure Terraform config, last in the AWS-first sequencing.
+6. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

@@ -97,9 +97,11 @@ resource "google_container_node_pool" "main" {
   name    = "${var.project_name}-nodes"
   cluster = google_container_cluster.main.id
 
-  # 1 node per zone in node_locations (3 zones) = 3 total nodes - see
-  # variables.tf's gke_node_count comment for why this starts at 3 directly
-  # rather than repeating AWS's 2-then-3 live-debugging cycle.
+  # gke_node_count is PER ZONE (GKE's own node_count semantics for a
+  # multi-zone pool) - 1 x 3 zones in node_locations below = 3 total nodes,
+  # matching AWS's node count. See variables.tf's gke_node_count comment
+  # for the real live bug this corrects (the original default of 3 here
+  # actually produced 9 nodes).
   node_count     = var.gke_node_count
   node_locations = var.gke_node_locations
 

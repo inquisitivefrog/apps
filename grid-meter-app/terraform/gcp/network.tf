@@ -74,6 +74,27 @@ resource "google_service_networking_connection" "private_service_access" {
   reserved_peering_ranges = [google_compute_global_address.private_service_access.name]
 }
 
+# --- Service Connection Policy: authorizes Memorystore's PSC auto-connections ---
+# Found via a real, live apply failure (2026-09-21), not anticipated in advance: Memorystore for
+# Valkey's `desired_auto_created_endpoints` (memorystore.tf) needs an explicit
+# ServiceConnectionPolicy to exist for this region/network/service-class combination BEFORE the
+# instance can create its PSC endpoint - "No service connection policy is associated with
+# project... network... region" (error code 9), not a resource Terraform creates implicitly as
+# part of google_memorystore_instance itself. service_class = "gcp-memorystore" is Google's fixed,
+# documented value for this exact purpose (confirmed via web search against GCP's own Memorystore
+# networking docs) - reuses the existing GKE subnet for PSC endpoint IP allocation rather than
+# provisioning a second, dedicated subnet purely for this.
+resource "google_network_connectivity_service_connection_policy" "memorystore" {
+  name          = "${var.project_name}-memorystore-scp"
+  location      = var.gcp_region
+  network       = google_compute_network.main.id
+  service_class = "gcp-memorystore"
+
+  psc_config {
+    subnetworks = [google_compute_subnetwork.main.id]
+  }
+}
+
 # Note: GKE itself needs no explicit firewall rules declared here - GKE
 # auto-creates the required ingress rules (control-plane-to-node,
 # node-to-pod, etc.) for both auto- and custom-mode VPCs, relying on the

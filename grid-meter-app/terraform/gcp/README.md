@@ -11,20 +11,27 @@ See `docs/cloud-deployment-scope.md` for the full per-layer reasoning (why Postg
 managed here but Kafka is self-hosted in-cluster identically across every target — `kind`, AWS,
 and this).
 
-## Status: plan-only, not yet applied
+## Status: applied — real GCP infrastructure is live
 
-**Scoped deliberately as plan-only this pass** (2026-09-21) — no `terraform apply` has been run
-against this config or against `bootstrap/`, and no real GCP resources exist from this work yet.
-Matches how the AWS track itself started (`terraform/aws/`'s first pass, 2026-09-17) before a
-separate, later, explicit decision to apply for real. This account's GCP experience is a year
-stale and mostly Console/`kubectl`-driven rather than Terraform-first (see
-`docs/cloud-deployment-scope.md`'s per-provider familiarity notes) — a deliberate checkpoint
-before spending real trial credit.
+**Real apply happened 2026-09-21** (user-run, same pattern as AWS — Claude Code's own auto-mode
+classifier blocks `terraform apply` against real infrastructure, and every real apply on this
+project has been run by the user via the `!` prefix, never by Claude Code itself). `bootstrap/`
+applied first (the GCS state bucket), `backend.tf` wired up from its output, then the main config
+applied in two passes: 19 resources, 2 failures on the first pass (see "Real findings" below for
+both — Cloud SQL's edition default and Memorystore's missing service connection policy), fixed
+and the remaining 5 applied clean on the second pass. Full stack now live: VPC, GKE cluster + node
+pool, Cloud SQL, Memorystore, Artifact Registry, Secret Manager.
 
-**No `backend.tf` exists yet either** — this config currently runs on local state. Once
-`bootstrap/` is actually applied (a free, GCS-bucket-only action — see `bootstrap/README.md`),
-paste its `backend_config_snippet` output into a new `backend.tf` here, matching how
-`terraform/aws/backend.tf` was created only after that module's bootstrap was applied.
+**A third real bug was caught only after this — by running `check-resources.sh` against the live
+apply, not by `terraform plan`**: `gke_node_count`'s default of 3 was meant as "3 total, 1 per
+zone" but GKE's own `node_count` semantics are per-zone for a multi-zone node pool, so it actually
+created **9 real e2-medium instances, not 3** — roughly 3x the intended compute cost, running from
+first apply until caught. See "Real findings" below for the fix and the corrected value (1, not
+3). This is the sharpest instance yet of this project's own standing "verify the live system"
+discipline actually catching something real: neither `terraform plan` nor `terraform validate` at
+any point surfaced this, since the resource's field is genuinely correct HCL, just misunderstood
+sizing math on my part - a real, live resource *count* was the only place this was ever going to
+be visible.
 
 ## Prerequisites
 
@@ -95,6 +102,41 @@ only.
   application-default login`) before any of this could be planned, let alone applied. See
   `status/claude_code_2026-09-21.md` for the full walkthrough.
 
+### Real findings from the actual apply, not from plan/validate
+
+Three real bugs, none visible from `terraform plan`/`validate` — only from a genuine `apply`
+against this project:
+
+- **Cloud SQL `edition` is `optional, computed`, and this account's implicit default resolved to
+  `ENTERPRISE_PLUS`, which rejects `db-f1-micro` outright** — `Error 400: Invalid Tier
+  (db-f1-micro) for (ENTERPRISE_PLUS) Edition`. Another live instance of this project's own
+  standing "declare load-bearing defaults explicitly" lesson (CLAUDE.md) - fixed by declaring
+  `edition = "ENTERPRISE"` in `cloudsql.tf`, the classic edition that actually supports
+  shared-core tiers.
+- **Memorystore for Valkey's PSC auto-connection needs an explicit
+  `google_network_connectivity_service_connection_policy` to exist first** —
+  `desired_auto_created_endpoints` alone isn't enough; without a policy for this
+  region/network/`service_class = "gcp-memorystore"` combination, creation fails with "No service
+  connection policy is associated with project...". Added to `network.tf`, with
+  `google_memorystore_instance.main` now `depends_on` it.
+- **The sharpest one: `gke_node_count`'s original default (3) actually created 9 real nodes, not
+  3** — GKE's `node_count` on a multi-zone node pool is per-zone, not total
+  (`total = node_count × len(node_locations)`), confirmed against GKE's own documented behavior
+  only after `check-resources.sh` (run against the real live apply) showed 9 GCE instances where 3
+  were expected. `terraform plan`/`validate` never had a chance to catch this - the HCL was
+  syntactically and semantically valid the whole time, just multiplying out to a number I hadn't
+  intended. Fixed: `gke_node_count` default changed from 3 to 1 (`variables.tf`), so 1 × 3 zones =
+  3 total, matching the intended AWS-parity sizing. Ran actively over-provisioned (and
+  over-billing, roughly 3x the intended `e2-medium` compute cost) from the first successful apply
+  until this was caught and corrected the same session.
+- **A fourth, smaller bug caught the same way**: `check-resources.sh`'s GCE-instance check
+  originally filtered on a regex against the full cluster/node-pool name
+  (`name~^gke-${CLUSTER_NAME}-`) - GCE truncates instance names at 63 characters, so real instance
+  names came out as `gke-grid-meter-app-g-grid-meter-app-n-<hash>-<suffix>` (both
+  `grid-meter-app-gke` and `grid-meter-app-nodes` silently truncated), never matching the regex at
+  all. Fixed by filtering on GKE's own `goog-k8s-cluster-name` label instead - stable, not
+  truncated, and present on every GKE-managed instance.
+
 ## Deploy overlay: built but genuinely untested
 
 `k8s/deploy-gcp.sh`/`teardown-gcp.sh`, `k8s/storageclass-gcp.yaml`, `k8s/traefik-gcp.yaml`,
@@ -159,28 +201,24 @@ after, so the export has data by the time a delayed cost check would actually be
 `check-costs.sh`'s own documented 24-48h Cost-Explorer-lag limitation, just with an extra
 one-time setup step GCP requires that AWS didn't).
 
-## Usage (plan-only, this pass)
+## Usage
 
 ```bash
 cd terraform/gcp
 terraform init
 terraform fmt
 terraform validate
-terraform plan   # review only - no apply run this pass
+terraform plan -out tfplan
+terraform apply tfplan   # run by the user, never Claude Code - see "Status" above
 ```
 
-## Before ever applying this for real
+## Remaining before the k8s deploy overlay can actually be exercised
 
-1. Apply `bootstrap/` first, add the resulting `backend_config_snippet` as `backend.tf` here, and
-   `terraform init` again to migrate to remote state.
-2. Re-verify live version/pricing checks above haven't drifted since 2026-09-21 (this project's
-   own standing "verify live, don't assume" discipline — see CLAUDE.md).
-3. Decide and build the k8s deploy overlay (Artifact Registry, GCP Traefik/api manifest variants,
-   `deploy-gcp.sh`/`teardown-gcp.sh`) before expecting the app itself to actually run on this
-   cluster — this pass is infra-only, same split AWS went through.
-4. Confirm current free-trial credit balance before applying — this is real, billed
-   infrastructure once created (GKE nodes, Cloud SQL, Memorystore all have no meaningful
-   Always-Free quota at this sizing, same as AWS's ElastiCache/RDS/EKS-node costs).
-5. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) before
-   the first real apply/destroy cycle — see "No `check-costs.sh` yet" above for why this needs to
-   happen in advance, unlike AWS's always-on Cost Explorer.
+1. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
+   "No `check-costs.sh` yet" above. Not done yet; do this before the next `terraform destroy` if a
+   delayed cost cross-check is wanted.
+2. Run `k8s/deploy-gcp.sh` against this now-live cluster and expect to live-debug it - see "Deploy
+   overlay: built but genuinely untested" above.
+3. Confirm current free-trial credit balance periodically while this stays up - GKE nodes, Cloud
+   SQL, and Memorystore are all real, billed infrastructure now (no meaningful Always-Free
+   coverage at this sizing, same as AWS's ElastiCache/RDS/EKS-node costs).
