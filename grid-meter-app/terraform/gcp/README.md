@@ -94,6 +94,39 @@ only.
   application-default login`) before any of this could be planned, let alone applied. See
   `status/claude_code_2026-09-21.md` for the full walkthrough.
 
+## Inspection script
+
+`check-resources.sh` — the GCP counterpart to `terraform/aws/check-resources.sh`: confirms every
+Terraform-provisioned resource actually exists and is healthy via real `gcloud` calls, not
+`terraform apply`'s own "Apply complete" message. Scoped to this pass's base infra only (VPC/GKE/
+Cloud SQL/Memorystore) — no Artifact Registry/Workload Identity section yet, since that layer
+doesn't exist (same reasoning as AWS's own check-resources.sh, whose ECR/IAM sections only arrived
+once that later phase was built).
+
+**Already live-tested once, before any real resource existed** — run against this real, currently-
+empty project on 2026-09-21 specifically to catch command/flag bugs early, not resource-health
+bugs (nothing exists yet to be healthy). Found and fixed two real issues this way: `gcloud compute
+networks subnetworks describe` isn't a valid command (`subnets`, not `subnetworks`) — a plain usage
+error the smoke test surfaced immediately; and `gcloud compute instances list` with zero filter
+matches exits **0** with an empty-match warning on stderr rather than failing — a bare exit-code
+check would have read that as a false PASS with no real value behind it. Fixed by requiring both a
+zero exit code AND non-empty stdout, with stdout/stderr captured separately so a
+successful-but-empty result can't read as a real value either way — the same false-PASS shape
+AWS's own `k8s/check-resources-aws.sh` found the hard way (2026-09-18), caught here before a live
+resource ever existed to hide behind.
+
+## No `check-costs.sh` yet — GCP has no direct CLI equivalent
+
+AWS's `check-costs.sh` works because `aws ce get-cost-and-usage` is an always-on, queryable-anytime
+API. GCP has no equivalent built into `gcloud` — the standard mechanism (a Cloud Billing export to
+a BigQuery dataset) has to be configured once, in advance, as a billing-account-level setting
+(Console-only; no `gcloud` command creates the export itself), before there's any exported data to
+query at all. Not built this pass since nothing has been applied yet and there's no cost to
+confirm-zero on; worth setting up before the first real `apply`/`destroy` cycle on this cloud, not
+after, so the export has data by the time a delayed cost check would actually be run (mirrors
+`check-costs.sh`'s own documented 24-48h Cost-Explorer-lag limitation, just with an extra
+one-time setup step GCP requires that AWS didn't).
+
 ## Usage (plan-only, this pass)
 
 ```bash
@@ -116,3 +149,6 @@ terraform plan   # review only - no apply run this pass
 4. Confirm current free-trial credit balance before applying — this is real, billed
    infrastructure once created (GKE nodes, Cloud SQL, Memorystore all have no meaningful
    Always-Free quota at this sizing, same as AWS's ElastiCache/RDS/EKS-node costs).
+5. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) before
+   the first real apply/destroy cycle — see "No `check-costs.sh` yet" above for why this needs to
+   happen in advance, unlike AWS's always-on Cost Explorer.

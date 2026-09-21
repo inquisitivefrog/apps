@@ -112,30 +112,66 @@ RDS/EKS/ElastiCache version checks):
   `discovery_endpoints` attribute is deprecated in favor of `endpoints` — fixed before it ever
   reached a plan.
 
+## Done — built and live-tested `terraform/gcp/check-resources.sh`
+
+User asked for GCP equivalents of AWS's scripts. Two are genuinely portable now; two aren't (see
+below). Built `check-resources.sh` (the counterpart to `terraform/aws/check-resources.sh`), scoped
+to this pass's base infra only (VPC/GKE/Cloud SQL/Memorystore) — no Artifact Registry/Workload
+Identity section, since that layer isn't built yet, matching how AWS's own script only grew those
+sections once its later phase existed.
+
+**Live-tested against this real, currently-empty project before any real resource existed** —
+deliberately, to catch command/flag bugs early rather than only discovering them against a real
+apply later. Found and fixed two real bugs this way:
+1. `gcloud compute networks subnetworks describe` isn't a valid command (`subnets`, not
+   `subnetworks`) — a plain usage error, caught immediately.
+2. **A real false-PASS bug, the same shape AWS's `k8s/check-resources-aws.sh` found the hard way
+   (2026-09-18), caught here before any live resource existed to hide behind**: `gcloud compute
+   instances list` with zero filter matches exits **0** with only an empty-match warning on
+   stderr — a bare exit-code check would have read that as a false PASS with no real value behind
+   it. Fixed by requiring both a zero exit code AND non-empty stdout, with stdout/stderr captured
+   separately (via a temp file, not `2>&1`) so a successful-but-empty result can't read as a real
+   value either way.
+
+Re-ran after both fixes: all 15 checks correctly report FAIL against the real empty project (no
+crashes, no false positives) — the meaningful bar for a script with nothing real to check yet.
+
+## Done — `check-costs.sh`: not built, explained why rather than faked
+
+AWS's version works because `aws ce get-cost-and-usage` is an always-on, queryable-anytime API.
+Checked live: GCP has no direct `gcloud` equivalent — the standard mechanism (Cloud Billing export
+to BigQuery) is a one-time, Console-only, billing-account-level setup step that has to happen
+*before* there's any exported data to query, unlike AWS's Cost Explorer which works retroactively.
+Not built this pass since nothing's been applied yet and there's nothing to confirm-zero on;
+documented in `terraform/gcp/README.md` as a prerequisite to set up before the first real
+apply/destroy cycle on this cloud, not after.
+
 ## Open
 
 - **Both `terraform/gcp/bootstrap/` and `terraform/gcp/` are plan-only** — no real GCP resources
   exist yet from this work, and no cost is accruing on the GCP side. `.terraform/`,
   `.terraform.lock.hcl`, and no `terraform.tfstate` beyond what `terraform init`/`plan` created
   locally.
-- **Nothing from today's GCP work is committed yet** — `terraform/gcp/bootstrap/*` and
-  `terraform/gcp/*` are new, uncommitted. Ready to commit on request.
 - **No `backend.tf` for the main config yet** — deliberately deferred until `bootstrap/` is
   actually applied (a real, later, separate user decision), matching the AWS track's own
   chronology exactly.
 - **k8s deploy overlay for GCP not started** — Artifact Registry, GCP Traefik/api manifest
-  variants, `deploy-gcp.sh`/`teardown-gcp.sh`, inspection/cost-check scripts. Mirrors AWS's later
-  "task #8" phase; this session only covers AWS's earlier infra-only pass.
+  variants, `deploy-gcp.sh`/`teardown-gcp.sh`. Mirrors AWS's later "task #8" phase; this session
+  only covers AWS's earlier infra-only pass. `check-resources.sh` exists but is scoped to base
+  infra only until that overlay exists.
+- **No `check-costs.sh` for GCP** — needs a one-time Cloud Billing-export-to-BigQuery setup first
+  (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
+  `terraform/gcp/README.md`'s "No `check-costs.sh` yet" section.
 - Carried over, untouched: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost measurement fix,
   `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10), Azure
   Terraform config (still fully unstarted).
 
 ## Next
 
-1. Commit today's GCP scaffolding work, on request.
-2. User decision: apply `terraform/gcp/bootstrap/` for real (free, GCS-only), wire up
+1. User decision: apply `terraform/gcp/bootstrap/` for real (free, GCS-only), wire up
    `backend.tf`, then decide whether/when to apply the main config for real — same two-stage
-   pattern AWS went through, whenever ready to spend real trial credit on it.
+   pattern AWS went through, whenever ready to spend real trial credit on it. Set up the Cloud
+   Billing BigQuery export before that first real apply, not after.
 3. Once applied: the GCP k8s deploy overlay phase (Artifact Registry, manifest variants, deploy/
    teardown scripts, live functional validation through the app's real endpoints) — mirrors AWS's
    task #8–#15 arc.
