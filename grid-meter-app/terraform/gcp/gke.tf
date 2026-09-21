@@ -1,0 +1,116 @@
+# --- Node service account (least-privilege, not the default Compute Engine SA) ---
+# Confirmed live (2026-09-21, web search against GCP's own "Configure GKE
+# node service accounts" doc): Google's current recommended pattern is a
+# dedicated minimally-privileged SA plus IAM roles bound directly to it
+# (roles/container.nodeServiceAccount bundles the logging/monitoring
+# permissions nodes need), not broad OAuth scopes as the enforcement layer -
+# same "least-privilege dedicated role, not a shared default" reasoning as
+# AWS's aws_iam_role.eks_node.
+resource "google_service_account" "gke_node" {
+  account_id   = "${var.project_name}-gke-node"
+  display_name = "${var.project_name} GKE node service account"
+}
+
+resource "google_project_iam_member" "gke_node_sa" {
+  project = var.gcp_project_id
+  role    = "roles/container.nodeServiceAccount"
+  member  = "serviceAccount:${google_service_account.gke_node.email}"
+}
+
+# --- Cluster ---
+# Zonal (single-zone control plane), not regional - covered by GKE's own
+# free-tier credit ($74.40/month per billing account, confirmed live via
+# web search against GCP's GKE pricing page - equivalent to one free
+# zonal-Standard-or-Autopilot cluster's management fee) in a way a regional
+# cluster's 3x control-plane replicas may not be. Node-level zone spread
+# (still 3 zones, matching Kafka's topologySpreadConstraints) comes from the
+# node pool's node_locations below, independent of this.
+resource "google_container_cluster" "main" {
+  name     = local.cluster_name
+  location = var.gcp_zone
+
+  network    = google_compute_network.main.id
+  subnetwork = google_compute_subnetwork.main.id
+
+  # remove_default_node_pool + initial_node_count=1 is the standard
+  # Terraform-idiomatic GKE pattern: the API always creates a default node
+  # pool, which is immediately deleted here and replaced by the
+  # purpose-configured google_container_node_pool.main below - avoids
+  # having to manage the auto-created pool's config by hand.
+  remove_default_node_pool = true
+  initial_node_count       = 1
+
+  # VPC-native (alias IP) networking - empty block means "use the
+  # secondary ranges already defined on the subnet by name", the modern
+  # default GKE steers new clusters toward; the older routes-based
+  # networking mode is deprecated.
+  ip_allocation_policy {
+    cluster_secondary_range_name  = local.pods_range_name
+    services_secondary_range_name = local.services_range_name
+  }
+
+  release_channel {
+    channel = var.gke_release_channel
+  }
+
+  # Private nodes (no external IP on any node - egress via the Cloud NAT in
+  # network.tf), same private-worker-subnet pattern as AWS's private
+  # subnets. Public endpoint left enabled (enable_private_endpoint=false)
+  # so kubectl from this laptop reaches the control plane directly over the
+  # internet - matching how the AWS EKS cluster was actually used (its
+  # vpc_config left endpoint_public_access at its own default-true).
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = var.master_ipv4_cidr_block
+  }
+
+  # Declared explicitly rather than left at the provider's own default
+  # (true in recent versions) - this is a demo project's cluster and needs
+  # to come down cleanly via `terraform destroy`, the same reasoning as
+  # AWS's rds.tf skip_final_snapshot=true and access_config's explicit
+  # authentication_mode.
+  deletion_protection = false
+
+  depends_on = [google_compute_router_nat.main]
+}
+
+# --- Managed node pool ---
+resource "google_container_node_pool" "main" {
+  name    = "${var.project_name}-nodes"
+  cluster = google_container_cluster.main.id
+
+  # 1 node per zone in node_locations (3 zones) = 3 total nodes - see
+  # variables.tf's gke_node_count comment for why this starts at 3 directly
+  # rather than repeating AWS's 2-then-3 live-debugging cycle.
+  node_count     = var.gke_node_count
+  node_locations = var.gke_node_locations
+
+  node_config {
+    machine_type    = var.gke_node_machine_type
+    disk_size_gb    = var.gke_node_disk_size_gb
+    disk_type       = var.gke_node_disk_type
+    service_account = google_service_account.gke_node.email
+
+    # Google's own documented default node scopes (logging write,
+    # monitoring, read-only Cloud Storage for image pulls) - deliberately
+    # NOT the broad cloud-platform scope, since real access control here is
+    # enforced by the dedicated SA's IAM role above, and cloud-platform
+    # would let any pod on the node ride that SA's access regardless of
+    # what the SA's own IAM roles are scoped to (confirmed live via web
+    # search against GCP's node-service-account security guidance).
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/logging.write",
+      "https://www.googleapis.com/auth/monitoring",
+      "https://www.googleapis.com/auth/devstorage.read_only",
+    ]
+  }
+
+  depends_on = [google_project_iam_member.gke_node_sa]
+}
+
+# Note: unlike EKS (which needed an explicit aws_eks_addon "metrics_server"
+# in terraform/aws/eks.tf), GKE Standard clusters ship Metrics Server
+# pre-installed in kube-system by default - no equivalent resource needed
+# here for `kubectl top nodes/pods` to work.
+
