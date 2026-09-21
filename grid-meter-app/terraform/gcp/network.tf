@@ -72,6 +72,25 @@ resource "google_service_networking_connection" "private_service_access" {
   network                 = google_compute_network.main.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_service_access.name]
+
+  # Found via a real live `terraform destroy` failure (2026-09-21): this resource's own delete API
+  # call (servicenetworking.services.connections.delete) refuses with "Producer services (e.g.
+  # CloudSQL, Cloud Memstore, etc.) are still using this connection" even well after every real
+  # Cloud SQL/Memorystore instance is confirmed destroyed (checked live via `gcloud sql instances
+  # list`/`gcloud memorystore instances list` - genuinely zero remain) and even after the
+  # underlying VPC-side peering object is deleted directly (`gcloud compute networks peerings
+  # delete` - a different, Console-equivalent code path, confirmed via
+  # `gcloud compute networks peerings list` afterward showing zero). This is a known, longstanding
+  # upstream bug (hashicorp/terraform-provider-google#19908, #16275, #3979 - multiple, still-open,
+  # spanning provider major versions): Google's Service Networking API tracks producer-service
+  # usage in its own internal bookkeeping, separate from the VPC peering object, and that
+  # bookkeeping's release can reportedly take days after the last producer is deleted - not a
+  # propagation delay a short wait or a different Terraform ordering fixes. deletion_policy =
+  # "ABANDON" is the documented community workaround: it drops this resource from Terraform state
+  # without calling its (currently un-satisfiable) delete API. Confirmed low-consequence to abandon
+  # here specifically - the connection object itself carries no ongoing GCP cost, and the VPC-side
+  # peering it represented is already independently confirmed deleted.
+  deletion_policy = "ABANDON"
 }
 
 # --- Service Connection Policy: authorizes Memorystore's PSC auto-connections ---

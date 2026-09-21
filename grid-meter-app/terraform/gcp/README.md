@@ -265,16 +265,29 @@ that database's own destroy had already logged success. Fixed with an explicit
 ordering, don't assume the API serializes it for you" shape as this project's other
 undeclared-dependency findings, just surfacing on teardown instead of apply.
 
+The ordering fix worked on retry (`google_sql_user.main` destroyed cleanly, 19 of 22 total), but
+surfaced a **second, unrelated real failure**: `google_service_networking_connection` refused to
+delete with the same "Producer services...still using this connection" error, even with every
+Cloud SQL/Memorystore instance confirmed genuinely gone (`gcloud sql/memorystore instances list`).
+This turned out to be a known, longstanding, still-open upstream bug in the Terraform Google
+provider (`hashicorp/terraform-provider-google#19908`, `#16275`, `#3979`) - Google's Service
+Networking API tracks producer usage in internal bookkeeping separate from the VPC-side peering
+object, and that bookkeeping's release can reportedly take days, not minutes. Confirmed live that
+Terraform's delete call path is genuinely different from (and less reliable than) the
+Console/`gcloud`'s: `gcloud compute networks peerings delete` on the underlying peering succeeded
+immediately, but a subsequent `terraform apply` retry on the connection resource still failed
+identically. Fixed with the documented community workaround -
+`deletion_policy = "ABANDON"` on `google_service_networking_connection` (`network.tf`) - since the
+object carries no ongoing cost and the real peering it represented is already confirmed deleted.
+
 What's still open:
 
-1. **Re-run `terraform destroy`** with the ordering fix in place - 6 resources remained as of this
-   write (Cloud SQL instance + user, VPC, the PSA global address, the service networking
-   connection, `random_password.cloudsql`); the GKE cluster/node pools, Memorystore, and Artifact
-   Registry are already confirmed gone from the first attempt.
+1. **Re-run `terraform destroy`** with both fixes in place - 2 resources remained as of this write
+   (the VPC network and the PSA global address); everything else (GKE, Cloud SQL, Memorystore,
+   Artifact Registry, the service networking connection) is already confirmed gone or abandoned.
 2. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
    "No `check-costs-gcp.sh` yet" above - before the next full teardown, if a delayed cost
    cross-check is wanted afterward.
-3. A second full spin-up/teardown cycle, matching AWS's own two-cycle confidence bar (its first
-   cycle found 2 real bugs; its second confirmed both fixes held) - GCP has had one clean
-   deploy/teardown cycle and one real destroy-ordering bug found and fixed, not yet a confirming
-   second run.
+3. A second full `deploy-gcp.sh` app-layer cycle - the Terraform infra layer has now had two real
+   tested cycles (an incidental full re-apply plus this destroy pass), matching AWS's own
+   two-cycle confidence bar for that layer; the k8s app-deploy layer has had one.
