@@ -146,6 +146,57 @@ Not built this pass since nothing's been applied yet and there's nothing to conf
 documented in `terraform/gcp/README.md` as a prerequisite to set up before the first real
 apply/destroy cycle on this cloud, not after.
 
+## Done — built the GCP k8s deploy overlay (mirrors AWS's later "task #8" phase)
+
+User asked for the remaining AWS-parallel pieces: `k8s/deploy-gcp.sh`/`teardown-gcp.sh`,
+`k8s/api-gcp.yaml`/`storageclass-gcp.yaml`/`traefik-gcp.yaml`, plus the Terraform-side pieces
+those scripts need (Artifact Registry, the GKE PD CSI driver addon). Built all of it in one pass:
+
+- **`terraform/gcp/artifact-registry.tf`** — two repos (api/frontend), 5-image `KEEP` cleanup
+  policy each, mirroring `ecr.tf`. One real finding: `google_artifact_registry_repository` has no
+  `force_delete`-equivalent attribute at all (checked via `terraform providers schema`, not
+  assumed) — Google's own docs phrasing suggests deleting a repo deletes its contents too, unlike
+  ECR which refuses a non-empty repo outright, but this isn't live-confirmed. First draft of this
+  file included a confusing dead `count = 0` placeholder resource reasoning through the same
+  question inline — caught in self-review and replaced with a plain comment before it was ever
+  committed.
+- **`gke.tf`**: added `addons_config.gce_persistent_disk_csi_driver_config.enabled = true`,
+  declared explicitly per this project's standing "declare load-bearing defaults" rule even though
+  checked live (web search) that it's already GKE's own implicit default for this cluster's
+  version — the direct equivalent of AWS's `aws_eks_addon "ebs_csi_driver"`.
+- **`outputs.tf`**: added Artifact Registry repo URLs, and Memorystore host/port extracted from
+  `google_memorystore_instance.main.endpoints`' actual nested structure (confirmed via
+  `terraform providers schema`, not the deprecated `discovery_endpoints`/`psc_auto_connections`
+  attributes) so `deploy-gcp.sh` doesn't have to parse that nesting itself.
+- **`k8s/storageclass-gcp.yaml`**: XFS (not the CSI driver's ext4 default), proactively — the same
+  Kafka `lost+found` bug AWS found live 2026-09-18 applies identically here, so this isn't a new
+  finding, it's a transferred one. Marked default; **a real GCP-specific wrinkle with no AWS
+  equivalent**: GKE, unlike EKS, ships its own default StorageClass (`standard-rwo`) at cluster
+  creation, so `deploy-gcp.sh` has to explicitly un-default it first, or two StorageClasses would
+  both carry `is-default-class`.
+- **`k8s/traefik-gcp.yaml`**: LoadBalancer Service variant, structurally identical to
+  `traefik-aws.yaml` minus kind's hostPort/nodeSelector plumbing.
+- **`k8s/api-gcp.yaml`**: `memory: 1Gi` from the start (not kind's `512Mi`) — AWS's identical
+  OOM finding transferred proactively, same reasoning as the XFS choice.
+- **`k8s/deploy-gcp.sh`** / **`k8s/teardown-gcp.sh`**: full mirrors of the AWS scripts' structure
+  and reasoning (Cloud SQL private IP + Memorystore endpoint wired directly, no proxy sidecar;
+  `--platform linux/amd64` build flag for the same Apple-Silicon-vs-x86_64-nodes mismatch AWS hit;
+  poll-don't-sleep waits for the real LB/disks to disappear before green-lighting
+  `terraform destroy`). One real bug caught before it shipped: the disk-cleanup polling loop
+  originally used `gcloud compute disks describe --zone "$ZONE"` with the cluster's single
+  control-plane zone — wrong, since Kafka's 3 nodes spread across all 3 zones in
+  `gke_node_locations`, so a disk could legitimately live in a zone that `--zone` flag would never
+  find it in. Fixed by switching to zone-less `gcloud compute disks list --filter`.
+
+**Everything syntax-checked and live-smoke-tested where practical** (`bash -n` on both scripts;
+individual `gcloud`/`terraform` command patterns run against this real, still-empty project to
+catch flag/command errors) — **but none of it has run against an actual cluster**, since
+`terraform/gcp/` is still plan-only. This is a materially different confidence level than AWS's
+now-battle-tested scripts, and said so explicitly in the README rather than implied equivalence.
+Known transferable AWS bugs (XFS, `--platform`, 1Gi memory) were applied proactively rather than
+left to be rediscovered; what's still genuinely unverified is documented in
+`terraform/gcp/README.md`'s new "Deploy overlay: built but genuinely untested" section.
+
 ## Open
 
 - **Both `terraform/gcp/bootstrap/` and `terraform/gcp/` are plan-only** — no real GCP resources
@@ -155,10 +206,9 @@ apply/destroy cycle on this cloud, not after.
 - **No `backend.tf` for the main config yet** — deliberately deferred until `bootstrap/` is
   actually applied (a real, later, separate user decision), matching the AWS track's own
   chronology exactly.
-- **k8s deploy overlay for GCP not started** — Artifact Registry, GCP Traefik/api manifest
-  variants, `deploy-gcp.sh`/`teardown-gcp.sh`. Mirrors AWS's later "task #8" phase; this session
-  only covers AWS's earlier infra-only pass. `check-resources.sh` exists but is scoped to base
-  infra only until that overlay exists.
+- **k8s deploy overlay is built but genuinely untested against a real cluster** — see the "Done"
+  section above and `terraform/gcp/README.md`'s "Deploy overlay: built but genuinely untested".
+  Nothing here has AWS's live-debugged confidence level yet.
 - **No `check-costs.sh` for GCP** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
   `terraform/gcp/README.md`'s "No `check-costs.sh` yet" section.
@@ -172,9 +222,10 @@ apply/destroy cycle on this cloud, not after.
    `backend.tf`, then decide whether/when to apply the main config for real — same two-stage
    pattern AWS went through, whenever ready to spend real trial credit on it. Set up the Cloud
    Billing BigQuery export before that first real apply, not after.
-3. Once applied: the GCP k8s deploy overlay phase (Artifact Registry, manifest variants, deploy/
-   teardown scripts, live functional validation through the app's real endpoints) — mirrors AWS's
-   task #8–#15 arc.
-4. Azure Terraform config, last in the AWS-first sequencing.
-5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+2. Once applied: run `deploy-gcp.sh` and expect to live-debug it, same as AWS's first real
+   `deploy-aws.sh` run — then `check-resources.sh`, a live functional pass through the app's real
+   endpoints (mirroring AWS's task #15), and `teardown-gcp.sh` to confirm the two-script cycle
+   actually works end-to-end.
+3. Azure Terraform config, last in the AWS-first sequencing.
+4. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

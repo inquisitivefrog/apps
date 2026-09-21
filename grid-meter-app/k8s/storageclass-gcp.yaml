@@ -1,0 +1,28 @@
+# GCP-target variant, GCP counterpart of storageclass-aws.yaml. Unlike EKS, GKE DOES auto-mark a
+# default StorageClass at cluster creation (`standard-rwo`, provisioner pd.csi.storage.gke.io,
+# `type: pd-balanced`, confirmed live 2026-09-21 via web search against GCP's own persistent-
+# volumes docs) - so this isn't filling an absence the way AWS's was, it's *replacing* GKE's own
+# default. k8s/deploy-gcp.sh un-defaults `standard-rwo` before applying this file, since two
+# StorageClasses can't both carry the is-default-class annotation without an ambiguous result.
+#
+# fstype: xfs, not the CSI driver's own ext4 default - applied proactively here rather than
+# waiting to hit it live: AWS's identical Kafka-on-EBS build found (2026-09-18) that a freshly
+# ext4-formatted volume auto-creates a `lost+found` directory as part of the filesystem itself,
+# and Kafka's LogManager fatally errors the moment it scans any non-topic-partition-named
+# directory under its log dir during startup. The GCE PD CSI driver supports the identical
+# `csi.storage.k8s.io/fstype` parameter key AWS's EBS CSI driver does - same fix, same mechanism,
+# directly transferable rather than a new finding needed on this cloud. NOT yet live-tested
+# against a real cluster (nothing applied yet on this cloud) - re-verify Kafka actually starts
+# clean on a fresh XFS-formatted PD before trusting this the way AWS's finding is trusted.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: pd-balanced-xfs
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: pd.csi.storage.gke.io
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  type: pd-balanced
+  csi.storage.k8s.io/fstype: xfs

@@ -1,0 +1,121 @@
+# GCP-target variant of api.yaml, GCP counterpart of api-aws.yaml. Same Deployment shape (2
+# replicas), same SPRING_PROFILES_ACTIVE=cloud / SPRING_DATA_REDIS_HOST+PORT wiring AWS's variant
+# uses - Cloud SQL's private IP and Memorystore's PSC endpoint are both directly reachable from
+# pods over the VPC (no Cloud SQL Auth Proxy sidecar needed), matching how AWS's RDS/ElastiCache
+# endpoints are used directly.
+#
+# image below is a placeholder - deploy-gcp.sh applies this file with the real Artifact Registry
+# image substituted in first (same "bake in the real image before the first apply, not patch
+# after" reasoning as AWS's PLACEHOLDER_ECR_API_IMAGE - see deploy-aws.sh's comment on why the
+# apply-then-patch design was wasteful ReplicaSet churn on that cloud).
+#
+# memory: 1Gi from the start, not kind's 512Mi - AWS's identical build found live (2026-09-18)
+# that 512Mi OOMKills this container (exit 137) before Spring Boot logs past the active profile;
+# -Xmx384m only bounds heap, and JPA/Security/Kafka-client/full Micrometer+OTel tracing all
+# initializing at once needs real headroom beyond that. Applied proactively here as a directly
+# transferable, cloud-agnostic JVM/app-level finding, not something to rediscover a second time.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: PLACEHOLDER_ARTIFACT_REGISTRY_API_IMAGE
+          imagePullPolicy: Always
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_PROFILES_ACTIVE
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_DATASOURCE_URL
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grid-meter-secrets
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_KAFKA_BOOTSTRAP_SERVERS
+            - name: SPRING_DATA_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_DATA_REDIS_HOST
+            - name: SPRING_DATA_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: SPRING_DATA_REDIS_PORT
+            - name: GRID_METER_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: grid-meter-secrets
+                  key: GRID_METER_JWT_SECRET
+            - name: GRID_METER_TRACING_SAMPLING_PROBABILITY
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: GRID_METER_TRACING_SAMPLING_PROBABILITY
+            - name: JAVA_TOOL_OPTIONS
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: JAVA_TOOL_OPTIONS
+            - name: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

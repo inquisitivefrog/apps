@@ -85,6 +85,11 @@ echo "-- Secret Manager --"
 check "Cloud SQL password secret" gcloud secrets describe grid-meter-app-cloudsql-password --format="value(name)"
 echo
 
+echo "-- Artifact Registry --"
+check "Repo: api" gcloud artifacts repositories describe grid-meter-app-api --location "$REGION" --format="value(name)"
+check "Repo: frontend" gcloud artifacts repositories describe grid-meter-app-frontend --location "$REGION" --format="value(name)"
+echo
+
 echo "== Summary: $PASS passed, $FAIL failed =="
 if [[ "$FAIL" -gt 0 ]]; then
   echo "One or more expected resources are missing or unhealthy - investigate before proceeding."

@@ -54,7 +54,22 @@ output "cloudsql_password_secret_id" {
   value       = google_secret_manager_secret.cloudsql_password.secret_id
 }
 
-output "memorystore_endpoint" {
-  description = "Memorystore for Valkey connection endpoint(s) - only known after apply, since it's assigned by the auto-created PSC connection. Uses `endpoints`, not the deprecated `discovery_endpoints` attribute (confirmed via `terraform providers schema`, not assumed)."
-  value       = google_memorystore_instance.main.endpoints
+output "artifact_registry_api_repository" {
+  description = "Artifact Registry repository URL for the api image, in docker-push format (region-docker.pkg.dev/project/repo). Used by k8s/deploy-gcp.sh."
+  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.api.repository_id}"
+}
+
+output "artifact_registry_frontend_repository" {
+  description = "Artifact Registry repository URL for the frontend image. Used by k8s/deploy-gcp.sh."
+  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.frontend.repository_id}"
+}
+
+output "memorystore_host" {
+  description = "Memorystore for Valkey PSC connection IP - extracted from the nested `endpoints[0].connections[0].psc_auto_connection[0].ip_address` structure (confirmed via `terraform providers schema`, not assumed - `discovery_endpoints` and the flat `psc_auto_connections` attribute are both deprecated) so k8s/deploy-gcp.sh doesn't need to parse that nesting itself. Only known after apply."
+  value       = google_memorystore_instance.main.endpoints[0].connections[0].psc_auto_connection[0].ip_address
+}
+
+output "memorystore_port" {
+  description = "Memorystore for Valkey PSC connection port."
+  value       = google_memorystore_instance.main.endpoints[0].connections[0].psc_auto_connection[0].port
 }

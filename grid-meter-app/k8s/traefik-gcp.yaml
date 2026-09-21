@@ -1,0 +1,80 @@
+# GCP-target variant of traefik.yaml, GCP counterpart of traefik-aws.yaml. Same reasoning as that
+# file: kind's hostPort/nodeSelector/tolerations/Recreate-strategy plumbing is tied to
+# kind-config.yaml's local port-80-mapping trick and doesn't apply to a real cluster. Real
+# reachability here comes from a Service: type: LoadBalancer, which GKE's cloud-controller
+# resolves to a real GCP external Network Load Balancer (L4, regional) automatically - no
+# annotation needed for the default case, matching docs/cloud-deployment-scope.md's already-
+# decided design ("each cloud's own load balancer sits in front of [Traefik] purely for public IP
+# assignment"). NOT yet live-confirmed which exact GCP LB product this resolves to (nothing
+# applied yet on this cloud) - AWS's equivalent assumption (NLB) turned out wrong when finally
+# checked live (it was actually a Classic ELB) - re-verify here with `gcloud compute
+# forwarding-rules list` once this is actually applied, don't assume "Network Load Balancer" is
+# right just because that's GCP's documented default for a plain LoadBalancer Service. Traefik
+# itself stays a single instance either way - HA for the edge tier is already explicitly out of
+# scope per docs/ha-scope.md.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-ingress-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    app: traefik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik-ingress-controller
+      containers:
+        - name: traefik
+          image: traefik:v3.7.10
+          args:
+            - --providers.kubernetescrd
+            - --entrypoints.web.address=:80
+            - --api.dashboard=true
+            - --metrics.prometheus=true
+          ports:
+            - name: web
+              containerPort: 80
+            - name: metrics
+              containerPort: 8080
+          resources:
+            limits:
+              memory: 128Mi
+---
+# Public-facing - provisions a real GCP load balancer. This is the one resource in this file
+# whose existence has a direct GCP cost line once applied (a forwarding rule + the LB itself).
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-web
+spec:
+  type: LoadBalancer
+  selector:
+    app: traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: 80
+---
+# ClusterIP only, same as traefik.yaml's - in-cluster metrics scraping, not a second public path.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-metrics
+spec:
+  selector:
+    app: traefik
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080

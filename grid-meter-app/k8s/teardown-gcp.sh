@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# GCP-target counterpart of teardown-aws.sh. Tears down the Kubernetes-provisioned GCP resources
+# that `terraform destroy` (terraform/gcp/) does NOT know about and cannot clean up itself - run
+# this BEFORE terraform destroy, every time. Same two reasons as AWS's version:
+#
+#   1. The `traefik-web` Service (type LoadBalancer) causes GKE's cloud-controller to provision a
+#      real GCP forwarding rule + backing LB resources. Terraform never created that (kubectl did,
+#      indirectly), so `terraform destroy` has no resource block for it and will never delete it.
+#   2. Kafka's 3 PVCs cause the GCE PD CSI driver to provision 3 real persistent disks. Same
+#      problem - deleting the PVCs (StorageClass reclaimPolicy: Delete, storageclass-gcp.yaml) is
+#      what actually triggers the CSI driver to call Compute Engine's DeleteDisk.
+#
+# UNTESTED against a real cluster as of 2026-09-21, same caveat as deploy-gcp.sh - reasoned
+# through and checked for gcloud command/flag correctness, not run against real GCP resources.
+# In particular, which exact GCP load-balancer resource type a plain `type: LoadBalancer` Service
+# resolves to (legacy target-pool-based external LB vs. the newer backend-service-based external
+# passthrough Network LB) is NOT confirmed live - AWS's identical assumption (NLB) turned out
+# wrong when finally checked (it was a Classic ELB). This script queries forwarding rules by IP
+# address, which exists for either flavor, specifically to avoid needing to guess which one -
+# still worth re-verifying live before trusting this the way AWS's finding is trusted.
+set -euo pipefail
+
+K8S_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TF_DIR="$K8S_DIR/../terraform/gcp"
+
+PROJECT_ID="$(cd "$TF_DIR" && terraform output -raw gcp_project_id)"
+REGION="$(cd "$TF_DIR" && terraform output -raw gcp_region)"
+echo "Using GCP project '$PROJECT_ID' in region '$REGION'"
+
+echo "== Confirming kubectl is pointed at the right cluster =="
+CTX="$(kubectl config current-context)"
+echo "Current context: $CTX"
+read -p "Proceed with teardown against this context? [y/N] " CONFIRM
+if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+  echo "Aborted."
+  exit 1
+fi
+
+echo
+echo "== Step 1: delete the LoadBalancer Service, wait for the real GCP forwarding rule to actually disappear =="
+LB_IP="$(kubectl get svc traefik-web -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+if [[ -z "$LB_IP" ]]; then
+  echo "No traefik-web LoadBalancer IP found - already deleted, or never created. Skipping."
+else
+  FR_NAME="$(gcloud compute forwarding-rules list --project "$PROJECT_ID" \
+    --filter="IPAddress=$LB_IP" --format="value(name)" 2>/dev/null || true)"
+  echo "Found forwarding rule for $LB_IP: ${FR_NAME:-none found by IP match}"
+  kubectl delete svc traefik-web --ignore-not-found
+  echo "Waiting for GCP to actually delete it (polling, not a fixed sleep) ..."
+  for i in $(seq 1 30); do
+    STILL_THERE="$(gcloud compute forwarding-rules list --project "$PROJECT_ID" \
+      --filter="IPAddress=$LB_IP" --format="value(name)" 2>/dev/null || true)"
+    if [[ -z "$STILL_THERE" ]]; then
+      echo "Confirmed: forwarding rule for $LB_IP is gone."
+      break
+    fi
+    sleep 10
+  done
+  STILL_THERE="$(gcloud compute forwarding-rules list --project "$PROJECT_ID" \
+    --filter="IPAddress=$LB_IP" --format="value(name)" 2>/dev/null || true)"
+  if [[ -n "$STILL_THERE" ]]; then
+    echo "WARNING: forwarding rule for $LB_IP still exists after 5 minutes of polling - check the" \
+         "GCP console (Network Services -> Load Balancing) before running terraform destroy."
+  fi
+fi
+
+echo
+echo "== Step 2: stop Kafka (releases its volumes), then delete the PVCs, then wait for the real persistent disks to actually disappear =="
+# A PVC cannot finish deleting - and its underlying disk cannot actually be released - while a
+# running pod still has it mounted (kubernetes.io/pvc-protection finalizer blocks it) - same
+# reasoning AWS's teardown-aws.sh found live (2026-09-18): the StatefulSet has to go first so the
+# pods actually release their volumes before PVC deletion is attempted.
+VOLUME_HANDLES="$(kubectl get pv -o jsonpath='{.items[*].spec.csi.volumeHandle}' 2>/dev/null || true)"
+if [[ -z "$VOLUME_HANDLES" ]]; then
+  echo "No PersistentVolumes found - already deleted, or never created. Skipping."
+else
+  echo "Found persistent disks backing current PVs: $VOLUME_HANDLES"
+  kubectl delete statefulset kafka --ignore-not-found
+  echo "Waiting for Kafka pods to fully terminate (releases the volumes) ..."
+  kubectl wait --for=delete pod -l app=kafka --timeout=120s 2>/dev/null || true
+  kubectl delete pvc --all -n default --ignore-not-found
+
+  # GCE PD CSI volumeHandles are shaped like
+  # projects/<project>/zones/<zone>/disks/<disk-name> - extract just the disk name. Deliberately
+  # queried via `gcloud compute disks list` (zone-less, searches every zone), NOT `describe
+  # --zone "$ZONE"` - Kafka's 3 nodes spread across all 3 zones in gke_node_locations
+  # (us-central1-a/b/c, variables.tf), not just this cluster's single control-plane zone, so a
+  # disk can legitimately live in a zone `describe --zone "$ZONE"` would never find it in.
+  DISK_NAMES=""
+  for handle in $VOLUME_HANDLES; do
+    DISK_NAMES="$DISK_NAMES ${handle##*/}"
+  done
+
+  echo "Waiting for GCP to actually delete the persistent disks (polling, not a fixed sleep) ..."
+  for i in $(seq 1 30); do
+    STILL_THERE=0
+    for name in $DISK_NAMES; do
+      [[ -n "$(gcloud compute disks list --project "$PROJECT_ID" --filter="name=$name" --format="value(name)" 2>/dev/null)" ]] && STILL_THERE=1
+    done
+    if [[ "$STILL_THERE" -eq 0 ]]; then
+      echo "Confirmed: all persistent disks are gone."
+      break
+    fi
+    sleep 10
+  done
+  STILL_THERE=0
+  for name in $DISK_NAMES; do
+    [[ -n "$(gcloud compute disks list --project "$PROJECT_ID" --filter="name=$name" --format="value(name)" 2>/dev/null)" ]] && STILL_THERE=1
+  done
+  if [[ "$STILL_THERE" -eq 1 ]]; then
+    echo "WARNING: one or more persistent disks still exist after 5 minutes of polling: $DISK_NAMES -" \
+         "check the GCP console (Compute Engine -> Disks) before running terraform destroy."
+  fi
+fi
+
+echo
+echo "== Kubernetes-provisioned GCP resources cleared. Now run: =="
+echo "    cd $(cd "$K8S_DIR/../terraform/gcp" && pwd)"
+echo "    terraform plan -destroy"
+echo "    terraform destroy"
+echo
+echo "(Deliberately not run automatically from this script - real, hard-to-reverse infrastructure"
+echo " teardown should be a deliberate, reviewed step, not chained onto a kubectl cleanup script.)"

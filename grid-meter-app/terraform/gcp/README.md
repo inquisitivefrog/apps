@@ -35,7 +35,7 @@ paste its `backend_config_snippet` output into a new `backend.tf` here, matching
    account's auto-created "My First Project", kept rather than creating a fresh dedicated one).
 3. APIs enabled on that project (done live this session, all free/no-cost operations):
    `compute`, `container`, `sqladmin`, `redis`, `memorystore`, `servicenetworking`, `iam`,
-   `cloudresourcemanager`, `secretmanager`.
+   `cloudresourcemanager`, `secretmanager`, `artifactregistry`.
 4. Terraform >= 1.11.0 (this dev machine runs 1.13.2).
 5. `kubectl` installed, for interacting with the cluster once it exists.
 
@@ -48,13 +48,14 @@ paste its `backend_config_snippet` output into a new `backend.tf` here, matching
 | Cloud SQL PostgreSQL | `db-f1-micro`, zonal (not regional HA), 20GB PD-SSD | Self-hosted Patroni + Consul | RDS `db.t4g.micro` |
 | Memorystore for Valkey | `SHARED_CORE_NANO`, `CLUSTER_DISABLED` (single shard) | Self-hosted Redis + Sentinel | ElastiCache `cache.t4g.micro` |
 | Secret Manager secret | Cloud SQL's generated password | — | RDS's `manage_master_user_password` (Secrets Manager) |
+| Artifact Registry (api + frontend repos) | 5-image `KEEP` cleanup policy each | `kind load docker-image` | ECR |
+| GCE Persistent Disk CSI driver addon (declared explicitly in `gke.tf`) | — | `local-path-provisioner` | EBS CSI driver addon |
 | — (Metrics Server ships pre-installed on GKE Standard) | — | — | `metrics-server` EKS addon |
 
-**Not yet built this pass** (deliberately out of scope, would mirror AWS's later "k8s deploy
-overlay" phase): Artifact Registry repos, a GCP-specific Traefik variant (Cloud Load Balancing in
-front of in-cluster Traefik per `docs/cloud-deployment-scope.md`), a GCP `api` k8s manifest
-variant, `k8s/deploy-gcp.sh`/`teardown-gcp.sh`, inspection/cost-check scripts. Straightforward to
-add by the same pattern as AWS's, once this base infra pass is actually applied and reviewed.
+**k8s deploy overlay now built too** (`k8s/deploy-gcp.sh`/`teardown-gcp.sh`,
+`k8s/storageclass-gcp.yaml`, `k8s/traefik-gcp.yaml`, `k8s/api-gcp.yaml`), mirroring AWS's later
+"task #8" phase — see "Deploy overlay: built but genuinely untested" below for the important
+caveat this carries that AWS's equivalent script no longer does.
 
 Kafka is **not** created here — it stays self-hosted in-cluster (see `k8s/kafka.yaml`), same
 decision and reasoning as the AWS track.
@@ -94,14 +95,45 @@ only.
   application-default login`) before any of this could be planned, let alone applied. See
   `status/claude_code_2026-09-21.md` for the full walkthrough.
 
+## Deploy overlay: built but genuinely untested
+
+`k8s/deploy-gcp.sh`/`teardown-gcp.sh`, `k8s/storageclass-gcp.yaml`, `k8s/traefik-gcp.yaml`,
+`k8s/api-gcp.yaml` are all written and syntax-checked (`bash -n`, plus live `gcloud`
+command/flag smoke tests against this real project where practical), but **none of it has run
+against a real cluster** — `terraform/gcp/` is still plan-only, so there's nothing to deploy onto
+yet. This is a materially different confidence level than AWS's equivalent scripts, which were
+live-debugged through 6 real bugs (fsGroup, image-arch mismatch, a stuck StatefulSet rollout, an
+OOM-sized memory limit, ext4's `lost+found` breaking Kafka, node overcommitment) before they
+worked cleanly — see `status/claude_code_2026-09-18.md`.
+
+**Known, directly-transferable AWS findings were applied proactively rather than left to be
+rediscovered**: `k8s/storageclass-gcp.yaml` uses XFS (not the GCE PD CSI driver's ext4 default) to
+sidestep the exact same Kafka `lost+found` bug AWS hit; `k8s/deploy-gcp.sh` builds images with
+`--platform linux/amd64` for the same Apple-Silicon-build-host-vs-x86_64-node-pool mismatch AWS
+hit; `k8s/api-gcp.yaml` starts at `memory: 1Gi`, not kind's `512Mi`, for the same JVM-startup-
+footprint OOM AWS hit. One genuine GCP-specific step with no AWS equivalent: `deploy-gcp.sh`
+explicitly un-defaults GKE's own built-in `standard-rwo` StorageClass before applying the XFS one,
+since (unlike EKS, which ships with no default at all) GKE auto-marks one at cluster creation, and
+two StorageClasses can't both carry `is-default-class` without an ambiguous result.
+
+**What's still genuinely unverified**: which exact GCP load-balancer resource type a plain
+`type: LoadBalancer` Traefik Service resolves to (`teardown-gcp.sh` queries forwarding rules by IP
+specifically to sidestep needing to guess — AWS's own identical assumption, "it'll be an NLB",
+turned out wrong when finally checked live); whether Artifact Registry's `terraform destroy`
+behavior on a non-empty repo needs a `force_delete`-equivalent flag the way ECR does (checked the
+provider schema — no such attribute exists — but not live-confirmed the way AWS's finding was);
+and the entire live functional path (does the app actually serve traffic end-to-end through Cloud
+SQL/Memorystore/Kafka) that AWS's task #15 validated directly against real endpoints. Treat a
+first real run of `deploy-gcp.sh` the way AWS's first real `deploy-aws.sh` run was treated: expect
+to live-debug, not expect it to work first try.
+
 ## Inspection script
 
 `check-resources.sh` — the GCP counterpart to `terraform/aws/check-resources.sh`: confirms every
 Terraform-provisioned resource actually exists and is healthy via real `gcloud` calls, not
-`terraform apply`'s own "Apply complete" message. Scoped to this pass's base infra only (VPC/GKE/
-Cloud SQL/Memorystore) — no Artifact Registry/Workload Identity section yet, since that layer
-doesn't exist (same reasoning as AWS's own check-resources.sh, whose ECR/IAM sections only arrived
-once that later phase was built).
+`terraform apply`'s own "Apply complete" message. Now covers the full stack this pass creates,
+including Artifact Registry — the only section still missing relative to AWS's script is Workload
+Identity/IAM, since this build doesn't need pod-level GCP IAM bindings yet.
 
 **Already live-tested once, before any real resource existed** — run against this real, currently-
 empty project on 2026-09-21 specifically to catch command/flag bugs early, not resource-health

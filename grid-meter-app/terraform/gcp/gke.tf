@@ -53,6 +53,23 @@ resource "google_container_cluster" "main" {
     channel = var.gke_release_channel
   }
 
+  # Declared explicitly rather than left at whatever the provider/GKE
+  # version resolves to implicitly - this is the addon that makes
+  # k8s/storageclass-gcp.yaml able to provision anything at all (the direct
+  # GCP equivalent of AWS's aws_eks_addon "ebs_csi_driver"). Confirmed live
+  # via web search (2026-09-21): GKE 1.18.10-gke.2100+/1.19.3-gke.2100+
+  # enables this by default when the block is omitted entirely, well below
+  # this cluster's REGULAR-channel version - but this project's own
+  # standing rule is to declare load-bearing defaults, not lean on an
+  # implicit one, regardless of how safe that implicit default currently
+  # is (CLAUDE.md's "undeclared defaults" lesson, found 9 separate times
+  # elsewhere in this project's HA work).
+  addons_config {
+    gce_persistent_disk_csi_driver_config {
+      enabled = true
+    }
+  }
+
   # Private nodes (no external IP on any node - egress via the Cloud NAT in
   # network.tf), same private-worker-subnet pattern as AWS's private
   # subnets. Public endpoint left enabled (enable_private_endpoint=false)
