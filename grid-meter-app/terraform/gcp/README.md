@@ -270,12 +270,31 @@ attempted for real: 18 of 22 resources destroyed cleanly, then a real failure -
 between them, so Terraform destroyed both in parallel; the `DROP ROLE` call's server-side
 validation ran before the `DROP DATABASE` call had actually finished committing on Cloud SQL's
 backend, so it still saw "5 objects in database gridmeter" depending on the role**, even though
-that database's own destroy had already logged success. Fixed with an explicit
+that database's own destroy had already logged success. First fix attempt: an explicit
 `depends_on = [google_sql_database.main]` on `google_sql_user.main` - the same "declare the real
 ordering, don't assume the API serializes it for you" shape as this project's other
 undeclared-dependency findings, just surfacing on teardown instead of apply.
 
-The ordering fix worked on retry (`google_sql_user.main` destroyed cleanly, 19 of 22 total), but
+That first fix's retry "succeeded," but not because the fix was correct - only because
+`google_sql_database.main` had already been fully destroyed by the time of the retry (it was
+already gone from state after the original race, its `DROP DATABASE` having eventually finished
+committing on its own), so the `depends_on` edge had nothing left to actually order against. **A
+second, later full apply+destroy cycle the same day exercised the fix against a freshly-created
+database+user pair for the first time and reproduced the identical original error verbatim** -
+proof the fix's dependency direction was backwards the whole time. Terraform's destroy order is
+the *reverse* of its create order for a `depends_on` edge: if A `depends_on` B, B is created first
+(as intended - user created after database, matching the logs), but **A is destroyed first, B
+second** - not "B finishes destroying, then A," which the original fix assumed. So
+`user depends_on database` forced the *user* to be destroyed before the database on every fresh
+run, guaranteeing the same "objects still depend on it" error every time database and user are
+genuinely destroyed together. **Corrected fix**: inverted which resource carries the edge -
+`google_sql_database.main` now `depends_on = [google_sql_user.main]` (`cloudsql.tf`) - so destroy
+order becomes database-first, user-second: `DROP DATABASE` (and everything it owns) genuinely
+completes before `DROP ROLE` is attempted. Confirmed this doesn't disturb create order in any way
+that matters - a Cloud SQL user only needs the instance to exist, not the database.
+
+The (backwards) ordering fix's retry appeared to work (`google_sql_user.main` destroyed cleanly,
+19 of 22 total) purely due to the state-already-missing-the-database coincidence above, but
 surfaced a **second, unrelated real failure**: `google_service_networking_connection` refused to
 delete with the same "Producer services...still using this connection" error, even with every
 Cloud SQL/Memorystore instance confirmed genuinely gone (`gcloud sql/memorystore instances list`).

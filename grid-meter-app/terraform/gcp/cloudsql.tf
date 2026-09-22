@@ -72,23 +72,28 @@ resource "google_sql_database_instance" "main" {
 resource "google_sql_database" "main" {
   name     = var.cloudsql_db_name
   instance = google_sql_database_instance.main.name
+
+  # Found via a second real live `terraform destroy` (2026-09-21, later the same day as the
+  # original race below): the first fix - depends_on = [google_sql_database.main] on
+  # google_sql_user.main - had the dependency direction backwards, and a live retry reproduced the
+  # exact original error verbatim as proof. Terraform's destroy order is the REVERSE of its create
+  # order for a depends_on edge: if A depends_on B, B is created first (correct, and what happened
+  # here), but A is destroyed FIRST and B second - not "B finishes destroying, then A" as the
+  # original comment assumed. So the old edge (user depends_on database) forced the USER to be
+  # destroyed before the database, every time - `google_sql_user.main: Destroying...` started in
+  # the very first batch of the retry, and `google_sql_database.main` never got a "Destroying..."
+  # line at all before the DROP ROLE call failed identically to the first time. The actual fix is
+  # to invert which resource carries the depends_on: the database now depends_on the user, so
+  # destroy order becomes database-first, user-second - DROP DATABASE (and everything it owns)
+  # actually completes before DROP ROLE is attempted, which is what removes the "5 objects in
+  # database gridmeter" the role-drop kept tripping over. Confirmed this doesn't disturb create
+  # order in any way that matters - a Cloud SQL user only needs the instance to exist, not the
+  # database, so creating the user before the database (the new implied order) is fine.
+  depends_on = [google_sql_user.main]
 }
 
 resource "google_sql_user" "main" {
   name     = var.cloudsql_user
   instance = google_sql_database_instance.main.name
   password = random_password.cloudsql.result
-
-  # Found via a real live `terraform destroy` failure (2026-09-21): with no
-  # explicit ordering between this resource and google_sql_database.main,
-  # Terraform destroyed both in parallel - the DROP DATABASE call appeared
-  # to complete first (its own destroy log line showed success), but the
-  # DROP ROLE call's own validation still saw "5 objects in database
-  # gridmeter" depending on the role, meaning the database drop hadn't
-  # actually finished committing on Cloud SQL's backend when the role-drop
-  # validation ran. depends_on forces the user (role) to be destroyed only
-  # after the database's own destroy has genuinely completed, not just been
-  # issued - same "declare the real ordering, don't assume the API serializes
-  # it for you" lesson as this project's other undeclared-default findings.
-  depends_on = [google_sql_database.main]
 }

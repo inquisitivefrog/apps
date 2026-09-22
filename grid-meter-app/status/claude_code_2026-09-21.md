@@ -455,6 +455,84 @@ service account - all confirmed genuinely gone (404s / empty lists). Only the pr
 default GCE service account remains, which Terraform never created and isn't this project's to
 clean up. **Zero residue, zero cost accruing as of this write.**
 
+## Done — third full apply+destroy cycle re-broke the "fixed" Cloud SQL destroy race; the earlier fix's direction was backwards
+
+User answered "no traffic generation" (confirmed live: no JMeter process, only health-probe/manual
+metrics), then ran a third full cycle unprompted - fresh `terraform apply` (22 resources, clean),
+`deploy-gcp.sh` (clean, no new bugs - all prior fixes held), `check-resources-gcp.sh` both layers
+(17/15 pass), `teardown-gcp.sh` (clean), then `terraform destroy` - which **reproduced the exact
+original `google_sql_user`/`google_sql_database` race verbatim**, the same error the earlier
+`depends_on = [google_sql_database.main]` fix was supposed to have already resolved.
+
+**Root cause of the fix not actually working**: that `depends_on` edge had the direction
+backwards. Terraform destroys in the *reverse* of create order for a `depends_on` edge - if A
+`depends_on` B, B is created first (correct - matches every apply log, user created after
+database) but **A is destroyed first, B second**, not "B finishes destroying, then A" as the
+original fix's comment assumed. So `user depends_on database` forced the *user* to be destroyed
+*before* the database on every fresh run - exactly backwards from the intent, and exactly what
+happened both times a genuinely fresh database+user pair got destroyed together. The earlier
+same-day retry that looked like confirmation wasn't real validation: by the time of that retry,
+`google_sql_database.main` had already been fully destroyed and removed from state from the
+*original* (pre-fix) race, so the `depends_on` edge had nothing left to actually order against -
+the retry succeeding was down to elapsed time letting the original `DROP DATABASE` finish
+committing on its own, not the fix. This third cycle was the first time the fix was tested against
+a fresh pair, and it failed immediately.
+
+**Corrected**: inverted which resource carries the edge - `google_sql_database.main` now
+`depends_on = [google_sql_user.main]` (`cloudsql.tf`), so destroy order becomes database-first,
+user-second, matching the actual intent (`DROP DATABASE` genuinely completes before `DROP ROLE` is
+attempted). Doesn't disturb create order in any way that matters - a Cloud SQL user only needs the
+instance to exist, not the database. `terraform/gcp/README.md`'s "Remaining" section rewritten to
+document the corrected reasoning rather than the disproven original claim.
+
+**Not yet re-verified live** - current real state (per `terraform show`) still has `google_sql_database.main`,
+`google_sql_user.main`, `google_sql_database_instance.main`, `random_password.cloudsql`,
+`google_compute_network.main`, `google_compute_global_address.private_service_access`, and
+`google_service_networking_connection.private_service_access` left over from the interrupted
+destroy (GKE/Memorystore/Artifact Registry/VPC subnet+router+NAT already destroyed cleanly this
+pass). Next step: `terraform plan -destroy -out tfplan` then `terraform apply tfplan` (user-run) to
+confirm the corrected ordering actually works against live Cloud SQL, then the two remaining
+network resources should still fall through to the already-proven `ABANDON` path if
+`google_service_networking_connection` is reached again.
+
+## Done — corrected destroy ordering verified live: full teardown clean, zero errors; found and fixed a second, unrelated script bug along the way
+
+User re-ran `terraform plan -destroy` / `terraform apply tfplan` with the corrected
+`google_sql_database.main depends_on [google_sql_user.main]` edge in place. **Confirmed working
+this time**: `google_sql_database.main` destroyed first (1s), `google_sql_user.main` destroyed
+cleanly right after (0s) - no repeat of the role-drop error, on the first genuinely fresh pair this
+fix has ever been tested against. Remaining resources (`google_sql_database_instance.main`,
+`google_service_networking_connection.private_service_access`, the PSA global address,
+`google_compute_network.main`, `random_password.cloudsql`) all destroyed cleanly - `terraform show`
+confirmed **"The state file is empty. No resources are represented."**, the authoritative signal
+teardown genuinely completed.
+
+Running `check-resources-gcp.sh` immediately after to independently confirm produced a garbled
+cascade of `gcloud` errors instead of a clean report - investigated rather than dismissed as noise.
+**Root cause, confirmed live by isolating stdout/stderr separately**: `terraform output -raw
+<name>` against a state with zero outputs (i.e., right after a full `terraform destroy`) prints its
+"Warning: No outputs found" diagnostic to **stdout**, exits **0**, and writes nothing to stderr -
+so the script's own `2>/dev/null` never had anything to suppress, and the multi-line warning text
+itself got captured as the "project ID"/"region"/etc. value, defeating the `-z` empty-check guard
+(the captured value was very much non-empty) and cascading into nonsense `gcloud` calls instead of
+the intended clean "has terraform apply been run yet?" message. Same false-PASS shape as this
+script's other guard (a technically-non-empty capture that isn't a real value) - fixed the same
+way: a `tf_output()` helper now also rejects any captured value containing an embedded newline (a
+real output is always one line; Terraform's warning diagnostic is always multi-line). Re-ran
+against the now-confirmed-empty real state: clean single-line "Could not read project/region/zone/
+cluster name..." message, exit 2, no garbling.
+
+**Checked whether this transfers, per this project's standing practice**: `terraform/aws/
+check-resources-aws.sh` has the structurally identical guard-clause pattern and would hit the exact
+same bug the next time it's run right after an AWS `terraform destroy` (this is Terraform-binary
+behavior, not GCP-specific). Fixed proactively there too rather than waiting to rediscover it -
+syntax-checked (`bash -n`), not live-tested (no AWS infra currently up to test against).
+
+**GCP is fully torn down again, zero residue** - this closes out the third full apply→deploy→
+functional-test→teardown→destroy cycle this session, and is the first cycle where the Cloud SQL
+destroy-ordering fix was actually validated against a fresh resource pair rather than coincidentally
+appearing to work.
+
 ## Open
 
 - **GCP is fully torn down and independently verified clean.** Real infrastructure existed and was

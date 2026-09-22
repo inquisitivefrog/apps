@@ -12,10 +12,31 @@ set -uo pipefail
 
 TF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PROJECT_ID="$(cd "$TF_DIR" && terraform output -raw gcp_project_id 2>/dev/null)"
-REGION="$(cd "$TF_DIR" && terraform output -raw gcp_region 2>/dev/null)"
-ZONE="$(cd "$TF_DIR" && terraform output -raw gcp_zone 2>/dev/null)"
-CLUSTER_NAME="$(cd "$TF_DIR" && terraform output -raw gke_cluster_name 2>/dev/null)"
+# tf_output <name> - wraps `terraform output -raw`, but doesn't trust a non-empty capture on its
+# own. Found live (2026-09-21) running this exact script right after a real `terraform destroy`
+# left an empty state: `terraform output -raw <name>` against a state with zero outputs prints its
+# "Warning: No outputs found" diagnostic to STDOUT (confirmed by isolating stdout/stderr
+# separately), exits 0, and stderr is empty - so `2>/dev/null` never had anything to suppress, and
+# the multi-line warning text itself got captured as the "value", defeating the `-z` empty-check
+# below entirely (it's very much non-empty) and producing a garbled cascade of gcloud errors
+# instead of the intended clean "has terraform apply been run yet?" message. Same false-PASS shape
+# as this script's other guard below (a technically-non-empty capture that isn't a real value) -
+# fixed the same way, by adding a content check on top of the emptiness check: a real output value
+# (project ID/region/zone/cluster name) is always a single line with no embedded newline; Terraform's
+# warning diagnostic always is multi-line. Reject anything containing a newline as "not a real value".
+tf_output() {
+  local val
+  val="$(cd "$TF_DIR" && terraform output -raw "$1" 2>/dev/null)"
+  if [[ "$val" == *$'\n'* ]]; then
+    val=""
+  fi
+  printf '%s' "$val"
+}
+
+PROJECT_ID="$(tf_output gcp_project_id)"
+REGION="$(tf_output gcp_region)"
+ZONE="$(tf_output gcp_zone)"
+CLUSTER_NAME="$(tf_output gke_cluster_name)"
 
 if [[ -z "$PROJECT_ID" || -z "$REGION" || -z "$ZONE" || -z "$CLUSTER_NAME" ]]; then
   echo "Could not read project/region/zone/cluster name from terraform output - has 'terraform apply' been run yet?"

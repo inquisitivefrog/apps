@@ -12,9 +12,32 @@ set -uo pipefail
 
 TF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-AWS_PROFILE="$(cd "$TF_DIR" && terraform output -raw aws_profile 2>/dev/null)"
-AWS_REGION="$(cd "$TF_DIR" && terraform output -raw aws_region 2>/dev/null)"
-CLUSTER_NAME="$(cd "$TF_DIR" && terraform output -raw eks_cluster_name 2>/dev/null)"
+# tf_output <name> - wraps `terraform output -raw`, but doesn't trust a non-empty capture on its
+# own. Found live (2026-09-21) on the GCP side's identical script, right after a real
+# `terraform destroy` left an empty state: `terraform output -raw <name>` against a state with zero
+# outputs prints its "Warning: No outputs found" diagnostic to STDOUT (confirmed by isolating
+# stdout/stderr separately), exits 0, and stderr is empty - so `2>/dev/null` never had anything to
+# suppress, and the multi-line warning text itself got captured as the "value", defeating the `-z`
+# empty-check below entirely and producing a garbled cascade of AWS CLI errors instead of the
+# intended clean "has terraform apply been run yet?" message. This is Terraform-binary behavior,
+# not GCP-specific, so it applies identically here - fixed proactively rather than waiting to
+# rediscover it the hard way against this script too. Same fix shape as this script's other
+# false-PASS-style guards: add a content check on top of the emptiness check. A real output value
+# (profile/region/cluster name) is always a single line with no embedded newline; Terraform's
+# warning diagnostic always is multi-line. Reject anything containing a newline as "not a real
+# value".
+tf_output() {
+  local val
+  val="$(cd "$TF_DIR" && terraform output -raw "$1" 2>/dev/null)"
+  if [[ "$val" == *$'\n'* ]]; then
+    val=""
+  fi
+  printf '%s' "$val"
+}
+
+AWS_PROFILE="$(tf_output aws_profile)"
+AWS_REGION="$(tf_output aws_region)"
+CLUSTER_NAME="$(tf_output eks_cluster_name)"
 
 if [[ -z "$AWS_PROFILE" || -z "$AWS_REGION" || -z "$CLUSTER_NAME" ]]; then
   echo "Could not read profile/region/cluster name from terraform output - has 'terraform apply' been run yet?"
