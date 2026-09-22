@@ -143,6 +143,77 @@ was gone). `terraform show` reports empty state; `check-resources-gcp.sh` and
 `estimate-costs-gcp.sh` both correctly report nothing found / \$0.00. **GCP is now genuinely fully
 torn down**, not just believed to be.
 
+## Done — started Azure: account setup, real prerequisite gaps found, full plan-only main config built and validated live
+
+Same evening, moved on to Azure per the AWS-first sequencing. User's stated starting context:
+significantly less familiar with Microsoft's ecosystem than AWS/GCP (hasn't bought Microsoft
+products in about a decade) - carried into a new standing memory so future Azure/Microsoft work
+explains more, not less, matching how GCP got extra explanation earlier this project for a similar
+(smaller) familiarity gap.
+
+**Real account setup, walked through step by step**: `az` CLI already installed but not logged in;
+`az login` succeeded but `az account list` kept failing with "No subscriptions found" - diagnosed
+live (token cache had updated, but the subscription/profile list hadn't) as a real, distinct
+prerequisite gap from AWS/GCP: being logged into a Microsoft account and having an Azure
+*subscription* are two separate things. Confirmed live via web search that Azure's free trial
+needs a real (non-virtual) card plus phone verification, same shape as GCP's own trial gate. User
+completed sign-up; `az login` then showed exactly one subscription, selected.
+
+**Accessibility**: `az` CLI's own colored output was hard to read - found and set the real,
+documented `az config set core.no_color=true` fix (verified via Microsoft's own docs before
+suggesting it, not guessed), confirmed live (zero ANSI codes in output afterward). Same for
+Terraform's own coloring later - `TF_CLI_ARGS="-no-color"` set permanently in `~/.zshrc`,
+confirmed live. Both are separate programs from Claude Code's own terminal theme (already fixed
+earlier this project via `/theme light-daltonized`) - neither fix carries over to the other
+automatically, worth remembering as a standing fact for this user's environment.
+
+**Bootstrap module** (state backend: Resource Group + Storage Account + Blob Container) scaffolded
+with real provider-schema verification (installed `azurerm` into a scratch dir, inspected
+`terraform providers schema -json` directly rather than trusting docs/blog posts - caught a real
+breaking change, `azurerm_storage_container` needing `storage_account_id` not the older
+`storage_account_name` some still-current sources show). First real `terraform apply` failed with
+`MissingSubscriptionRegistration` - a brand-new Azure subscription starts with none of Azure's
+resource-provider namespaces registered, a real prerequisite gap neither AWS nor GCP had in the
+same shape. Registered all 9 namespaces this project's full stack will need (not just the one that
+failed), confirmed each reached `Registered` live rather than trusting the register command's own
+completion. **Bootstrap applied for real and confirmed live** (`terraform show` + direct `az`
+verification) - Resource Group, Storage Account, Blob Container all exist in `eastus`.
+
+**Main config built and validated against the real subscription, plan-only per confirmed scope**:
+VNet/AKS/Postgres Flexible Server/Azure Cache for Redis/ACR, mirroring AWS's/GCP's directory
+structure. Extensive live verification before writing anything (not just at error-time): AKS
+doesn't support B-series VMs for system node pools (real platform constraint, picked
+`Standard_D2as_v5` instead), Postgres Flexible Server *does* support B-series (a real contrast
+worth keeping, not an inconsistency), PostgreSQL 18 confirmed GA on Azure, `storage_mb`'s real
+minimum/default (32768), ACR's real repo-is-a-namespace model (checked before writing, specifically
+to avoid repeating the GCP session's own live-caught mistake a second time).
+
+**One real, consequential tradeoff surfaced and taken to the user rather than resolved silently**:
+Azure's modern Redis product ("Azure Managed Redis," genuinely current Redis via a Microsoft/Redis
+Ltd. partnership - confirmed Azure deliberately did NOT adopt Valkey the way AWS/GCP did)
+authenticates via Entra ID tokens ONLY, no password/access-key at all - confirmed via its own
+provider schema, then confirmed the app's actual `spring.data.redis.*` config couldn't use that
+without real new application code. User chose to stay on the legacy, password-auth,
+Redis-6.0-capped `azurerm_redis_cache` to keep the app identical across every cloud target,
+accepting the version/product-longevity cost explicitly rather than have it decided for them.
+
+**`terraform validate` itself caught two real bugs before any live API call**: `azurerm_key_vault`'s
+RBAC attribute is `rbac_authorization_enabled` (not `enable_rbac_authorization`, which some current
+docs/examples still show), and `azurerm_private_dns_zone_virtual_network_link` takes
+`private_dns_zone_id` (not `private_dns_zone_name`) with no `resource_group_name` argument at all -
+both guessed wrong on first draft despite the scratch-dir schema-verification habit (these two
+weren't in the initial batch checked), both caught cleanly by `validate` rather than a live apply.
+Also found: `azurerm_kubernetes_cluster` requires a `node_provisioning_profile` block as of
+azurerm 5.x, a real breaking-change-shaped requirement not prominently documented as such.
+
+**Final result: clean `terraform plan` against the real subscription - 15 to add, 0 to change, 0 to
+destroy.** Nothing applied yet, matching the confirmed plan-only-first scope (same as how both
+AWS's and GCP's own tracks started). `terraform/azure/README.md` written documenting the full
+account; this is genuinely the most upfront-research-heavy of the three cloud passes so far, and
+still found real bugs live-verification alone wouldn't have caught - consistent with this
+project's now well-established pattern that verification reduces but never eliminates the gap
+between "looks right" and "is right."
+
 ## Open
 
 - **GCP is functionally complete and fully confidence-tested as of today** - both IP-range fixes
@@ -158,12 +229,18 @@ torn down**, not just believed to be.
   Console-only, not yet set up). `estimate-costs-gcp.sh` remains the practical stand-in.
 - Bootstrap state bucket (`terraform/gcp/bootstrap/`) left untouched - confirmed negligible cost,
   no reason to disturb it.
+- **Azure's bootstrap module is applied and live** (state backend only); the main config is
+  scaffolded, validated, and plan-clean against the real subscription, but **nothing beyond
+  bootstrap has been applied** - a deliberate stopping point for the night, not a blocker.
 
 ## Next
 
-1. Azure Terraform config — next in the AWS-first sequencing, deferred since the end of 2026-09-21
-   for this GCP fix work.
-2. If GCP work resumes later: the Cloud Billing BigQuery export, so a real `check-costs-gcp.sh`
+1. **Azure**: a real `terraform apply` (user-run) for the main config - the next natural step,
+   picking up fresh with a known-clean plan already in hand.
+2. **Azure**: `k8s/deploy-azure.sh`/`teardown-azure.sh` and Azure-specific k8s manifest variants,
+   once the main config is actually applied - mirroring AWS's/GCP's own later app-deploy phase.
+3. **Azure**: `check-resources-azure.sh` (both layers) once there's real infrastructure to check.
+4. If GCP work resumes later: the Cloud Billing BigQuery export, so a real `check-costs-gcp.sh`
    becomes buildable.
-3. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

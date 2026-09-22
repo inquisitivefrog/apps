@@ -28,3 +28,17 @@ jmeter.log
 # chaos-demo.sh's dashboard screenshots are deliberately versioned, not ignored -- they're kept as
 # evidence of prior test execution (fault-injection detection/alerting proof), not disposable
 # output like results/ above.
+
+# Terraform (terraform/aws/, terraform/gcp/, terraform/azure/, and their bootstrap/ submodules) --
+# local .tfstate files contain real secrets in plaintext (DB passwords, storage account access
+# keys, etc. - Terraform state stores concrete values even for schema-"sensitive" attributes), and
+# tfplan/.terraform/ are disposable local artifacts, not source. .tf files, README.md, and
+# .terraform.lock.hcl remain tracked as normal (not covered by any pattern below). Added
+# 2026-09-22 after noticing terraform/azure/'s untracked files included real state/plan output
+# that terraform/aws/ and terraform/gcp/ had only ever avoided committing by manual care each
+# time, with no backstop.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
