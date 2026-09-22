@@ -11,7 +11,7 @@ See `docs/cloud-deployment-scope.md` for the full per-layer reasoning (why Postg
 managed here but Kafka is self-hosted in-cluster identically across every target — `kind`, AWS,
 and this).
 
-## Status: fully torn down (2026-09-21) — applied, live-debugged, functionally validated, then destroyed clean
+## Status: fully torn down and confirmed clean (2026-09-22) — Terraform and k8s app-deploy layers both confidence-tested, matching AWS's bar
 
 **Real infrastructure was applied, deployed to, functionally tested end-to-end, and torn down
 again, all in this one session (2026-09-21)** — the full arc AWS's track took multiple sessions to
@@ -333,11 +333,80 @@ resource type this pass created (VPC, GKE cluster, Cloud SQL, Memorystore, Artif
 disks, forwarding rules, the dedicated node service account) - all genuinely gone. **Zero residue,
 zero cost accruing.**
 
-What's still open:
+## 2026-09-22: two more real IP-range collisions found and fixed, validated across two clean cycles
+
+A fresh `terraform apply` the next day (unrelated to anything above - a brand-new apply against the
+now-empty project) failed immediately: `google_compute_global_address.private_service_access`
+(network.tf) had no explicit `address`, only `prefix_length = 16`, so GCP auto-picked a /16 from its
+own internal pool - `10.81.0.0/16` on one apply, `172.16.0.0/16` on this one, landing squarely on
+top of `master_ipv4_cidr_block` (`172.16.0.0/28`, gke.tf) and failing cluster creation outright.
+Fixed by pinning the PSA range explicitly - `psa_range_address` (`variables.tf`), defaulted to
+**`10.1.0.0`** per a stated preference to stay entirely within `10.x.x.x` and keep `10.2.x.x` free
+for a possible future second-region VPC.
+
+**That fix alone wasn't enough** - a retry hit a second, different error against the *same*
+`172.16.0.0/28` master CIDR: "overlaps with an active peer network (servicenetworking-googleapis-com)".
+Researched rather than guessed: `172.16.0.0/23` is GKE's own long-standing default master CIDR, and
+Google's Private Service Access peering commonly imports/exports routes touching that same
+`172.16.0.0/12` block on the producer side regardless of what range this project's own PSA
+connection reserves - a real, documented category of conflict. Fixed by moving
+`master_ipv4_cidr_block` (`variables.tf`) off `172.16.0.0/12` entirely, onto **`10.0.0.0/28`** - the
+same low `10.x.x.x` scheme as the PSA fix, chosen deliberately over `192.168.0.0/16` too (a second,
+independently-known collision-prone range for the same underlying reason).
+
+**Both fixes validated across two independent full destroy+reapply cycles**, not just one - the
+first `terraform apply tfplan` after the master-CIDR fix only needed to replace the tainted cluster
+(3 to add, 1 to destroy; Cloud SQL/Memorystore/VPC/PSA untouched, since only the cluster referenced
+the bad CIDR), confirmed clean via `check-resources-gcp.sh` (17/17). A full `terraform destroy` +
+fresh `terraform apply` cycle immediately after came back clean too (22 destroyed, then 22 created,
+0 errors) - genuine repeat-run confirmation, not a one-off. `terraform show` confirmed empty state
+after the destroy half of that cycle.
+
+**Also found and fixed a real bug in `estimate-costs-gcp.sh` during its first live "resources
+present" run**: its forwarding-rules count was unfiltered, picking up Memorystore's own PSC
+auto-connection forwarding rules (confirmed via `loadBalancingScheme` - empty on those, `EXTERNAL`
+on the real Network LB rule) and mislabeling them as "external forwarding rule(s)". The dollar
+total happened to land right that run (both fall under the same flat "up to 5 rules" pricing tier),
+but the label was wrong and would have double-counted once a real LB rule also existed. Filtered to
+`loadBalancingScheme=EXTERNAL`; re-confirmed live afterward (correctly reports "no forwarding rules
+found" when the k8s app layer isn't deployed).
+
+**Left the bootstrap state bucket alone deliberately** after an unrelated `terraform destroy` in
+`bootstrap/` was attempted and blocked by its own `lifecycle.prevent_destroy` - checked live: 3.24
+MiB total across all versioned history, effectively $0.00/month (well inside GCS's Always Free
+tier), so leaving it in place indefinitely carries no real cost either way.
+
+**Then ran a second real `deploy-gcp.sh` cycle on purpose**, specifically to close the one
+remaining gap relative to AWS's confidence bar (the k8s app-deploy layer had only one prior cycle,
+from 2026-09-21). Full sequence: fresh `terraform apply` (a third independent confirmation the
+CIDR fixes hold), `check-resources-gcp.sh` (17/17), `deploy-gcp.sh` (clean end-to-end, **zero new
+bugs** - every fix from the first cycle held), `k8s/check-resources-gcp.sh` (15/15), then a real
+browser login against the live LoadBalancer IP with the seeded `demo` credentials, confirming both
+the Meters and Readings pages load correctly. `deploy-gcp.sh` now has two clean cycles, matching
+AWS's bar on both layers simultaneously for the first time this project has achieved that for GCP.
+
+**Then tore it down to confirm - and found one more real, previously-undiscovered gap in the
+process.** `k8s/teardown-gcp.sh` was skipped by mistake, going straight to `terraform destroy`,
+which failed: `pq: database "gridmeter" is being accessed by other users`. Root cause, confirmed
+by reading the actual destroy-log ordering: `google_sql_database.main`'s destroy fired in the very
+first batch, in parallel with everything else, while the GKE cluster - and the live `api` pods
+holding HikariCP connection pools to Cloud SQL - was still fully running. Postgres correctly
+refused `DROP DATABASE` with an active session attached; `google_sql_database.main` has no
+`depends_on` the cluster's own destroy (independent resource graphs in Terraform's eyes, even
+though the *app* running on the cluster depends on the database). Checked live state rather than
+guessed: the cluster was already gone by then (so a retry should succeed - it did), the LB
+forwarding rule was already gone too (GKE's own cluster-deletion cleaned it up automatically), but
+**3 real orphaned Kafka persistent disks remained** (kubectl had nothing left to reach once the
+cluster was gone) - deleted directly via `gcloud compute disks delete`. **Fixed
+`k8s/teardown-gcp.sh`** with a new first step that scales `api` to 0 and waits for its pods to
+terminate before anything else runs, closing this gap for good - a third, distinct reason now
+documented in the script's own header alongside the original LB/Kafka-disk reasons. Retried
+`terraform destroy` against the remaining resources - clean. `terraform show` confirmed empty
+state; `check-resources-gcp.sh`/`estimate-costs-gcp.sh` both correctly report nothing
+found/\$0.00. **GCP is now genuinely fully torn down**, not just believed to be - four real
+Terraform-layer cycles and two k8s-layer cycles total, matching/exceeding AWS's bar on both. What's
+still open:
 
 1. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
    "No `check-costs-gcp.sh` yet" above - before the *next* real apply, so a delayed cost
    cross-check has data to query once built.
-2. A second full `deploy-gcp.sh` app-layer cycle - the Terraform infra layer has now had two real
-   tested cycles (an incidental full re-apply plus this destroy pass), matching AWS's own
-   two-cycle confidence bar for that layer; the k8s app-deploy layer has had one.

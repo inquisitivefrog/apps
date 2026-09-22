@@ -64,6 +64,7 @@ resource "google_compute_global_address" "private_service_access" {
   name          = "${var.project_name}-psa-range"
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
+  address       = var.psa_range_address # pinned explicitly - see variables.tf's psa_range_address for why (a real live collision with the GKE master CIDR, 2026-09-22)
   prefix_length = 16
   network       = google_compute_network.main.id
 }

@@ -51,9 +51,42 @@ variable "services_cidr" {
 }
 
 variable "master_ipv4_cidr_block" {
-  description = "/28 range for the GKE control plane's private endpoint peering - required whenever enable_private_nodes is true, regardless of whether the public endpoint is also enabled."
+  # Found via a second real live apply failure (2026-09-22), right after the psa_range_address fix
+  # below resolved the *first* 172.16.0.0/28 collision: even with the PSA range moved off 172.16.x.x
+  # entirely (to 10.1.0.0/16), cluster creation failed again with a DIFFERENT error against this same
+  # /28 - "New subnetwork IP range (172.16.0.0/28) overlaps with an active peer network
+  # (servicenetworking-googleapis-com)". Researched rather than guessed: 172.16.0.0/23 is GKE's own
+  # long-standing historical default master CIDR (confirmed via GCP's own troubleshooting docs), and
+  # Google's Private Service Access peering (the servicenetworking-googleapis-com connection this
+  # project's own PSA range creates) commonly imports/exports routes touching that same 172.16.0.0/12
+  # block on the producer side - a known category of conflict independent of whatever range this
+  # project explicitly reserves for its own PSA connection. Moved off 172.16.0.0/12 entirely rather
+  # than continuing to hunt for a "safe" subrange within it - onto the same low 10.x.x.x scheme
+  # psa_range_address now uses (user preference, 2026-09-22), disjoint from subnet_cidr (10.10.0.0/20),
+  # pods_cidr (10.11.0.0/16), services_cidr (10.12.0.0/20), and psa_range_address (10.1.0.0/16) above.
+  description = "/28 range for the GKE control plane's private endpoint peering - required whenever enable_private_nodes is true, regardless of whether the public endpoint is also enabled. Deliberately outside 172.16.0.0/12 (GKE's own common default, which collides with Private Service Access peering routes) - kept in the same low 10.x.x.x scheme as psa_range_address."
   type        = string
-  default     = "172.16.0.0/28"
+  default     = "10.0.0.0/28"
+}
+
+variable "psa_range_address" {
+  # Found via a real live apply failure (2026-09-22): google_compute_global_address.private_service_access
+  # (network.tf) originally declared only prefix_length = 16 with no explicit `address`, letting GCP
+  # auto-pick a /16 block from its own internal allocation pool on each apply - non-deterministic across
+  # applies (10.81.0.0/16 on an earlier apply, 172.16.0.0/16 on this one). The second landed squarely on
+  # top of master_ipv4_cidr_block above (172.16.0.0/28), and GKE cluster creation failed outright:
+  # "Invalid IPCidrRange: 172.16.0.0/28 conflicts with reserved IP range '172.16.0.0/16'" - the exact
+  # "undeclared default silently colliding with something assumed fixed" shape this project has hit
+  # many times before (CLAUDE.md), just for an IP range instead of a timeout/durability setting.
+  #
+  # Pinned to 10.1.0.0/16 (user preference, 2026-09-22): kept within 10.x.x.x rather than the 172.16.x.x
+  # space GCP happened to auto-pick, and deliberately small/low in the 10.x range so 10.2.0.0/16 stays
+  # free and reserved for a second region's VPC-peering range if this project ever adds cross-region
+  # replication - not colliding with this region's own subnet_cidr (10.10.0.0/20), pods_cidr
+  # (10.11.0.0/16), services_cidr (10.12.0.0/20), or master_ipv4_cidr_block (172.16.0.0/28) above.
+  description = "Explicit starting address for the Private Service Access VPC-peering range (paired with a /16 prefix_length in network.tf) - must stay disjoint from subnet_cidr/pods_cidr/services_cidr/master_ipv4_cidr_block above. Kept low in 10.x.x.x (10.1.0.0) so 10.2.x.x stays reserved for a future second-region VPC if cross-region replication is ever added."
+  type        = string
+  default     = "10.1.0.0"
 }
 
 # --- GKE ---

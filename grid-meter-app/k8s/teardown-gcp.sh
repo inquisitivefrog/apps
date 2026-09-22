@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GCP-target counterpart of teardown-aws.sh. Tears down the Kubernetes-provisioned GCP resources
 # that `terraform destroy` (terraform/gcp/) does NOT know about and cannot clean up itself - run
-# this BEFORE terraform destroy, every time. Same two reasons as AWS's version:
+# this BEFORE terraform destroy, every time. Three reasons, the third found live (2026-09-22):
 #
 #   1. The `traefik-web` Service (type LoadBalancer) causes GKE's cloud-controller to provision a
 #      real GCP forwarding rule + backing LB resources. Terraform never created that (kubectl did,
@@ -9,6 +9,16 @@
 #   2. Kafka's 3 PVCs cause the GCE PD CSI driver to provision 3 real persistent disks. Same
 #      problem - deleting the PVCs (StorageClass reclaimPolicy: Delete, storageclass-gcp.yaml) is
 #      what actually triggers the CSI driver to call Compute Engine's DeleteDisk.
+#   3. **The `api` Deployment holds live HikariCP connections to Cloud SQL** - found live when this
+#      script was skipped entirely and `terraform destroy` failed with `pq: database "gridmeter" is
+#      being accessed by other users`. `google_sql_database.main`'s destroy has no `depends_on` the
+#      GKE cluster's own destroy (they're independent resource graphs in Terraform's eyes, even
+#      though the *app* running on the cluster depends on the database) - Terraform attempted
+#      `DROP DATABASE` in the same early batch as everything else, while the `api` pods were still
+#      live and connected. A retry after the cluster was fully destroyed succeeded (the connections
+#      were gone along with the pods), but that's an accidental fix via a much bigger, slower
+#      hammer than necessary - scaling `api` to 0 here, before anything else, closes the gap
+#      directly and cheaply.
 #
 # Needs `gke-gcloud-auth-plugin` installed and on $PATH, plus
 # `export USE_GKE_GCLOUD_AUTH_PLUGIN=True` - every kubectl call fails outright without it (see
@@ -43,7 +53,19 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
 fi
 
 echo
-echo "== Step 1: delete the LoadBalancer Service, wait for the real GCP forwarding rule to actually disappear =="
+echo "== Step 1: scale 'api' to 0, releasing its live Cloud SQL connections before terraform destroy ever attempts DROP DATABASE =="
+API_REPLICAS="$(kubectl get deployment api -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+if [[ -z "$API_REPLICAS" ]]; then
+  echo "No 'api' Deployment found - already deleted, or never created. Skipping."
+else
+  kubectl scale deployment api --replicas=0
+  echo "Waiting for 'api' pods to fully terminate (releases their Cloud SQL connections) ..."
+  kubectl wait --for=delete pod -l app=api --timeout=120s 2>/dev/null || true
+  echo "Confirmed: 'api' pods terminated."
+fi
+
+echo
+echo "== Step 2: delete the LoadBalancer Service, wait for the real GCP forwarding rule to actually disappear =="
 LB_IP="$(kubectl get svc traefik-web -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
 if [[ -z "$LB_IP" ]]; then
   echo "No traefik-web LoadBalancer IP found - already deleted, or never created. Skipping."
@@ -71,7 +93,7 @@ else
 fi
 
 echo
-echo "== Step 2: stop Kafka (releases its volumes), then delete the PVCs, then wait for the real persistent disks to actually disappear =="
+echo "== Step 3: stop Kafka (releases its volumes), then delete the PVCs, then wait for the real persistent disks to actually disappear =="
 # A PVC cannot finish deleting - and its underlying disk cannot actually be released - while a
 # running pod still has it mounted (kubernetes.io/pvc-protection finalizer blocks it) - same
 # reasoning AWS's teardown-aws.sh found live (2026-09-18): the StatefulSet has to go first so the

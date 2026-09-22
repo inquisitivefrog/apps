@@ -183,7 +183,14 @@ else
   echo "  (no Cloud NAT found)"
 fi
 
-FR_COUNT="$(gcloud compute forwarding-rules list --project "$PROJECT_ID" --format="value(name)" 2>/dev/null | grep -c . || true)"
+# Found live (2026-09-22): an unfiltered `forwarding-rules list` also picks up Memorystore's own
+# PSC auto-connection forwarding rules (confirmed via `loadBalancingScheme` - empty/unset on those,
+# vs "EXTERNAL" on the actual Network LB rule traefik-web creates) - a different product with
+# different billing, not the external-LB forwarding-rule fee this section prices. The dollar total
+# happened to land right anyway that run (both fall under the same flat "up to 5 rules" tier as the
+# one real external rule would), but the label was wrong and would double-count once a real LB rule
+# also exists alongside them. Filtered to loadBalancingScheme=EXTERNAL specifically.
+FR_COUNT="$(gcloud compute forwarding-rules list --project "$PROJECT_ID" --filter="loadBalancingScheme=EXTERNAL" --format="value(name)" 2>/dev/null | grep -c . || true)"
 FR_COUNT="${FR_COUNT:-0}"
 if [[ "$FR_COUNT" -gt 0 ]]; then
   line "$FR_COUNT external forwarding rule(s) (excl. data processing)" "$LB_FORWARDING_RULE_HOURLY"
