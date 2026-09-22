@@ -533,6 +533,41 @@ functional-test→teardown→destroy cycle this session, and is the first cycle 
 destroy-ordering fix was actually validated against a fresh resource pair rather than coincidentally
 appearing to work.
 
+## Done — built `terraform/gcp/estimate-costs-gcp.sh`, a list-price cost estimator to fill the `check-costs-gcp.sh` gap in the meantime
+
+User asked: if a better GCP billing script is warranted, build it now. Judged yes, but not the
+originally-scoped `check-costs-gcp.sh` itself (that still needs the one-time Console-only Cloud
+Billing→BigQuery export, not done) - a genuinely different, complementary script instead:
+inventories whatever GCP resources are actually live right now via the same live-`gcloud`-query
+discipline as `check-resources-gcp.sh`, multiplies by published GCP list pricing, and reports an
+immediate hourly/daily/monthly ballpark. Fills a gap the real cost check can't anyway, even once
+built - its own 24-48h Cost-Explorer-equivalent lag means it could never answer "is anything
+expensive running right now" or "did teardown really zero out the bill" in the same session.
+
+Sourced list pricing for every resource type this stack creates via live web search (2026-09-21):
+e2-medium compute, GKE cluster management fee (and the Always-Free $74.40/mo credit that
+covers this project's one zonal cluster's fee entirely - net \$0.00, shown alongside the \$0.10/hr
+list price rather than silently assumed either way), Cloud SQL db-f1-micro compute + PD_SSD
+storage, Memorystore for Valkey SHARED_CORE_NANO (flat per-instance, not per-GB), Cloud NAT
+gateway + external-IP fees, pd-standard (node boot disks) + pd-balanced (Kafka PVCs) storage, and
+the external Network LB forwarding-rule fee. Documented sourcing confidence honestly per rate
+rather than implying uniform precision - e2-medium's rate was the least certain (two sources
+disagreed by ~40%; picked the one internally consistent with the same source's own
+e2-small/e2-standard-2 figures), pd-standard's the second-least (no source gave a clean current
+figure; used a long-standing widely-cited number as a stand-in). Explicitly excludes all
+usage-based charges (egress, NAT/LB data processing) - flagged in the header as un-estimable from
+static resource presence, not silently omitted.
+
+**Live-tested against the real, currently-torn-down project** (same testing bar as every other
+script this session): correctly reports "No terraform outputs found... nothing live to estimate.
+Total: \$0.00/day", exit 0 - not an error, since zero infrastructure genuinely means zero cost.
+The "resources present" arithmetic branch can't be live-exercised right now (nothing's deployed) -
+hand-verified instead with the awk expressions run standalone against this stack's known current
+sizing (4 e2-medium nodes, 20GB Cloud SQL, 36GB Kafka PVCs, 1 NAT, 1 LB rule): **≈\$0.23/hr ≈
+\$5.58/day ≈ \$169.77/mo**, dominated by compute (\$97.82/mo of the total) - a sane, plausible
+number for this size of dev/demo stack, not obviously wrong in either direction. Will get its real
+live-exercise the next time GCP infra is actually stood up.
+
 ## Open
 
 - **GCP deployment is considered complete for this project's purposes as of tonight.** Real

@@ -250,6 +250,24 @@ after, so the export has data by the time a delayed cost check would actually be
 `check-costs-aws.sh`'s own documented 24-48h Cost-Explorer-lag limitation, just with an extra
 one-time setup step GCP requires that AWS didn't).
 
+**`estimate-costs-gcp.sh` (2026-09-21) fills a different, complementary gap in the meantime** -
+not a substitute for the real `check-costs-gcp.sh` above, which will give actual billed dollars
+once the BigQuery export exists. Instead of querying billing data, it inventories whatever GCP
+resources are actually live right now (same live-query discipline as `check-resources-gcp.sh`) and
+multiplies by published GCP list pricing to produce an immediate ballpark estimate - useful exactly
+where the real cost check's 24-48h Cost Explorer-equivalent lag isn't: "does anything expensive
+look like it's running right now" during a work session, or "does teardown really mean \$0" the
+instant teardown finishes, not two days later. Explicitly does not include usage-based charges
+(network egress, Cloud NAT data processing, LB data processing) - those can't be estimated from
+static resource presence - and its rate card is sourced from live web search against a mix of
+official and third-party pricing pages (GCP exposes no direct API this script could query for its
+own current rates without a disproportionate per-SKU Billing Catalog lookup), so treat it as
+right-order-of-magnitude, not billing-grade. Live-tested against the real, currently-torn-down
+project: correctly reports "nothing live to estimate, \$0.00/day" rather than erroring. The
+"resources present" arithmetic branch is unit-tested by hand (see
+`status/claude_code_2026-09-21.md`) but not yet live-exercised against a real running stack - that
+happens naturally the next time this project's GCP infra is stood up.
+
 ## Usage
 
 ```bash
