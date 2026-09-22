@@ -535,31 +535,38 @@ appearing to work.
 
 ## Open
 
-- **GCP is fully torn down and independently verified clean.** Real infrastructure existed and was
-  exercised for several hours this session (real apply, real live-debugged deploy, real functional
-  validation, real teardown) with no residual cost.
-- **The GCP infra layer now has two real tested cycles** (an incidental full re-apply plus this
-  destroy pass, on top of the original apply), matching AWS's own two-cycle confidence bar for that
-  layer specifically. **The k8s app-deploy layer (`deploy-gcp.sh`) has had one real cycle**, not
-  yet a confirming second - the one piece of AWS's two-cycle bar GCP hasn't fully matched.
-- Three real, genuinely new findings this teardown pass, all fixed and documented: a Cloud
-  SQL/Postgres destroy-ordering race (`depends_on` fix), and a known upstream Terraform-provider
-  bug around `google_service_networking_connection` deletion (`deletion_policy = "ABANDON"`
-  workaround) - neither has an AWS-side equivalent, both genuinely GCP-specific.
+- **GCP deployment is considered complete for this project's purposes as of tonight.** Real
+  infrastructure was exercised across **three full apply→deploy→functional-test→teardown→destroy
+  cycles** this session (the original apply, an incidental full re-apply during destroy
+  debugging, and tonight's final corrected-ordering cycle) - exceeding AWS's own two-cycle
+  confidence bar for both the Terraform layer and the k8s app-deploy layer (`deploy-gcp.sh` ran
+  clean, no new bugs, on both its second and third runs). Fully torn down and independently
+  verified clean (`terraform show`: empty state; `check-resources-gcp.sh`: correctly reports
+  nothing found) - zero residual cost.
+- Five real, genuinely new GCP-specific findings across the session, all fixed and documented: 4
+  live `deploy-gcp.sh` bugs (Artifact Registry image-path segment, Buildx attestation rejection,
+  missing `artifactregistry.reader` IAM grant, node overcommitment), plus the Cloud SQL
+  destroy-ordering race - which itself took two attempts to actually fix (the first `depends_on`
+  edge had the direction backwards; corrected and verified live tonight) - and the known upstream
+  `google_service_networking_connection` deletion bug (`deletion_policy = "ABANDON"` workaround).
+  A sixth finding, a `terraform output -raw`-vs-stdout bug in the verification script itself, was
+  caught and fixed in both the GCP and AWS scripts tonight.
 - **No `check-costs-gcp.sh`** — needs a one-time Cloud Billing-export-to-BigQuery setup first
   (Console-only); not a script gap, a genuine GCP-vs-AWS mechanism difference. See
-  `terraform/gcp/README.md`'s "No `check-costs-gcp.sh` yet" section.
+  `terraform/gcp/README.md`'s "No `check-costs-gcp.sh` yet" section. Not blocking - GCP has no
+  infrastructure standing right now to bill for.
 - Carried over, untouched: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost measurement fix,
-  `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10), Azure
-  Terraform config (still fully unstarted).
+  `docs/testing-expansion-scope.md`'s build order (paused at task #9 since 2026-09-10).
 
 ## Next
 
-1. Set up the Cloud Billing BigQuery export (Console-only) before the next real GCP apply, so a
-   delayed cost cross-check (`check-costs-gcp.sh`, once built) has data to query.
-2. A second full `deploy-gcp.sh` app-layer cycle, matching AWS's own two-cycle confidence bar
-   completely, whenever there's a reason to stand this up again.
-3. Build `terraform/gcp/check-costs-gcp.sh` itself once the BigQuery export exists.
-4. Azure Terraform config, last in the AWS-first sequencing.
-5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+**Azure Terraform config is next up, last in the AWS-first sequencing** - session ended for the
+night before starting it; picks up fresh next session with no GCP loose ends to carry forward.
+
+1. Azure Terraform config: scaffold `terraform/azure/` mirroring the AWS/GCP structure (own
+   idioms, not a flattened abstraction - same reasoning as the other two clouds), plan-only first
+   pass before any real apply, matching how both AWS and GCP themselves started.
+2. If GCP work resumes later: set up the Cloud Billing BigQuery export (Console-only) before the
+   next real GCP apply, so `check-costs-gcp.sh` (still unbuilt) has data to query once built.
+3. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.
