@@ -9,7 +9,17 @@ for this project's deploy cadence.
 
 See `docs/cloud-deployment-scope.md` for the full per-layer reasoning (why Postgres/Redis are
 managed here but Kafka is self-hosted in-cluster identically across every target — `kind`, this,
-and the eventual GCP/Azure configs).
+and the GCP/Azure configs).
+
+## Status: fully applied and live, both layers confirmed end-to-end (2026-09-23)
+
+50 Terraform resources applied, `terraform/aws/check-resources-aws.sh` confirms 24/24 real
+resource checks clean. `k8s/deploy-aws.sh` run for real: `k8s/check-resources-aws.sh` confirms
+15/15, and a direct HTTP smoke test against the real LoadBalancer (frontend loads, login with the
+seeded `demo` credentials issues a real JWT) confirms the app is genuinely functional, not just
+"pods reported Running." This is a re-verification, not the original build - see "IAM-auth
+backport" below for what changed since the last full validation and the two real live bugs that
+change surfaced and fixed.
 
 ## Prerequisites
 
@@ -27,7 +37,7 @@ and the eventual GCP/Azure configs).
 | VPC, 3 AZs, public+private subnets, 1 NAT gateway | — | — |
 | EKS cluster + managed node group | 3x `t3.medium`, fixed size (no autoscaling) | The `kind` cluster |
 | RDS PostgreSQL | `db.t4g.micro`, single-AZ, 20GB gp3 | Self-hosted Patroni + Consul |
-| ElastiCache (Valkey) | `cache.t4g.micro`, single node | Self-hosted Redis + Sentinel |
+| ElastiCache (Valkey) | `cache.t4g.micro`, single node, **IAM-auth only (2026-09-23)** | Self-hosted Redis + Sentinel |
 | ECR (api + frontend repos) | 5-image lifecycle cap each | `kind load docker-image` |
 | EBS CSI driver + `gp3`/XFS StorageClass (via `k8s/storageclass-aws.yaml`) | — | `local-path-provisioner` |
 | `metrics-server` addon | — | (not present on `kind` either — new) |
@@ -39,6 +49,44 @@ overcommitted once `api`'s memory limit was corrected to a realistic value — s
 Kafka is **not** created here — it stays self-hosted in-cluster (see `k8s/kafka.yaml`), deployed
 the same way as every other environment, per `docs/cloud-deployment-scope.md`'s decision that no
 cloud offers a truly comparable managed Kafka across all three providers.
+
+## IAM-auth backport (2026-09-23): real findings from re-validating after the change
+
+Azure Managed Redis being forced onto Entra-ID-only auth (its legacy product got blocked from new
+creation entirely - see `terraform/azure/README.md`) prompted an explicit decision to align AWS
+and GCP onto the same tighter, IAM/token-based Redis auth posture rather than leave them on
+password auth just because nothing had forced it there yet. New file:
+`elasticache-iam-auth.tf` - an IRSA role scoped to the app's own future K8s ServiceAccount
+(`system:serviceaccount:default:grid-meter-app`, reusing the EKS OIDC provider `ebs-csi.tf`
+already had for the EBS CSI driver), a disabled `default` ElastiCache user, an IAM-auth `app`
+user, a user group, and `transit_encryption_enabled = true` on the replication group (a hard AWS
+requirement for IAM auth). `versions.tf` gained the `random` provider (`~> 3.6`), not previously
+needed anywhere in this config, to generate the disabled user's throwaway password.
+
+Two real live bugs found re-validating this change against a real apply/deploy, both fixed and
+confirmed:
+
+- **`InvalidParameterCombination: No-password-required is not allowed for a user with engine
+  Valkey`** - unlike Redis OSS, Valkey's `authentication_mode` doesn't support
+  `no-password-required` at all (confirmed live via AWS's own docs). Fixed by generating a real,
+  never-retrieved password via `random_password` and using
+  `authentication_mode { type = "password", passwords = [...] }` instead -
+  `access_string = "off ~* +@all"` is what actually disables the user; the password just satisfies
+  Valkey's hard requirement that every user, even a disabled one, have real auth configured.
+- **A real app-level regression, not a Terraform bug**: `transit_encryption_enabled = true` makes
+  ElastiCache TLS-only, but the app's `spring.data.redis.*` client has no TLS config at all - it
+  doesn't fail fast, it **hangs indefinitely** (confirmed directly: a raw `redis-cli PING` against
+  the real endpoint from inside the cluster never returned). Because
+  `spring-boot-starter-actuator` + `spring-boot-starter-data-redis` are both on the classpath,
+  Spring Boot bundles a Redis health check into the aggregate `/actuator/health` - so the hang took
+  down the *entire* health endpoint, crash-looping `api` via failed liveness probes (compounded by
+  probe margins that were already too tight for real cloud conditions - see `k8s/api-aws.yaml`'s
+  own comment). Fixed in `api/src/main/resources/application.yml`:
+  `management.health.redis.enabled: false` for the "cloud" profile only, matching this app's
+  already-documented cache-miss-fallback-to-Postgres design (Redis being unreachable is an
+  accepted degraded state, not one that should crash-loop the app). The app still cannot actually
+  authenticate to Redis yet either way - that needs a Lettuce credential-provider implementation
+  (AWS SigV4 IAM auth token), tracked as required follow-up, not attempted inline.
 
 **Sizing philosophy**: smallest viable, matching this project's own stated practice of
 `terraform destroy` between interview/demo uses (see "Spin-up and teardown" below) — not tuned
@@ -232,7 +280,16 @@ stack is left running between uses.
   deliberate choice (see "Observability is not part of this deployment" above).
 - A load test run against this specific deployment — `load-tests/*.jmx` has only ever targeted
   Compose/`kind`.
-- GCP and Azure equivalents (`terraform/gcp/`, `terraform/azure/`) — per
-  `docs/cloud-deployment-scope.md`'s own sequencing, AWS gets built and fully validated first.
 - A real live-fire validation of RDS/ElastiCache failover behavior against this specific cluster
   — nothing to fail over to/from has been exercised yet at the time this was written.
+- **The Lettuce credential-provider app code** for IAM-auth Redis (AWS SigV4 token generation) —
+  the app can't actually authenticate to ElastiCache yet even with all the Terraform above applied
+  and live; `management.health.redis.enabled: false` (see "IAM-auth backport" above) keeps this
+  from crash-looping the app in the meantime, but it's a real, tracked gap, not a completed story.
+- **The K8s ServiceAccount object** the new IRSA role's trust policy is scoped to
+  (`system:serviceaccount:default:grid-meter-app`) — doesn't exist in `k8s/api-aws.yaml` yet, so
+  the IRSA role is real but currently inert (no pod can assume it).
+
+`terraform/gcp/` and `terraform/azure/` are no longer out of scope — both exist, and Azure's is
+fully applied and live (see `terraform/azure/README.md`); this note is stale from before either
+was built and kept only for the historical "AWS first" sequencing context.

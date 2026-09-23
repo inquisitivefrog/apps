@@ -15,5 +15,9 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6" # same version floor as terraform/gcp/versions.tf, for random_password (postgresql.tf)
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12" # for time_sleep (postgresql.tf) - a documented exception to this project's "poll, don't sleep" rule, see that resource's own comment for why
+    }
   }
 }

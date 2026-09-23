@@ -1,13 +1,24 @@
-# AWS-target variant of api.yaml. Same Deployment shape (2 replicas, matching the "scale api=2"
-# story everywhere else), different env var wiring: SPRING_PROFILES_ACTIVE=cloud activates
-# application.yml's plain host/port Redis block instead of Sentinel discovery (see that file's
-# own comment for why - a managed Redis endpoint has no Sentinel process to discover at all), and
-# SPRING_DATA_REDIS_HOST/PORT replace SPRING_REDIS_SENTINEL_MASTER/NODES entirely. Kafka stays
-# wired exactly as kind's api.yaml does - self-hosted in-cluster identically on every target.
+# Azure-target variant of api.yaml, Azure counterpart of api-aws.yaml/api-gcp.yaml. Same
+# Deployment shape (2 replicas), same SPRING_PROFILES_ACTIVE=cloud / SPRING_DATA_REDIS_HOST+PORT
+# wiring both other variants use. Postgres Flexible Server's private VNet integration and Managed
+# Redis's public endpoint (rediscache.tf's header comment - no VNet-injection attribute exists at
+# the Balanced_B0 tier) are both directly reachable from pods without a proxy sidecar, matching how
+# AWS's RDS/ElastiCache and GCP's Cloud SQL/Memorystore endpoints are used directly.
 #
-# image below is a placeholder - deploy-aws.sh applies this file as-is, then runs
-# `kubectl set image` immediately after with the real ECR image reference (a deploy-time fact,
-# not something to bake into a static, committed manifest that could go stale).
+# Redis will NOT actually authenticate yet even once this is deployed - Managed Redis is Entra
+# ID-token-only (rediscache.tf) and the app's spring.data.redis.* client has no credential
+# provider for that (terraform/azure/README.md's "What's next"). SPRING_DATA_REDIS_HOST/PORT are
+# still wired here, forward-compatible with that work landing, matching how AWS's/GCP's own
+# manifests don't special-case a not-yet-built feature either.
+#
+# image below is a placeholder - matching AWS's/GCP's own "bake in the real image before the
+# first apply, not patch after" design (see deploy-aws.sh's comment on why apply-then-patch caused
+# wasteful ReplicaSet churn), deploy-azure.sh substitutes the real image via `sed` before this
+# file ever reaches kubectl, same as both siblings.
+#
+# memory: 1Gi from the start, not kind's 512Mi - AWS's live finding (2026-09-18, confirmed
+# transferable on GCP's identical build) applied proactively here too: 512Mi OOMKills this
+# container (exit 137) before Spring Boot logs past the active profile.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,7 +35,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: PLACEHOLDER_ECR_API_IMAGE
+          image: PLACEHOLDER_ACR_API_IMAGE
           imagePullPolicy: Always
           env:
             - name: SPRING_PROFILES_ACTIVE
@@ -84,18 +95,13 @@ spec:
                   key: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
           ports:
             - containerPort: 8080
-          # Found via a real live restart-loop (2026-09-23, first real redeploy after this
-          # session's Terraform fixes): `kubectl describe pod` showed BOTH "connection refused"
-          # (probe fired before Tomcat bound - real measured Spring Boot startup is ~25s, exceeding
-          # readiness's old 20s initialDelaySeconds) AND, critically, persistent "context deadline
-          # exceeded" failures continuing up to 89 seconds into the container's life - long after
-          # Tomcat was confirmed up in the app's own logs. The default 1s timeoutSeconds is simply
-          # too tight for /actuator/health here: its DataSource/Kafka health indicators do real
-          # synchronous network round-trips (RDS, self-hosted Kafka), which routinely exceed 1s
-          # under real cloud latency even once the app is otherwise fully healthy - kind's
-          # near-zero local latency never surfaced this. initialDelaySeconds raised for startup
-          # margin AND timeoutSeconds raised for steady-state margin - the delay fix alone
-          # wouldn't have been sufficient given failures continued well past the startup window.
+          # initialDelaySeconds/timeoutSeconds set here from the start (not copied from a stale
+          # default) - a real live restart-loop against AWS (api-aws.yaml's original probe block)
+          # found real Spring Boot startup measured ~25s and, critically, /actuator/health's
+          # DataSource/Kafka health indicators doing real synchronous network round-trips that
+          # exceeded the default 1s timeoutSeconds even once the app was otherwise fully healthy.
+          # Applied proactively here rather than waiting for Azure's own first live deploy to
+          # rediscover the identical mechanism against Postgres Flexible Server/self-hosted Kafka.
           readinessProbe:
             httpGet:
               path: /actuator/health
@@ -112,14 +118,6 @@ spec:
             timeoutSeconds: 5
           resources:
             limits:
-              # 512Mi (kind's value) confirmed too tight here via a real live diagnostic
-              # (2026-09-18): the container was OOMKilled (exit 137) before Spring Boot even
-              # logged past "active profile: cloud" - -Xmx384m only bounds heap, and this app's
-              # own startup footprint (JPA/Hibernate, Spring Security, the Kafka client, full
-              # Micrometer/OpenTelemetry tracing all initializing at once) needs real headroom
-              # beyond that for metaspace/native memory that kind's environment apparently had
-              # more slack for. 1Gi is the value confirmed working via the same live test, not a
-              # guess - re-verify if this app's own startup footprint changes meaningfully.
               memory: 1Gi
 ---
 apiVersion: v1

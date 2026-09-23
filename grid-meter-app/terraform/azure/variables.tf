@@ -7,9 +7,9 @@ variable "project_name" {
 }
 
 variable "azure_region" {
-  description = "Azure region for every resource in this config. \"eastus\" confirmed live (2026-09-22, web search against current Azure regional pricing comparisons) as Azure's baseline/cheapest US region - matches terraform/azure/bootstrap/variables.tf's own choice and the same reasoning AWS's us-west-2 and GCP's us-central1 picks used."
+  description = "Azure region for every resource in this config (except the bootstrap module's state backend, which stayed in eastus - see bootstrap/README.md). Changed from eastus to \"centralus\" after a real live apply failure (2026-09-23): Postgres Flexible Server provisioning is entirely blocked in eastus for this specific subscription (`az postgres flexible-server list-skus --location eastus` returns reason: \"Provisioning is restricted in this region\" - a real trial-subscription-tier restriction, not a general capability gap, confirmed by checking eastus2/westus2/southcentralus, all identically blocked, against centralus/westus3, both open). centralus chosen over westus3 as the more established, commonly-used region of the two open options."
   type        = string
-  default     = "eastus"
+  default     = "centralus"
 }
 
 # --- Networking ---
@@ -35,21 +35,30 @@ variable "postgres_subnet_cidr" {
 # --- AKS ---
 
 variable "aks_node_vm_size" {
-  description = "VM size for the AKS system node pool. Standard_D2as_v5 (2 vCPU, 8GB, AMD-based general-purpose) - checked live (2026-09-22) that AKS explicitly does NOT support/recommend B-series (burstable) VMs for system node pools despite B-series technically meeting the raw 2-vCPU/4GB minimum - a real, documented platform-specific constraint, unlike AWS's EKS (t3.medium, burstable, no such restriction) or GCP's GKE (e2-medium). D2as_v5 confirmed the cheapest current-generation AKS-supported general-purpose size (~$0.086/hr in eastus, web search 2026-09-22)."
+  description = "VM size for the AKS system node pool. Standard_D2as_v7 (2 vCPU, 8GB, AMD-based general-purpose) - checked live (2026-09-22) that AKS explicitly does NOT support/recommend B-series (burstable) VMs for system node pools despite B-series technically meeting the raw 2-vCPU/4GB minimum - a real, documented platform-specific constraint, unlike AWS's EKS (t3.medium, burstable, no such restriction) or GCP's GKE (e2-medium). Originally picked D2as_v5 as the cheapest current-gen size by web-search pricing, but a real live apply failure (2026-09-23) showed this subscription's centralus quota only allows a specific enumerated VM list that doesn't include v5 - D2as_v7 (same family, newer generation) is in that list, confirmed directly from the error response itself rather than guessed."
   type        = string
-  default     = "Standard_D2as_v5"
+  default     = "Standard_D2as_v7"
 }
 
 variable "aks_node_count" {
-  description = "Node count for the single AKS system node pool. 3, one per zone (see aks_availability_zones) - matches AWS's eks_node_count=3 and GCP's 1x3-zones=3 sizing exactly, both already corrected through live debugging to be the minimum that lets Kafka's 3 self-hosted brokers schedule one-per-zone."
+  description = "Node count for the single AKS system node pool. Dropped from 3 to 2 after a real live apply failure (2026-09-23): `az vm list-usage` confirms this subscription's regional vCPU quota is a hard 4 (identical in centralus and westus3 - subscription-wide, not region-specific, same shape of restriction as aks_availability_zones), and 3 nodes x Standard_D2as_v7's 2 vCPU each = 6 exceeds it. 2 nodes = 4 vCPU fits exactly. This means Kafka's 3 self-hosted broker pods no longer get strict one-per-node placement (two will share a node) - a real, accepted tradeoff for a demo subscription, not a silent regression; AWS's eks_node_count=3 and GCP's 1x3-zones=3 sizing are unaffected, this is an Azure-subscription-specific constraint."
   type        = number
-  default     = 3
+  default     = 2
 }
 
 variable "aks_availability_zones" {
-  description = "Availability zones the AKS node pool spans. eastus has 3 zones - matches AWS's 3-AZ EKS node group and GCP's 3-zone GKE node pool exactly, same Kafka one-broker-per-zone reasoning."
+  # Found via a real live apply failure (2026-09-23): AKS rejected zones = ["1","2","3"] with
+  # "AvailabilityZoneNotSupported ... The supported zones for location 'eastus' are ''". Checked
+  # live via `az vm list-skus --location <region> --size Standard_D2as_v5` across eastus, eastus2,
+  # and centralus - all three show identical `NotAvailableForSubscription` restrictions on every
+  # zone, confirming this is a subscription-tier-wide restriction (a common free-trial quota
+  # limitation), not specific to eastus or to this VM size/region combination. Defaulted to an
+  # empty list - aks.tf only sets the node pool's `zones` argument when this is non-empty, so a
+  # less-restricted subscription can still opt back into real zone pinning by overriding this var,
+  # without any code change.
+  description = "Availability zones the AKS node pool spans. Empty by default - this subscription's free-trial tier doesn't support availability-zone-pinned deployments at all (confirmed live, 2026-09-23, across three regions). Override with [\"1\",\"2\",\"3\"] on a subscription that does support zones, to restore the same physical-fault-isolation posture AWS's 3-AZ EKS node group and GCP's 3-zone GKE node pool both have."
   type        = list(string)
-  default     = ["1", "2", "3"]
+  default     = []
 }
 
 variable "aks_kubernetes_version" {
@@ -90,24 +99,12 @@ variable "postgres_admin_user" {
   default     = "gridmeter"
 }
 
-# --- Azure Cache for Redis (legacy product, chosen deliberately - see rediscache.tf) ---
+# --- Azure Managed Redis (see rediscache.tf for why, reversed 2026-09-23 from the legacy product) ---
 
 variable "redis_sku_name" {
-  description = "Azure Cache for Redis pricing tier. \"Basic\" - the cheapest, matching AWS's/GCP's own no-HA single-node cache sizing (this project's local track already builds real Redis HA/Sentinel by hand)."
+  description = "Azure Managed Redis SKU. \"Balanced_B0\" (1GB) - the cheapest Managed Redis tier (~$13/month, confirmed live 2026-09-22), reasonably comparable in cost to the legacy product's own Basic C0 tier despite the legacy product no longer being creatable at all (confirmed live 2026-09-23)."
   type        = string
-  default     = "Basic"
-}
-
-variable "redis_family" {
-  description = "SKU family - \"C\" for Basic/Standard tiers (\"P\" is Premium-only, which this project doesn't need)."
-  type        = string
-  default     = "C"
-}
-
-variable "redis_capacity" {
-  description = "Basic/Standard capacity tier, 0-6 (C0=250MB through C6=53GB). 0 (C0, 250MB) - this project's single cached-latest-reading-per-meter workload doesn't need more, matching AWS's/GCP's own smallest-tier cache sizing."
-  type        = number
-  default     = 0
+  default     = "Balanced_B0"
 }
 
 # --- Artifact Registry (ACR) ---

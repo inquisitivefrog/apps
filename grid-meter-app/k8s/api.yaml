@@ -73,18 +73,27 @@ spec:
                   key: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
           ports:
             - containerPort: 8080
+          # initialDelaySeconds/timeoutSeconds raised 2026-09-23 after a real live restart-loop
+          # against AWS (api-aws.yaml's identical probe block) - real Spring Boot startup measured
+          # ~25s (exceeding the old 20s readiness delay), and critically, /actuator/health's
+          # DataSource/Kafka health indicators do real synchronous network round-trips that
+          # exceeded the default 1s timeoutSeconds even once the app was otherwise fully healthy.
+          # kind's near-zero local latency never surfaced this - applied here anyway for
+          # consistency across every target and because the wider margin is harmless locally too.
           readinessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 20
+            initialDelaySeconds: 30
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 45
             periodSeconds: 10
+            timeoutSeconds: 5
           resources:
             limits:
               memory: 512Mi

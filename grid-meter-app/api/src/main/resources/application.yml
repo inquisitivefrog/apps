@@ -346,3 +346,26 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST}
       port: ${SPRING_DATA_REDIS_PORT:6379}
+
+# Found via a real live restart-loop against AWS (2026-09-23): AWS's ElastiCache replication
+# group now requires TLS (transit_encryption_enabled = true, a hard AWS requirement for the IAM
+# auth this session's terraform/aws/elasticache-iam-auth.tf added), but this profile's Redis
+# client above has no TLS config at all -- it speaks plaintext RESP to what's now a TLS-only
+# endpoint. Confirmed live this doesn't fail fast: a raw `redis-cli PING` against the real
+# endpoint from inside the cluster hung indefinitely rather than erroring, and since
+# spring-boot-starter-actuator + spring-boot-starter-data-redis are both on the classpath with no
+# override, Spring Boot auto-registers a Redis health check as part of the aggregate
+# /actuator/health -- meaning the ENTIRE health endpoint hung, taking down liveness/readiness for
+# the whole app, not just Redis-dependent behavior. Disabled here rather than fixed at the TLS
+# layer: even with TLS working, the app still can't authenticate (Managed Redis/ElastiCache/
+# Memorystore are now all IAM/Entra-ID-token-auth-only across all three clouds, and the Lettuce
+# credential-provider code for that doesn't exist yet -- see each terraform/<cloud>/README.md's
+# "What's next"). Matches this app's own already-documented cache-miss-fallback-to-Postgres
+# design (docs/architecture.md's data flow) -- Redis being unreachable is an accepted degraded
+# state for this app, not one that should ever fail liveness/readiness and crash-loop the whole
+# service. Re-enable once the credential-provider work lands and a real TLS+IAM-auth connection is
+# confirmed live.
+management:
+  health:
+    redis:
+      enabled: false

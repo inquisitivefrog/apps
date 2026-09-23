@@ -1,0 +1,80 @@
+# Azure-target variant of traefik.yaml, Azure counterpart of traefik-aws.yaml/traefik-gcp.yaml.
+# Same reasoning as both: kind's hostPort/nodeSelector/tolerations/Recreate plumbing is
+# kind-specific and doesn't apply to a real cluster. Real reachability here comes from a Service:
+# type: LoadBalancer, which AKS's cloud-provider provisions automatically as a real Azure Standard
+# Load Balancer (matching aks.tf's load_balancer_sku = "standard") with a public IP - no
+# annotation needed for this default path, the same "no special annotation, in-tree provider
+# handles it" story AWS's/GCP's variants have, just with Azure's own real resource types
+# underneath. Like GCP's LB, Azure's is IP-based, not DNS-hostname-based like AWS's ELB -
+# deploy-azure.sh/teardown-azure.sh both check .status.loadBalancer.ingress[0].ip, not .hostname.
+#
+# NOT yet live-tested against a real cluster as of 2026-09-23 - re-verify this actually resolves
+# to a real Azure LB with a public IP assigned on the first real deploy-azure.sh run, same caveat
+# storageclass-azure.yaml carries.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-ingress-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    app: traefik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik-ingress-controller
+      containers:
+        - name: traefik
+          image: traefik:v3.7.10
+          args:
+            - --providers.kubernetescrd
+            - --entrypoints.web.address=:80
+            - --api.dashboard=true
+            - --metrics.prometheus=true
+          ports:
+            - name: web
+              containerPort: 80
+            - name: metrics
+              containerPort: 8080
+          resources:
+            limits:
+              memory: 128Mi
+---
+# Public-facing - provisions a real Azure Load Balancer + Public IP, in AKS's own auto-created
+# node resource group (terraform/azure/outputs.tf's node_resource_group), not the main resource
+# group Terraform manages. This is the one resource in this file with a direct Azure cost line.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-web
+spec:
+  type: LoadBalancer
+  selector:
+    app: traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: 80
+---
+# ClusterIP only, same as traefik.yaml's - in-cluster metrics scraping, not a second public path.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-metrics
+spec:
+  selector:
+    app: traefik
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080

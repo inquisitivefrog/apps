@@ -60,6 +60,11 @@ resource "aws_elasticache_replication_group" "main" {
   subnet_group_name  = aws_elasticache_subnet_group.main.name
   security_group_ids = [aws_security_group.elasticache.id]
 
+  # Both required for IAM auth (confirmed live, docs.aws.amazon.com/AmazonElastiCache/latest/dg/auth-iam.html)
+  # - see elasticache-iam-auth.tf for the IRSA role/user/user-group this wires up to.
+  transit_encryption_enabled = true
+  user_group_ids             = [aws_elasticache_user_group.app.id]
+
   tags = {
     Name = "${var.project_name}-cache"
   }

@@ -90,18 +90,31 @@ spec:
                   key: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
           ports:
             - containerPort: 8080
+          # initialDelaySeconds/timeoutSeconds raised 2026-09-23 after a real live restart-loop
+          # against AWS (api-aws.yaml's identical original probe block) - real Spring Boot startup
+          # measured ~25s (exceeding the old 20s readiness delay), and critically,
+          # /actuator/health's DataSource/Kafka health indicators do real synchronous network
+          # round-trips that exceeded the default 1s timeoutSeconds even once the app was
+          # otherwise fully healthy. Not yet independently reproduced against GCP specifically
+          # (this build's own status log records "zero new bugs" on its first live deploy,
+          # probably real lower Cloud SQL/Memorystore/node latency rather than a different
+          # architecture), but applied here anyway - the same shared probe block, the same
+          # underlying mechanism (a real network-bound actuator health check), and the wider
+          # margin is harmless if GCP's latency genuinely never gets close to the old limits.
           readinessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 20
+            initialDelaySeconds: 30
             periodSeconds: 5
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 45
             periodSeconds: 10
+            timeoutSeconds: 5
           resources:
             limits:
               memory: 1Gi

@@ -21,6 +21,17 @@
 #      DeleteVolume - skipping this step leaves 3 orphaned, still-billed EBS volumes sitting in
 #      the account indefinitely after the cluster is long gone, with no Terraform resource left
 #      to ever clean them up.
+#   3. **The `api` Deployment hard-crashes once Kafka is gone, not just degrades** - found live
+#      (2026-09-23) running this script for real without scaling `api` down first: Spring Kafka's
+#      `@KafkaListener` container creation is NOT lazy, it happens eagerly during
+#      ApplicationContext startup, and `kafka-headless`'s per-pod DNS records
+#      (`kafka-0.kafka-headless` etc.) stop resolving the moment the StatefulSet's pods are gone -
+#      `ConfigException: No resolvable bootstrap urls given in bootstrap.servers` fails the whole
+#      context refresh, crash-looping `api` indefinitely (CrashLoopBackOff) rather than just
+#      degrading. Same underlying shape as GCP's teardown-gcp.sh's own Step 1 fix (an `api`
+#      Deployment left running against infrastructure mid-teardown), different mechanism (Kafka
+#      DNS resolution at eager consumer-startup time here, vs. live HikariCP connections blocking
+#      `DROP DATABASE` there) - `teardown-aws.sh` never got the equivalent fix until now.
 #
 # Confirmed live (2026-09-18) before writing this: `kubectl get svc -A` showed exactly one
 # LoadBalancer-type Service (traefik-web) and `kubectl get pvc -A` showed exactly 3 Bound PVCs,
@@ -50,7 +61,19 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
 fi
 
 echo
-echo "== Step 1: delete the LoadBalancer Service, wait for the real load balancer to actually disappear =="
+echo "== Step 1: scale 'api' to 0 - it hard-crashes (CrashLoopBackOff) the moment Kafka's DNS records disappear below, not just degrades =="
+API_REPLICAS="$(kubectl get deployment api -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+if [[ -z "$API_REPLICAS" ]]; then
+  echo "No 'api' Deployment found - already deleted, or never created. Skipping."
+else
+  kubectl scale deployment api --replicas=0
+  echo "Waiting for 'api' pods to fully terminate ..."
+  kubectl wait --for=delete pod -l app=api --timeout=120s 2>/dev/null || true
+  echo "Confirmed: 'api' pods terminated."
+fi
+
+echo
+echo "== Step 2: delete the LoadBalancer Service, wait for the real load balancer to actually disappear =="
 # traefik-aws.yaml's Service carries no service.beta.kubernetes.io/aws-load-balancer-type
 # annotation, and this cluster has no AWS Load Balancer Controller addon - so EKS's default
 # in-tree provider is what provisions this, which means it could be EITHER a Classic ELB (the
@@ -87,7 +110,7 @@ else
 fi
 
 echo
-echo "== Step 2: stop Kafka (releases its volumes), then delete the PVCs, then wait for the real EBS volumes to actually disappear =="
+echo "== Step 3: stop Kafka (releases its volumes), then delete the PVCs, then wait for the real EBS volumes to actually disappear =="
 # A PVC cannot finish deleting - and its EBS volume cannot actually be released - while a running
 # pod still has it mounted (kubernetes.io/pvc-protection finalizer blocks it). Confirmed live
 # (2026-09-18): deleting the PVCs first, with kafka-0/1/2 still Running, left all 3 PVCs stuck in

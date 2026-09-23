@@ -104,7 +104,57 @@ resource "google_container_cluster" "main" {
   # authentication_mode.
   deletion_protection = false
 
+  # Workload Identity Federation for GKE - not previously enabled (this cluster only had
+  # node-level identity via google_service_account.gke_node above). Required so the app's own
+  # pods can present a distinct GCP identity (google_service_account.app below) rather than
+  # riding the node SA's broader permissions - added 2026-09-23 for Memorystore IAM auth, see
+  # memorystore.tf.
+  workload_identity_config {
+    workload_pool = "${var.gcp_project_id}.svc.id.goog"
+  }
+
   depends_on = [google_compute_router_nat.main]
+}
+
+# --- App workload identity (distinct from the node-level SA above) ---
+# Backported 2026-09-23 after Azure Managed Redis's forced move to Entra-ID-only auth prompted an
+# explicit decision (user sign-off) to align AWS/GCP onto the same tighter posture rather than
+# leave them on AUTH-string auth just because nothing forced it yet - same reasoning as AWS's new
+# elasticache-iam-auth.tf. The app has never needed its own GCP identity before now (Cloud SQL
+# uses a Secrets-Manager-equivalent-stored password, not IAM DB auth).
+resource "google_service_account" "app" {
+  account_id   = "${var.project_name}-app"
+  display_name = "${var.project_name} application workload identity"
+}
+
+# Binds the K8s ServiceAccount "grid-meter-app" in the "default" namespace to this GSA - the K8s
+# side (the ServiceAccount object itself, with the
+# iam.gke.io/gcp-service-account annotation, plus k8s/api-gcp.yaml's serviceAccountName field) is
+# real manifest/app-deploy work, tracked as a required follow-up alongside the Lettuce
+# credential-provider app code (AWS/GCP/Azure all three now need one) - not attempted inline
+# here. This binding is inert (no pod can impersonate this GSA yet) until that follow-up lands.
+#
+# Found via a real live apply failure (2026-09-23): "Identity Pool does not exist
+# (<project>.svc.id.goog)" - the workload identity pool this binding targets is backed by
+# google_container_cluster.main's own workload_identity_config and doesn't exist until that
+# cluster actually finishes creating. No implicit Terraform dependency exists between this
+# resource and the cluster (the member string is built from var.gcp_project_id, a plain
+# variable, not a cluster attribute), so nothing forced the ordering - added explicitly.
+resource "google_service_account_iam_member" "app_workload_identity" {
+  service_account_id = google_service_account.app.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.gcp_project_id}.svc.id.goog[default/grid-meter-app]"
+  depends_on         = [google_container_cluster.main]
+}
+
+# Confirmed live (2026-09-23, web search against Memorystore for Valkey's own IAM-auth docs):
+# roles/memorystore.dbConnectionUser is the specific predefined role granting the
+# memorystore.instances.connect permission IAM auth needs - not a generic Memorystore
+# viewer/editor role.
+resource "google_project_iam_member" "app_memorystore_connect" {
+  project = var.gcp_project_id
+  role    = "roles/memorystore.dbConnectionUser"
+  member  = "serviceAccount:${google_service_account.app.email}"
 }
 
 # --- Managed node pool ---

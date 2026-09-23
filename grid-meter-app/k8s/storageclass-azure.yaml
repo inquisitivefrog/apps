@@ -1,0 +1,39 @@
+# Azure-target variant, Azure counterpart of storageclass-aws.yaml/storageclass-gcp.yaml. Like
+# GKE (and unlike EKS), AKS DOES auto-mark a default StorageClass at cluster creation
+# (`managed-csi`, provisioner disk.csi.azure.com, Standard SSD LRS - confirmed live 2026-09-23 via
+# web search against the Azure Disk CSI driver's own docs) - so this isn't filling an absence the
+# way AWS's was, it's *replacing* AKS's own default, same as GCP's storageclass-gcp.yaml.
+# deploy-azure.sh un-defaults `managed-csi` before applying this file, for the same reason
+# deploy-gcp.sh un-defaults `standard-rwo`: two StorageClasses can't both carry the
+# is-default-class annotation without an ambiguous result.
+#
+# fsType: xfs, not the driver's own ext4 default - applied proactively, not rediscovered: AWS's
+# original Kafka-on-EBS build found (2026-09-18) that a freshly ext4-formatted volume auto-creates
+# a `lost+found` directory as part of the filesystem itself, and Kafka's LogManager fatally errors
+# the moment it scans any non-topic-partition-named directory under its log dir during startup;
+# GCP's PD CSI driver hit the identical shape and got the identical fix. The Azure Disk CSI
+# driver's parameter key is genuinely different, though, not just copy-pasted: `fsType` (plain
+# camelCase), not AWS's/GCP's shared `csi.storage.k8s.io/fstype` generic CSI parameter key -
+# confirmed via the driver's own upstream parameter docs before writing this, specifically to
+# avoid silently carrying over a parameter name that happens to be wrong for this one driver.
+#
+# skuName: StandardSSD_LRS matches AKS's own managed-csi default (Standard SSD, locally
+# redundant) - cost-conscious, consistent with this project's other "cheapest reasonable tier"
+# sizing decisions, not something to upgrade to Premium_LRS without a reason to.
+#
+# NOT yet live-tested against a real cluster as of 2026-09-23 (nothing applied to this cluster via
+# kubectl yet) - re-verify Kafka actually starts clean on a fresh XFS-formatted Azure Disk before
+# trusting this the way AWS's finding is trusted, same caveat GCP's identical file carried before
+# its own first real deploy.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-csi-xfs
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: disk.csi.azure.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  skuName: StandardSSD_LRS
+  fsType: xfs

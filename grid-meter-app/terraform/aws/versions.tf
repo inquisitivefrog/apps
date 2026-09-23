@@ -17,5 +17,14 @@ terraform {
       # thumbprints project-wide for anyone who'd pinned one.
       version = "~> 4.4"
     }
+    random = {
+      source = "hashicorp/random"
+      # Generates the disabled default ElastiCache user's throwaway password
+      # (elasticache-iam-auth.tf) - Valkey, unlike Redis OSS, doesn't support
+      # a true no-password-required auth mode at all (confirmed live,
+      # 2026-09-23), so a real, never-used password is required even for a
+      # disabled user.
+      version = "~> 3.6"
+    }
   }
 }

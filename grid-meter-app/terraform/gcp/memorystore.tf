@@ -25,6 +25,17 @@ resource "google_memorystore_instance" "main" {
   node_type      = var.memorystore_node_type
   engine_version = var.memorystore_engine_version
 
+  # IAM auth - backported 2026-09-23 after Azure Managed Redis's forced move to Entra-ID-only
+  # auth (see terraform/azure/rediscache.tf); AWS got the equivalent ElastiCache IAM-auth
+  # treatment the same day (terraform/aws/elasticache-iam-auth.tf). Confirmed live this resource
+  # type (google_memorystore_instance, the Valkey product actually used here - not
+  # google_redis_cluster, a different resource this project doesn't use) supports IAM_AUTH
+  # directly. TLS is not strictly auto-required by the API for IAM_AUTH, but GCP's own docs
+  # state it's required in practice to avoid leaking the IAM token itself in transit - declared
+  # explicitly rather than left an implicit "works but insecure" gap.
+  authorization_mode      = "IAM_AUTH"
+  transit_encryption_mode = "SERVER_AUTHENTICATION"
+
   desired_auto_created_endpoints {
     network    = google_compute_network.main.id
     project_id = var.gcp_project_id

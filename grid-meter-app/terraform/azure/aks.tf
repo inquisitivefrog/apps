@@ -15,13 +15,30 @@ resource "azurerm_kubernetes_cluster" "main" {
   tags                = local.common_tags
 
   default_node_pool {
-    name                         = "system"
-    vm_size                      = var.aks_node_vm_size
-    node_count                   = var.aks_node_count
-    zones                        = var.aks_availability_zones
+    name       = "system"
+    vm_size    = var.aks_node_vm_size
+    node_count = var.aks_node_count
+    # null (not an empty list) when zones aren't supported on this subscription - `zones` is a set
+    # type, and an explicit empty set isn't necessarily equivalent to the argument being absent
+    # entirely at the API level, so null is used deliberately here rather than assumed
+    # interchangeable with []. See variables.tf's aks_availability_zones for the live-confirmed
+    # finding that motivated this (2026-09-23).
+    zones                        = length(var.aks_availability_zones) > 0 ? var.aks_availability_zones : null
     vnet_subnet_id               = azurerm_subnet.aks.id
     os_disk_size_gb              = 30 # matches AWS's/GCP's own 30GB node boot disk sizing
     only_critical_addons_enabled = false
+
+    # Declared explicitly, matching values AKS's own provider default already produced live
+    # (confirmed via a real apply, 2026-09-23) - left undeclared, every subsequent plan tried to
+    # "correct" this optional+computed block back to unset, showing a perpetual spurious diff.
+    # Same "declare load-bearing defaults" principle as everywhere else in this project
+    # (CLAUDE.md), just resolving here to "match the platform's own default" after confirming
+    # live what that default actually is.
+    upgrade_settings {
+      max_surge                     = "10%"
+      drain_timeout_in_minutes      = 0
+      node_soak_duration_in_minutes = 0
+    }
   }
 
   # System-assigned managed identity for the cluster itself (control plane operations - creating
@@ -31,6 +48,19 @@ resource "azurerm_kubernetes_cluster" "main" {
   identity {
     type = "SystemAssigned"
   }
+
+  # Enables the app's own pods to federate a dedicated Entra ID identity (azurerm_user_assigned_identity.app
+  # below) instead of riding the cluster's own SystemAssigned identity - added 2026-09-23 for
+  # Managed Redis access (rediscache.tf already requires Entra ID auth; this is what actually lets
+  # a pod obtain a token for it).
+  workload_identity_enabled = true
+
+  # oidc_issuer_url (referenced by azurerm_federated_identity_credential.app below) only populates
+  # when this is true. It happened to already default to true on this provider version, but that
+  # was an undeclared default until now - workload identity genuinely depends on it, so declaring
+  # it explicitly rather than continuing to lean on the implicit value (this project's standing
+  # "declare load-bearing defaults" principle, CLAUDE.md).
+  oidc_issuer_enabled = true
 
   # Required as of azurerm 5.x (confirmed via a real `terraform validate` failure - "at least 1
   # node_provisioning_profile blocks are required" - not something the resource needed before
