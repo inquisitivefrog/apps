@@ -14,12 +14,38 @@
 # -Xmx384m only bounds heap, and JPA/Security/Kafka-client/full Micrometer+OTel tracing all
 # initializing at once needs real headroom beyond that. Applied proactively here as a directly
 # transferable, cloud-agnostic JVM/app-level finding, not something to rediscover a second time.
+#
+# ServiceAccount below (name "grid-meter-app", namespace default) is what terraform/gcp/gke.tf's
+# google_service_account_iam_member.app_workload_identity already expects - that binding was
+# inert without this (see its own comment: "no pod can impersonate this GSA yet"). The
+# iam.gke.io/gcp-service-account annotation is GKE Workload Identity's own binding mechanism -
+# the direct GCP equivalent of AWS's eks.amazonaws.com/role-arn, different annotation key/value
+# shape (a full email, not an ARN). Placeholder substituted by deploy-gcp.sh with the real
+# terraform output (app_service_account_email), same "bake in before first apply" reasoning as
+# the image placeholder above.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grid-meter-app
+  annotations:
+    iam.gke.io/gcp-service-account: PLACEHOLDER_APP_GCP_SERVICE_ACCOUNT_EMAIL
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api
 spec:
   replicas: 2
+  # Found live (2026-09-24): the default RollingUpdate strategy needs surge headroom (an extra
+  # pod's worth of memory) beyond the 2 steady-state replicas during any redeploy - this node pool
+  # (4x e2-medium, ~2.87Gi allocatable each) was already at 97-98% memory requests in steady state
+  # running the app plus the full observability follow-up slice together, with zero room for that
+  # surge. `kubectl describe pod` on the stuck new-generation pod confirmed "0/4 nodes are
+  # available: 4 Insufficient memory". Recreate avoids ever needing surge capacity (old pods fully
+  # terminate before new ones start) at the cost of a brief redeploy-time outage - an accepted
+  # tradeoff for a demo project, not appropriate for a production zero-downtime requirement.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: api
@@ -28,6 +54,7 @@ spec:
       labels:
         app: api
     spec:
+      serviceAccountName: grid-meter-app
       containers:
         - name: api
           image: PLACEHOLDER_ARTIFACT_REGISTRY_API_IMAGE
@@ -68,6 +95,24 @@ spec:
                 configMapKeyRef:
                   name: grid-meter-config
                   key: SPRING_DATA_REDIS_PORT
+            # Feeds config.gcp.GcpRedisConfig, gated behind the "cloud-gcp" profile
+            # (SPRING_PROFILES_ACTIVE below is "cloud,cloud-gcp" here, not just "cloud" - see
+            # application.yml's cloud-gcp profile block). This is the accountName
+            # IamCredentialsClient.generateAccessToken() self-impersonates to mint the Memorystore
+            # IAM-auth token - matching the official Google Cloud Lettuce reference sample exactly.
+            - name: GRID_METER_GCP_SERVICE_ACCOUNT_EMAIL
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: GRID_METER_GCP_SERVICE_ACCOUNT_EMAIL
+            # Found live (2026-09-24): Memorystore's TLS certificate is signed by a private,
+            # per-instance Google-managed CA the JDK's default trust store doesn't recognize
+            # (SSLHandshakeException: PKIX path building failed) - GcpRedisConfig needs this file
+            # path to build a custom Lettuce trust manager, matching Google's own official
+            # reference sample's approach exactly. The ConfigMap itself is deploy-time generated
+            # (see the memorystore-ca volume below), same reasoning as grid-meter-config.
+            - name: GRID_METER_GCP_MEMORYSTORE_CA_PATH
+              value: /etc/grid-meter/memorystore-ca.pem
             - name: GRID_METER_JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -90,6 +135,10 @@ spec:
                   key: MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED
           ports:
             - containerPort: 8080
+          volumeMounts:
+            - name: memorystore-ca
+              mountPath: /etc/grid-meter/memorystore-ca.pem
+              subPath: ca.pem
           # initialDelaySeconds/timeoutSeconds raised 2026-09-23 after a real live restart-loop
           # against AWS (api-aws.yaml's identical original probe block) - real Spring Boot startup
           # measured ~25s (exceeding the old 20s readiness delay), and critically,
@@ -118,6 +167,10 @@ spec:
           resources:
             limits:
               memory: 1Gi
+      volumes:
+        - name: memorystore-ca
+          configMap:
+            name: grid-meter-memorystore-ca
 ---
 apiVersion: v1
 kind: Service

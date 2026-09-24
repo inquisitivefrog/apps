@@ -19,9 +19,9 @@ variable "gcp_zone" {
 }
 
 variable "gke_node_locations" {
-  description = "Zones the GKE node pool spreads across, independent of the cluster's own (single) control-plane zone. 3 zones matches this project's existing Kafka topologySpreadConstraints (k8s/kafka.yaml) and AWS's 3-AZ node spread (vpc.tf's az_count) - one node per zone, giving Kafka's 3 brokers a real shot at one-broker-per-zone."
+  description = "Zones the GKE node pool spreads across, independent of the cluster's own (single) control-plane zone. Originally 3 zones, matching this project's existing Kafka topologySpreadConstraints (k8s/kafka.yaml) and AWS's 3-AZ node spread (vpc.tf's az_count) - one node per zone, giving Kafka's 3 brokers a real shot at one-broker-per-zone. Reduced to us-central1-a only (2026-09-24) after a real live apply hit GCE_STOCKOUT simultaneously in both us-central1-b and us-central1-c (confirmed via `gcloud container node-pools describe`'s conditions - both zones' single-instance IGM never reached RUNNING after 35+ minutes) - a more widespread stockout than the earlier single-zone (us-central1-b only) instance already documented in status/claude_code_2026-09-21.md, which had resolved on a plain retry. Dropping to one zone trades away Kafka's one-broker-per-zone placement (an accepted, already-precedented tradeoff - see terraform/azure/README.md's AKS node-count-vs-quota tradeoff for the same shape of decision) for actually being able to provision nodes at all when a stockout spans multiple zones at once."
   type        = list(string)
-  default     = ["us-central1-a", "us-central1-b", "us-central1-c"]
+  default     = ["us-central1-a"]
 }
 
 variable "project_name" {
@@ -104,9 +104,9 @@ variable "gke_node_machine_type" {
 }
 
 variable "gke_node_count" {
-  description = "Nodes PER ZONE in gke_node_locations, not a total - GKE's own documented node_count semantics for a multi-zone node pool (confirmed live 2026-09-21, after a real apply created 9 actual GCE instances, not the intended 3: total nodes = node_count x len(node_locations)). 1 here x 3 zones = 3 total nodes, matching AWS's eks_node_count=3 exactly (terraform/aws/variables.tf) - that AWS value was itself already the post-live-debugging-corrected number (2 nodes were found genuinely overcommitted, 2026-09-18), so 1x3=3 here is the direct transfer of that lesson, not a fresh guess. The original version of this variable set the default to 3 (intending '3 total'), actually producing 9 real nodes at ~3x the intended e2-medium cost until caught by this project's own check-resources.sh run against the live apply - see status/claude_code_2026-09-21.md for the full account."
+  description = "Nodes PER ZONE in gke_node_locations, not a total - GKE's own documented node_count semantics for a multi-zone node pool (confirmed live 2026-09-21, after a real apply created 9 actual GCE instances, not the intended 3: total nodes = node_count x len(node_locations)). Was 1 (x 3 zones = 3 total nodes, matching AWS's eks_node_count=3 exactly, terraform/aws/variables.tf) - that AWS value was itself already the post-live-debugging-corrected number (2 nodes were found genuinely overcommitted, 2026-09-18), so 1x3=3 was the direct transfer of that lesson, not a fresh guess. Raised to 3 (2026-09-24) alongside gke_node_locations dropping to a single zone (us-central1-a only, after a real GCE_STOCKOUT spanning both other zones) - 3 x 1 zone = 3 total nodes, preserving the original total-node intent rather than silently shrinking capacity to 1 along with the zone reduction."
   type        = number
-  default     = 1
+  default     = 3
 }
 
 variable "gke_node_disk_size_gb" {

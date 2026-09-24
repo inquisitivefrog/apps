@@ -30,6 +30,8 @@
         <!-- Confirmed 2026-09-23 via Maven Central's own search API (search.maven.org), not the
              stale/conflicting figures web search snippets returned for this artifact. -->
         <aws-sdk.version>2.46.7</aws-sdk.version>
+        <!-- Confirmed 2026-09-24 the same way, against Maven Central directly. -->
+        <gcp-libraries.version>26.83.0</gcp-libraries.version>
     </properties>
 
     <dependencies>
@@ -105,6 +107,17 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>sts</artifactId>
+        </dependency>
+        <!-- GCP-only, for the Memorystore IAM-auth Lettuce credentials provider
+             (config.gcp.GcpMemorystoreCredentialsProvider). IamCredentialsClient is the exact
+             class Google's own official Java/Lettuce IAM-auth reference sample uses (confirmed
+             2026-09-24 via the real docs page, not a summary) - it self-impersonates the app's own
+             service account via generateAccessToken() to mint the token used as the Redis AUTH
+             password, username "default". Version managed by the google-cloud libraries-bom below,
+             not pinned here directly - same BOM-managed pattern as the AWS SDK dependencies above. -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-iamcredentials</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -261,6 +274,28 @@
                 <version>${aws-sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>libraries-bom</artifactId>
+                <version>${gcp-libraries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Found live (2026-09-24): libraries-bom 26.83.0 pins protobuf-java to 4.33.2, but
+                 OpenTelemetry's own generated proto classes (already on the classpath via
+                 spring-boot-starter-opentelemetry, unrelated to this GCP work) were compiled
+                 against gencode 4.34.0 - protobuf enforces runtime >= gencode at class-init time,
+                 so the older BOM-pinned version broke the OTLP metrics exporter entirely
+                 (NoClassDefFoundError -> ProtobufRuntimeVersionException), failing the whole
+                 ApplicationContext, not just GCP-related beans. An explicit dependencyManagement
+                 entry here overrides the imported BOM's version for the same artifact (Maven's
+                 "nearest declaration" precedence - a directly-declared entry beats one pulled in
+                 through an imported BOM). Confirmed via Maven Central's own search API. -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>4.35.0</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

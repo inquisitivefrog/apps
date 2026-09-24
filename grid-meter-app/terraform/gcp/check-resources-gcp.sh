@@ -97,7 +97,24 @@ check "GKE node service account" gcloud iam service-accounts describe "grid-mete
 # on GKE's own goog-k8s-cluster-name label instead - stable, not truncated, and exists on every
 # GKE-managed instance (confirmed via `gcloud compute instances describe ... --format="yaml(labels)"`
 # against a real node).
-check "GCE worker instances (expect 3, RUNNING)" gcloud compute instances list --filter="labels.goog-k8s-cluster-name=${CLUSTER_NAME} AND status=RUNNING" --format="value(name)"
+#
+# A dedicated count check, not the shared check() function above: check() only verifies "command
+# succeeded and returned something non-empty" (see its own comment - deliberately no expected-value
+# comparison, since every other call here is a single-resource existence/status check with nothing
+# to count). Found live (2026-09-24) that this made the "(expect 3, RUNNING)" label pure cosmetic
+# text - it never actually validated the count, so it kept reporting PASS with 4 real instances
+# returned instead of 3 (main's 3 nodes + the separate extra pool's 1, node_pools.tf/variables.tf),
+# not just today after the GCE_STOCKOUT zone fix. Fixed with an explicit count comparison, matching
+# the style AWS's/Azure's check-resources-*.sh already use for PVC counts.
+GCE_INSTANCE_NAMES="$(gcloud compute instances list --project "$PROJECT_ID" --filter="labels.goog-k8s-cluster-name=${CLUSTER_NAME} AND status=RUNNING" --format="value(name)" 2>/dev/null)"
+GCE_INSTANCE_COUNT="$(echo "$GCE_INSTANCE_NAMES" | grep -c . || true)"
+if [[ "$GCE_INSTANCE_COUNT" == "4" ]]; then
+  echo "  PASS  GCE worker instances (expect 4, RUNNING): $GCE_INSTANCE_COUNT"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL  GCE worker instances (expect 4, RUNNING): got $GCE_INSTANCE_COUNT - ${GCE_INSTANCE_NAMES:-none}"
+  FAIL=$((FAIL+1))
+fi
 echo
 
 echo "-- Data tier --"

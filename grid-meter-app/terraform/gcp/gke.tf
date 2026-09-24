@@ -157,16 +157,32 @@ resource "google_project_iam_member" "app_memorystore_connect" {
   member  = "serviceAccount:${google_service_account.app.email}"
 }
 
+# Confirmed live (2026-09-24, against the official Google Cloud docs' own Java/Lettuce IAM-auth
+# reference sample for Memorystore): the credential-provider code calls
+# IamCredentialsClient.generateAccessToken(accountName, ...) explicitly, rather than reading the
+# pod's ambient Workload-Identity token directly - a real, deliberate self-impersonation call
+# (the target accountName is the app's own service account, the same one Workload Identity above
+# already lets the pod act as). This requires a SEPARATE grant beyond workloadIdentityUser above:
+# the service account needs roles/iam.serviceAccountTokenCreator on itself, matching the exact
+# self-referential member/resource pattern the official sample's accountName parameter implies.
+# Without this, generateAccessToken() fails with a PermissionDenied the pod's own ambient identity
+# can't resolve on its own.
+resource "google_service_account_iam_member" "app_token_creator" {
+  service_account_id = google_service_account.app.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.app.email}"
+}
+
 # --- Managed node pool ---
 resource "google_container_node_pool" "main" {
   name    = "${var.project_name}-nodes"
   cluster = google_container_cluster.main.id
 
   # gke_node_count is PER ZONE (GKE's own node_count semantics for a
-  # multi-zone pool) - 1 x 3 zones in node_locations below = 3 total nodes,
-  # matching AWS's node count. See variables.tf's gke_node_count comment
-  # for the real live bug this corrects (the original default of 3 here
-  # actually produced 9 nodes).
+  # multi-zone pool) - now 3 x 1 zone in node_locations below = 3 total
+  # nodes, matching AWS's node count (was 1 x 3 zones = 3, until a real
+  # GCE_STOCKOUT spanning two of the three zones forced dropping to one
+  # zone - see variables.tf's gke_node_locations/gke_node_count comments).
   node_count     = var.gke_node_count
   node_locations = var.gke_node_locations
 

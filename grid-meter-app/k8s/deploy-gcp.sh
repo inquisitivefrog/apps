@@ -41,6 +41,8 @@ CLOUDSQL_USER="$(jq_out cloudsql_user)"
 CLOUDSQL_SECRET_ID="$(jq_out cloudsql_password_secret_id)"
 MEMORYSTORE_HOST="$(jq_out memorystore_host)"
 MEMORYSTORE_PORT="$(jq_out memorystore_port)"
+APP_SERVICE_ACCOUNT_EMAIL="$(jq_out app_service_account_email)"
+MEMORYSTORE_CA_CERTS="$(jq_out memorystore_server_ca_certificates)"
 
 echo "== Fetching kubeconfig for $CLUSTER_NAME =="
 gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$ZONE" --project "$PROJECT_ID"
@@ -115,22 +117,37 @@ echo "== Applying config (real Cloud SQL/Memorystore endpoints, generated at dep
 # values are deploy-time facts that would drift the moment Cloud SQL/Memorystore is ever recreated
 # with a new endpoint.
 kubectl create configmap grid-meter-config \
-  --from-literal=SPRING_PROFILES_ACTIVE=cloud \
+  --from-literal=SPRING_PROFILES_ACTIVE=cloud,cloud-gcp \
   --from-literal=SPRING_DATASOURCE_URL="jdbc:postgresql://${CLOUDSQL_PRIVATE_IP}:5432/gridmeter" \
   --from-literal=SPRING_DATASOURCE_USERNAME="$CLOUDSQL_USER" \
   --from-literal=SPRING_KAFKA_BOOTSTRAP_SERVERS="kafka-0.kafka-headless:9092,kafka-1.kafka-headless:9092,kafka-2.kafka-headless:9092" \
   --from-literal=SPRING_DATA_REDIS_HOST="$MEMORYSTORE_HOST" \
   --from-literal=SPRING_DATA_REDIS_PORT="$MEMORYSTORE_PORT" \
+  --from-literal=GRID_METER_GCP_SERVICE_ACCOUNT_EMAIL="$APP_SERVICE_ACCOUNT_EMAIL" \
   --from-literal=GRID_METER_TRACING_SAMPLING_PROBABILITY="1.0" \
   --from-literal=JAVA_TOOL_OPTIONS="-Xmx384m" \
   --from-literal=MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED="false" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+echo "== Applying Memorystore's managed CA cert (needed for GcpRedisConfig's Lettuce trust manager) =="
+# Found live (2026-09-24): Memorystore's TLS cert is signed by a private per-instance Google-
+# managed CA the JDK's default trust store doesn't recognize - useSsl() alone isn't enough, the
+# app needs this cert as an explicit trust anchor. --from-file, not --from-literal: the PEM bundle
+# is multi-line and --from-literal would mangle it.
+CA_CERT_FILE="$(mktemp)"
+printf '%s\n' "$MEMORYSTORE_CA_CERTS" > "$CA_CERT_FILE"
+kubectl create configmap grid-meter-memorystore-ca \
+  --from-file=ca.pem="$CA_CERT_FILE" \
+  --dry-run=client -o yaml | kubectl apply -f -
+rm -f "$CA_CERT_FILE"
+
 echo "== Applying Kafka (self-hosted in-cluster, unchanged from every other target) =="
 kubectl apply -f "$K8S_DIR/kafka.yaml"
 
-echo "== Applying api + frontend (real image baked in before the first apply, not patched after) =="
-sed "s|PLACEHOLDER_ARTIFACT_REGISTRY_API_IMAGE|${AR_API_URL}:latest|" "$K8S_DIR/api-gcp.yaml" | kubectl apply -f -
+echo "== Applying api + frontend (real image + GCP service account email baked in before the first apply, not patched after) =="
+sed -e "s|PLACEHOLDER_ARTIFACT_REGISTRY_API_IMAGE|${AR_API_URL}:latest|" \
+    -e "s|PLACEHOLDER_APP_GCP_SERVICE_ACCOUNT_EMAIL|${APP_SERVICE_ACCOUNT_EMAIL}|" \
+    "$K8S_DIR/api-gcp.yaml" | kubectl apply -f -
 sed "s|grid-meter-frontend:kind|${AR_FRONTEND_URL}:latest|" "$K8S_DIR/frontend.yaml" | kubectl apply -f -
 
 echo "== Forcing a rollout restart (picks up a freshly-pushed :latest on a repeat run of this script) =="

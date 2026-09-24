@@ -73,3 +73,26 @@ output "memorystore_port" {
   description = "Memorystore for Valkey PSC connection port."
   value       = google_memorystore_instance.main.endpoints[0].connections[0].psc_auto_connection[0].port
 }
+
+output "app_service_account_email" {
+  description = "Email of the app's Workload-Identity-bound service account - fed to config.gcp.GcpRedisConfig as the accountName IamCredentialsClient.generateAccessToken() self-impersonates to mint the Memorystore IAM-auth token."
+  value       = google_service_account.app.email
+}
+
+# Found via a real live TLS handshake failure (2026-09-24, first real Redis write attempt against
+# a genuinely IAM-auth-wired pod): "PKIX path building failed... unable to find valid
+# certification path" - raw TCP reachability to Memorystore was confirmed fine (a real `nc -zv`
+# from inside the cluster succeeded), so this was never a network problem, only a TLS trust one.
+# Memorystore's server certificate is signed by a private, per-instance Google-managed CA
+# (server_ca_mode = GOOGLE_MANAGED_PER_INSTANCE_CA) the JDK's default trust store has no reason to
+# know about - matching exactly why Google's own official Java/Lettuce IAM-auth reference sample
+# explicitly builds a custom SslOptions trust manager from this same certificate rather than
+# relying on useSsl()'s default (JDK-trust-store-based) behavior. managed_server_ca is a nested
+# list-of-lists (confirmed live via `terraform state show`: 1 entry -> 1 ca_certs entry -> 2
+# certificates, likely a root+intermediate pair or a rotation-overlap pair) - joined into one PEM
+# bundle here so config.gcp.GcpRedisConfig's trust manager gets every valid anchor, not just one.
+output "memorystore_server_ca_certificates" {
+  description = "PEM bundle of Memorystore's per-instance managed CA certificate(s) - mounted into the api pod and used as config.gcp.GcpRedisConfig's Lettuce SSL trust manager, since the JDK's default trust store doesn't recognize Google's private per-instance CA."
+  value       = join("\n", google_memorystore_instance.main.managed_server_ca[0].ca_certs[0].certificates)
+  sensitive   = false
+}

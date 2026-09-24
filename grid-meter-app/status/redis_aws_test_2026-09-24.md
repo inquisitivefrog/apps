@@ -1,4 +1,6 @@
 
+# Terminal 1
+
 kubectl logs -f api-6f8dc8dd6f-4p6zw
 
 2026-09-24T16:04:59.862Z  INFO [customerId=] 1 --- [grid-meter-api] [           main] [                                                 ] .RepositoryConfigurationExtensionSupport : Spring Data Redis - Could not safely identify store assignment for repository candidate interface com.gridmeter.api.reading.ReadingRepository; If you want this repository to be a Redis repository, consider annotating your entities with one of these annotations: org.springframework.data.redis.core.RedisHash (preferred), or consider extending one of the following types with your repository: org.springframework.data.keyvalue.repository.KeyValueRepository
@@ -21,7 +23,8 @@ tim@Timothys-MacBook-Air grid-meter-app % curl -s -X POST http://abf338bd29c1549
 {"id":"93c1d107-b8ff-4bb4-9f2c-b9c377807758","meterId":"94144723-09c1-464b-b105-e009a415f508","readingTimestamp":"2026-09-24T17:00:00Z","receivedAt":"2026-09-24T16:34:32.579440864Z","value":444.44}%     
 tim@Timothys-MacBook-Air aws % 
 
-# Terminal #3
+# Terminal 3
+
 tim@Timothys-MacBook-Air aws % kubectl logs -f api-6f8dc8dd6f-77d9d
 
 2026-09-24T16:05:34.302Z  INFO [customerId=] 1 --- [grid-meter-api] [           main] [                                                 ] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 16 ms. Found 0 Redis repository interfaces.

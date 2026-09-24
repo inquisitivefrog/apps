@@ -382,3 +382,14 @@ spring:
   config:
     activate:
       on-profile: "cloud-aws"
+
+---
+# GCP-specific counterpart, active alongside "cloud" (k8s/api-gcp.yaml sets
+# SPRING_PROFILES_ACTIVE=cloud,cloud-gcp), not a replacement for it -- same reasoning as
+# "cloud-aws" above. Gates config.gcp.GcpRedisConfig's bean tree to GCP specifically; the one
+# value it needs (GRID_METER_GCP_SERVICE_ACCOUNT_EMAIL) is read directly as an env var via
+# @Value("${ENV_VAR_NAME}"), same direct-placeholder pattern as the other clouds.
+spring:
+  config:
+    activate:
+      on-profile: "cloud-gcp"
