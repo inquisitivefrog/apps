@@ -393,3 +393,16 @@ spring:
   config:
     activate:
       on-profile: "cloud-gcp"
+
+---
+# Azure-specific counterpart, active alongside "cloud" (k8s/api-azure.yaml sets
+# SPRING_PROFILES_ACTIVE=cloud,cloud-azure), not a replacement for it -- same reasoning as
+# "cloud-aws"/"cloud-gcp" above. Gates config.azure.AzureRedisConfig's bean tree to Azure
+# specifically. Unlike the other two clouds, no app-level identity value needs reading here at
+# all -- DefaultAzureCredential resolves the app's Workload-Identity-federated identity
+# automatically via env vars (AZURE_CLIENT_ID etc.) AKS's Workload Identity webhook injects onto
+# the pod directly, based on the ServiceAccount annotation and pod label in k8s/api-azure.yaml.
+spring:
+  config:
+    activate:
+      on-profile: "cloud-azure"

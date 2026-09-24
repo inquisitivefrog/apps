@@ -5,11 +5,8 @@
 # the Balanced_B0 tier) are both directly reachable from pods without a proxy sidecar, matching how
 # AWS's RDS/ElastiCache and GCP's Cloud SQL/Memorystore endpoints are used directly.
 #
-# Redis will NOT actually authenticate yet even once this is deployed - Managed Redis is Entra
-# ID-token-only (rediscache.tf) and the app's spring.data.redis.* client has no credential
-# provider for that (terraform/azure/README.md's "What's next"). SPRING_DATA_REDIS_HOST/PORT are
-# still wired here, forward-compatible with that work landing, matching how AWS's/GCP's own
-# manifests don't special-case a not-yet-built feature either.
+# Redis now authenticates via Entra ID (config.azure.AzureRedisConfig, added 2026-09-24) -
+# SPRING_PROFILES_ACTIVE=cloud,cloud-azure (deploy-azure.sh) activates that bean tree.
 #
 # image below is a placeholder - matching AWS's/GCP's own "bake in the real image before the
 # first apply, not patch after" design (see deploy-aws.sh's comment on why apply-then-patch caused
@@ -19,6 +16,23 @@
 # memory: 1Gi from the start, not kind's 512Mi - AWS's live finding (2026-09-18, confirmed
 # transferable on GCP's identical build) applied proactively here too: 512Mi OOMKills this
 # container (exit 137) before Spring Boot logs past the active profile.
+#
+# ServiceAccount below (name "grid-meter-app", namespace default) is what
+# terraform/azure/redis-iam-auth.tf's azurerm_federated_identity_credential.app already expects -
+# that binding was inert without this. AKS Workload Identity needs TWO things together, not just
+# one annotation like AWS's/GCP's equivalents: the azure.workload.identity/client-id annotation on
+# the ServiceAccount (substituted by deploy-azure.sh with the real terraform output
+# app_identity_client_id), AND the azure.workload.identity/use: "true" label on the POD TEMPLATE
+# itself (not the ServiceAccount) - without the pod label, AKS's Workload Identity webhook never
+# mutates the pod at all (no AZURE_CLIENT_ID/AZURE_FEDERATED_TOKEN_FILE env vars, no projected
+# token volume), regardless of the ServiceAccount annotation being correct.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grid-meter-app
+  annotations:
+    azure.workload.identity/client-id: PLACEHOLDER_APP_IDENTITY_CLIENT_ID
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,7 +46,9 @@ spec:
     metadata:
       labels:
         app: api
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: grid-meter-app
       containers:
         - name: api
           image: PLACEHOLDER_ACR_API_IMAGE

@@ -47,6 +47,11 @@ output "key_vault_name" {
   value = azurerm_key_vault.main.name
 }
 
+output "app_identity_client_id" {
+  description = "Client ID of the app's Workload-Identity-federated user-assigned identity (redis-iam-auth.tf) - fed to the K8s ServiceAccount's azure.workload.identity/client-id annotation, which is what tells AKS's Workload Identity webhook which identity a pod should federate as. DefaultAzureCredential (config.azure.AzureRedisConfig) then picks this up automatically via the webhook-injected AZURE_CLIENT_ID env var - no separate app-level config needed, unlike AWS's/GCP's equivalent identifiers."
+  value       = azurerm_user_assigned_identity.app.client_id
+}
+
 output "redis_hostname" {
   description = "No top-level password/access-key attribute exists on azurerm_managed_redis at all (confirmed via the real provider schema - it authenticates via Entra ID tokens exclusively, see rediscache.tf), so no redis_access_key output exists here on purpose - there's nothing to output. redis_port below, from the required default_database block added 2026-09-23, IS available despite that block's other live-auth-relevant fields (primary_access_key etc.) being equally inapplicable here."
   value       = azurerm_managed_redis.main.hostname

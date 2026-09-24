@@ -43,6 +43,7 @@ KEY_VAULT_NAME="$(jq_out key_vault_name)"
 POSTGRES_SECRET_NAME="$(jq_out postgres_password_secret_name)"
 REDIS_HOST="$(jq_out redis_hostname)"
 REDIS_PORT="$(jq_out redis_port)"
+APP_IDENTITY_CLIENT_ID="$(jq_out app_identity_client_id)"
 
 echo "== Fetching kubeconfig for $CLUSTER_NAME =="
 az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --overwrite-existing
@@ -95,7 +96,7 @@ echo "== Applying config (real Postgres/Redis endpoints, generated at deploy tim
 # deploy-aws.sh/deploy-gcp.sh: these values are deploy-time facts that would drift the moment
 # Postgres/Redis is ever recreated with a new endpoint.
 kubectl create configmap grid-meter-config \
-  --from-literal=SPRING_PROFILES_ACTIVE=cloud \
+  --from-literal=SPRING_PROFILES_ACTIVE=cloud,cloud-azure \
   --from-literal=SPRING_DATASOURCE_URL="jdbc:postgresql://${POSTGRES_FQDN}:5432/${POSTGRES_DB}" \
   --from-literal=SPRING_DATASOURCE_USERNAME="$POSTGRES_USER" \
   --from-literal=SPRING_KAFKA_BOOTSTRAP_SERVERS="kafka-0.kafka-headless:9092,kafka-1.kafka-headless:9092,kafka-2.kafka-headless:9092" \
@@ -109,8 +110,10 @@ kubectl create configmap grid-meter-config \
 echo "== Applying Kafka (self-hosted in-cluster, unchanged from every other target) =="
 kubectl apply -f "$K8S_DIR/kafka.yaml"
 
-echo "== Applying api + frontend (real image baked in before the first apply, not patched after) =="
-sed "s|PLACEHOLDER_ACR_API_IMAGE|${ACR_LOGIN_SERVER}/api:latest|" "$K8S_DIR/api-azure.yaml" | kubectl apply -f -
+echo "== Applying api + frontend (real image + Workload Identity client ID baked in before the first apply, not patched after) =="
+sed -e "s|PLACEHOLDER_ACR_API_IMAGE|${ACR_LOGIN_SERVER}/api:latest|" \
+    -e "s|PLACEHOLDER_APP_IDENTITY_CLIENT_ID|${APP_IDENTITY_CLIENT_ID}|" \
+    "$K8S_DIR/api-azure.yaml" | kubectl apply -f -
 sed "s|grid-meter-frontend:kind|${ACR_LOGIN_SERVER}/frontend:latest|" "$K8S_DIR/frontend.yaml" | kubectl apply -f -
 
 echo "== Forcing a rollout restart (picks up a freshly-pushed :latest on a repeat run of this script) =="

@@ -32,6 +32,9 @@
         <aws-sdk.version>2.46.7</aws-sdk.version>
         <!-- Confirmed 2026-09-24 the same way, against Maven Central directly. -->
         <gcp-libraries.version>26.83.0</gcp-libraries.version>
+        <!-- Both confirmed 2026-09-24 via Maven Central's own search API. -->
+        <redis-authx.version>0.1.1-beta2</redis-authx.version>
+        <azure-identity.version>1.16.2</azure-identity.version>
     </properties>
 
     <dependencies>
@@ -118,6 +121,40 @@
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-iamcredentials</artifactId>
+        </dependency>
+        <!-- Azure-only, for Managed Redis's Entra ID auth. Confirmed 2026-09-24 via javap against
+             the already-installed lettuce-core-7.5.2.RELEASE.jar: io.lettuce.authx.
+             TokenBasedRedisCredentialsProvider already exists there (implements
+             RedisCredentialsProvider + AutoCloseable, native background token renewal) - "Lettuce
+             6.6.0 introduces built-in support" per Redis's own docs. redis-authx-entraid supplies
+             the Azure-specific IdentityProvider plumbing (AzureTokenAuthConfigBuilder,
+             confirmed via its real source on GitHub to accept any DefaultAzureCredential directly
+             - not the narrower, IMDS-oriented "managed identity" builder path the docs page's own
+             combined example conflates). No custom credentials-provider class needed here at all,
+             unlike AWS's/GCP's config.{aws,gcp} packages - config.azure.AzureRedisConfig is just
+             wiring. Both artifacts are still pre-1.0 (beta) per Maven Central - the real, current,
+             Redis-maintained library for this, not a third-party workaround. -->
+        <dependency>
+            <groupId>redis.clients.authentication</groupId>
+            <artifactId>redis-authx-entraid</artifactId>
+            <version>${redis-authx.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>redis.clients.authentication</groupId>
+            <artifactId>redis-authx-core</artifactId>
+            <version>${redis-authx.version}</version>
+        </dependency>
+        <!-- DefaultAzureCredential's own documented fallback chain includes WorkloadIdentityCredential,
+             which reads the AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_FEDERATED_TOKEN_FILE/
+             AZURE_AUTHORITY_HOST env vars AKS's Workload Identity webhook injects onto a pod whose
+             ServiceAccount carries the azure.workload.identity/client-id annotation and whose pod
+             template carries the azure.workload.identity/use: "true" label (k8s/api-azure.yaml) -
+             no separate app-level identity config needed, unlike AWS's role ARN/GCP's service
+             account email. -->
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-identity</artifactId>
+            <version>${azure-identity.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
