@@ -27,6 +27,9 @@
              a NullPointerException deep in Groovy's ClosureMetaClass; POST happens to work. Pinned
              back to the last Groovy 4.x release below until that issue is resolved. -->
         <groovy.version>4.0.32</groovy.version>
+        <!-- Confirmed 2026-09-23 via Maven Central's own search API (search.maven.org), not the
+             stale/conflicting figures web search snippets returned for this artifact. -->
+        <aws-sdk.version>2.46.7</aws-sdk.version>
     </properties>
 
     <dependencies>
@@ -74,6 +77,34 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <!-- AWS-only, for the ElastiCache IAM-auth Lettuce credentials provider
+             (config.aws.AwsElastiCacheCredentialsProvider). Deliberately just these small modules
+             via the BOM, not the aws-sdk-java "mega" artifact AWS's own reference app
+             (aws-samples/elasticache-iam-auth-demo-app) pulls in — that artifact bundles every AWS
+             service client, wildly disproportionate to "sign one SigV4 request". `auth` supplies
+             the IRSA-aware DefaultCredentialsProvider; `http-auth-aws` supplies AwsV4HttpSigner,
+             confirmed (2026-09-23) to be the current signer API — the reference app's own pom.xml
+             already moved off the older auth-module Aws4Signer to this one. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>auth</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>http-auth-aws</artifactId>
+        </dependency>
+        <!-- Found live (2026-09-24), not guessed in advance: DefaultCredentialsProvider's
+             WebIdentityTokenFileCredentialsProvider (the actual IRSA mechanism - reads
+             AWS_WEB_IDENTITY_TOKEN_FILE/AWS_ROLE_ARN, both confirmed correctly injected onto the
+             pod by EKS's Pod Identity webhook) needs the STS client on the classpath internally to
+             call AssumeRoleWithWebIdentity - without it, every credential resolution fails with
+             "the 'sts' service module must be on the class path", surfacing as a generic
+             RedisConnectionFailureException with no obvious auth-related message at the top of the
+             stack (the real cause was one "Caused by:" clause deeper). -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -221,6 +252,13 @@
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws-sdk.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

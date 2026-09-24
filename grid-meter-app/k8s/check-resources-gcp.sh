@@ -75,6 +75,19 @@ check "IngressRoute exists" any kubectl get ingressroute grid-meter -o jsonpath=
 check "pd-balanced-xfs StorageClass is default" "true" kubectl get storageclass pd-balanced-xfs -o jsonpath='{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}'
 echo
 
+echo "-- Observability (optional; only checked if deployed via k8s/deploy-observability.sh) --"
+if kubectl get deployment loki >/dev/null 2>&1; then
+  check "kube-prometheus-stack-grafana Deployment ready" "1/1" kubectl get deployment kube-prometheus-stack-grafana -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
+  check "Prometheus StatefulSet ready replicas" "1" kubectl get statefulset prometheus-kube-prometheus-stack-prometheus -o jsonpath='{.status.readyReplicas}'
+  check "Loki Deployment ready" "1/1" kubectl get deployment loki -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
+  check "Tempo Deployment ready" "1/1" kubectl get deployment tempo -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
+  check "Alloy Deployment ready" "1/1" kubectl get deployment alloy -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
+  check "grid-meter-api ServiceMonitor exists" any kubectl get servicemonitor grid-meter-api -o jsonpath='{.metadata.name}'
+else
+  echo "  (not deployed - skipping; run k8s/deploy-observability.sh first if this cluster should have it)"
+fi
+echo
+
 echo "== Summary: $PASS passed, $FAIL failed =="
 if [[ "$FAIL" -gt 0 ]]; then
   echo "One or more expected Kubernetes objects are missing or unhealthy - investigate before demoing."

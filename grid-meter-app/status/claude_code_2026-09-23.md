@@ -4,7 +4,11 @@ Continuation of 2026-09-22's Azure work: took the main config from plan-only to 
 fully-applied deployment across two separate sessions today, finding and fixing a real platform
 error at nearly every step. Along the way, Azure's forced Redis product change prompted an explicit
 user decision to backport the same tighter (IAM/token-based) Redis auth posture to AWS and GCP too,
-Terraform-only.
+Terraform-only. All three clouds then went through a full deploy → confirm → teardown → confirm →
+destroy → residue-check cycle (committed as `e243776`). Later the same day: AWS's Lettuce
+credential-provider app code was scoped and implemented (uncommitted - its live connection is
+still unverified), and the night closed with a real stale-kubeconfig bug found and fixed during
+shutdown before AWS was torn down again.
 
 ## Done — first live apply attempt (eastus): three real platform errors found and fixed
 
@@ -543,50 +547,167 @@ layer confirmed live with a real HTTP smoke test, then torn down and independent
 zero-residue against real cloud APIs - not assumed correct from "Destroy complete" alone at any
 step, for any cloud.
 
+## Done — AWS Lettuce credential-provider scoped and implemented, with unit tests
+
+User's explicit sequencing after the 3-cloud teardown write-up above: "commit and push, then move
+forward with code changes, then retest one platform at a time." AWS scoped and implemented first,
+not all three at once - GCP/Azure deliberately left for later, separate sessions.
+
+Grounded the design against real, installed artifacts rather than memory of the Spring/Lettuce
+APIs, per this project's standing discipline: `javap`/`unzip -l` against the actual installed
+`spring-boot-data-redis-4.1.0`/`spring-data-redis-4.1.0`/`lettuce-core-7.5.2.RELEASE` jars
+confirmed the real extension point is `LettuceClientConfiguration.LettuceClientConfigurationBuilder
+.redisCredentialsProviderFactory(RedisCredentialsProviderFactory)`, wired via a Spring Boot
+`LettuceClientConfigurationBuilderCustomizer` bean - not a full `RedisStandaloneConfiguration`/
+`LettuceConnectionFactory` override, and not Lettuce's own `RedisURI.Builder.withAuthentication`
+(the wiring point an initial pass had assumed before checking).
+
+Pulled AWS's own reference implementation (`aws-samples/elasticache-iam-auth-demo-app`, via `gh
+api`) rather than hand-deriving the SigV4 token construction - this caught a real, non-obvious fact
+before it became a bug: the reference app's `pom.xml` had already moved off the older
+`auth`-module `Aws4Signer` onto the newer `AwsV4HttpSigner` (`http-auth-aws` module, the SRA
+signer redesign), confirmed by reading its actual current source rather than an older
+tutorial/pattern. Also confirmed AWS's reference implementation uses Lettuce's one-shot
+`resolveCredentials()` with a hand-cached/memoized token (10-minute cache against the token's real
+15-minute TTL), not the streaming `Flux`-based variant an initial pass had assumed was the better
+fit - deviating from AWS's own verified-working pattern for no reason would have added risk, not
+value.
+
+**New code** (`api/src/main/java/com/gridmeter/api/config/aws/`): `ElastiCacheAuthTokenRequest`
+(builds the signed token), `AwsElastiCacheCredentialsProvider` (Lettuce `RedisCredentialsProvider`,
+hand-rolled cache/expiry - no Guava dependency added just for `Suppliers.memoizeWithExpiration`,
+matching this project's minimal-footprint ethos), `AwsRedisConfig` (`@Profile("cloud-aws")` bean
+wiring, also sets `.useSsl()` since ElastiCache's IAM auth requires TLS). `pom.xml`: added
+`software.amazon.awssdk:auth` + `http-auth-aws` via the `software.amazon.awssdk:bom` (version
+2.46.7, confirmed authoritatively via Maven Central's own search API after web-search snippets for
+this artifact returned conflicting numbers) - deliberately not AWS's own reference `pom.xml`'s
+`aws-sdk-java` mega-artifact, wildly disproportionate to "sign one SigV4 request."
+
+**6 new unit tests**, no mocks for the signer itself (it's a deterministic, offline operation -
+the token is never actually sent over the network): `ElastiCacheAuthTokenRequestTest` exercises
+the real `AwsV4HttpSigner` against fake static credentials and asserts the token's shape (one
+assertion needed fixing after a real run showed the credential scope is URL-encoded, `%2F` not
+`/` - caught by actually running the test, not assumed). `AwsElastiCacheCredentialsProviderTest`
+verifies cache-hit/regenerate-after-expiry behavior via a controllable fake `Clock`, this project's
+own "poll/control time, don't sleep" testing discipline applied to a unit test instead of an
+infrastructure script - no real 10-minute wait.
+
+**Full existing suite re-run after the `pom.xml` change, per the user's own explicitly-validated
+concern that a dependency addition warrants re-running everything**: 98/98 tests clean across all
+21 test classes (including the 2 new ones), zero regressions from the new AWS SDK dependency.
+
+## Done — wired the new AWS code into the k8s/Terraform layer so a real pod can actually use it
+
+The credential-provider code alone was inert without this - `terraform/aws/elasticache-iam-auth.tf`
+(from earlier today) already expected a K8s ServiceAccount named exactly `grid-meter-app` in
+namespace `default` that didn't exist yet in any manifest.
+
+`terraform/aws/outputs.tf`: 3 new outputs (`app_irsa_role_arn`, `elasticache_app_user_id`,
+`elasticache_replication_group_id`) - none of these existed before since nothing consumed them
+yet; `terraform validate` clean. `k8s/api-aws.yaml`: new `ServiceAccount` object (`grid-meter-app`,
+annotated `eks.amazonaws.com/role-arn` with a placeholder, same pattern as the existing image
+placeholder) + `serviceAccountName` on the pod spec, plus 3 new env vars (`AWS_REGION`,
+`GRID_METER_AWS_ELASTICACHE_USER_ID`, `GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID`) feeding
+`AwsRedisConfig`. `k8s/deploy-aws.sh`: reads the 3 new Terraform outputs, changed
+`SPRING_PROFILES_ACTIVE` from `cloud` to `cloud,cloud-aws` (activates the new profile-gated bean
+tree without touching GCP's/Azure's still-shared `cloud` profile), sed-substitutes the IRSA role
+ARN alongside the existing image substitution. `application.yml`: new `cloud-aws`-profile-activation
+block (env vars read directly via `@Value("${ENV_VAR_NAME}")`, matching `SPRING_DATA_REDIS_HOST`'s
+existing direct-placeholder convention - an initial pass had added an unnecessary intermediate
+`grid-meter.aws.elasticache.*` property path, removed once inconsistency was noticed).
+
+**Important, explicitly-flagged gap**: none of this was ever actually deployed against a live pod
+before AWS was torn down again tonight (see below) - the credential-provider code compiles and its
+unit tests pass, but a real, live IAM-auth Redis connection from a running pod has **not** been
+confirmed. This is still open, not silently assumed working.
+
+## Done — tonight's shutdown: a real context-mismatch bug found and fixed before it could hide a false "clean" teardown
+
+User asked to shut resources down for the night. First `k8s/teardown-aws.sh` run reported all
+three steps as "nothing found - already deleted, or never created" - but the script's own printed
+`Current context: grid-meter-app-aks` gave it away: that's the Azure AKS context name, not AWS's
+EKS cluster, the same class of stale-context bug found earlier this session on GCP. The user typed
+`y` past the script's own confirmation prompt without noticing, so it ran clean against the wrong
+(and already-destroyed) cluster - a false "nothing to clean up," not real confirmation.
+
+Root-caused before fixing: `kubectl config use-context` to the existing EKS context entry
+(`arn:aws:eks:...:cluster/grid-meter-app-eks`, already present in `~/.kube/config`) still failed
+with a DNS resolution error against its cached endpoint hostname - the cached entry itself was
+stale, most likely from an earlier point in the session before the EKS cluster was recreated
+(a recreated cluster gets a new control-plane endpoint hostname; the old cached one simply stops
+resolving, permanently). Fixed by regenerating it fresh (`aws eks update-kubeconfig --name
+grid-meter-app-eks --region us-west-2 --profile grid-meter`), confirmed via `kubectl get nodes`
+(3 real nodes, healthy, `4h52m` old).
+
+**Re-running both scripts against the now-correct context showed the real state, for the right
+reason this time**: `kubectl get pods -A` showed only `kube-system` pods - no `api`/`traefik`/
+`kafka`/`frontend` had ever actually been deployed onto this particular cluster incarnation (the
+EKS cluster itself was live and Terraform-tracked, but the app layer above it genuinely was never
+applied tonight). `k8s/check-resources-aws.sh` re-run against the correct context returned clean
+real `NotFound` responses from the live API server (not DNS failures) for all 15 checks - correctly
+confirming there was nothing for `teardown-aws.sh` to do, this time as a verified fact rather than
+an accidental-right-answer-for-the-wrong-reason.
+
+User then ran `terraform destroy` directly (safe, since the k8s layer was independently confirmed
+empty first) - **confirmed complete: AWS Terraform state is now empty (0 resources)**, checked
+directly via `terraform show -json` after the destroy.
+
 ## Open
 
-- **Azure is fully closed out AND fully torn down - matching AWS's/GCP's bar exactly, start to
-  finish**: Terraform layer (22/22), app-deploy layer (15/15, real HTTP smoke test), then a real
-  `terraform destroy` (20 resources, zero errors) with all 8 residue checks independently
-  confirmed empty against live Azure APIs. Zero Azure resources remain. One honestly-reported
-  single-restart anomaly during the app-deploy phase (self-resolved, not blocking, documented).
-- **AWS is fully closed out AND fully torn down - the strongest confidence bar of any cloud this
-  session, start to finish**: the Terraform layer (50 resources, 24/24 checked), a full redeploy →
-  confirm (39/39, HTTP smoke test) → teardown → confirm cycle proving the `teardown-aws.sh`
-  crash-loop fix actually works, then a real `terraform destroy` (51 resources, zero errors) with
-  all 9 residue checks independently confirmed empty against live AWS APIs. Zero AWS resources
-  remain; zero further action needed unless redeploying again later.
-- **GCP is fully closed out AND fully torn down - matching AWS's bar exactly, start to finish**:
-  Terraform layer (17/17), app-deploy layer (15/15, 0 `api` restarts, HTTP smoke test), then a real
-  `terraform destroy` (25 resources, zero errors) with all 9 residue checks independently confirmed
-  empty against live GCP APIs. Zero GCP resources remain; zero further action needed unless
-  redeploying again later.
-- **Three clouds still share the same real app-code gap**: none can actually authenticate to Redis
-  from a real pod yet - all three need (a) a K8s ServiceAccount object + `serviceAccountName`
-  wiring in their respective `k8s/api-*.yaml` (all three now exist as files, but none carry this
-  yet), and (b) a Lettuce credential provider (AWS SigV4, GCP IAM token, Azure Entra ID token).
-  Real Spring Boot/Java work, explicitly not attempted this session - tracked, not silently
-  dropped. Postgres/Kafka/the rest of the app are unaffected by this gap.
-- Nothing has been committed to git yet - all of today's changes across all three clouds' Terraform,
-  the new Azure app-deploy-layer scripts/manifests, and both READMEs are uncommitted working-tree
-  changes as of this write-up. **The user's stated condition for holding off (delay commit until
-  AWS/GCP redeploys and any spin-off issues are resolved) is now fully satisfied for all three
-  clouds** - each completed a full deploy-confirm-teardown-confirm cycle with zero open spin-off
-  issues - but committing is still the user's call to make, not assumed.
+- **Azure and GCP are fully closed out and fully torn down**, matching bars established earlier
+  today: Azure (Terraform 22/22, app-deploy 15/15 + HTTP smoke test, `terraform destroy` 20
+  resources/zero errors, 8/8 residue checks empty); GCP (Terraform 17/17, app-deploy 15/15 + HTTP
+  smoke test, `terraform destroy` 25 resources/zero errors, 9/9 residue checks empty). Zero
+  resources remain on either. Neither has the Lettuce credential-provider work yet - still fully
+  password/legacy-auth-inert on Redis until their own scoping pass, same as AWS was before tonight.
+- **AWS is fully torn down again as of tonight (0 resources in Terraform state, confirmed via
+  `terraform show -json`)** - but this teardown followed a session that added real, uncommitted
+  code (the Lettuce credential-provider implementation) that was never actually exercised against
+  a live pod before teardown. The code compiles and its 6 new unit tests pass (98/98 full suite,
+  zero regressions), and the Terraform/k8s wiring to make it reachable (IRSA role ARN, ElastiCache
+  user ID/replication group ID outputs, the `grid-meter-app` ServiceAccount, the `cloud-aws`
+  profile) is all in place - but **a real, live IAM-auth Redis connection from a running AWS pod
+  has never been confirmed.** This is the single most important open item: the next AWS redeploy
+  needs to specifically verify this (watch `kubectl logs` while hitting a Redis-touching endpoint,
+  per the directions given tonight), not just confirm the app comes up healthy the way
+  `management.health.redis.enabled: false` already lets it do regardless of whether Redis auth
+  actually works.
+- **A real stale-kubeconfig bug was found and fixed tonight, same class as an earlier GCP finding**:
+  an EKS context entry in `~/.kube/config` had a dead cached control-plane endpoint (most likely
+  from the cluster being recreated earlier in the session), and separately the *current* context
+  was still pointed at Azure's already-destroyed AKS cluster - both silently produce a false
+  "nothing found" from `teardown-aws.sh`/`check-resources-aws.sh` rather than an error a user would
+  necessarily catch from the confirmation prompt alone. Worth remembering for any future multi-
+  cloud session: always sanity-check `kubectl config current-context` explicitly (not just trust a
+  script's own printed context line) after switching between clouds, and regenerate
+  (`aws eks update-kubeconfig`/`az aks get-credentials`/`gcloud container clusters get-credentials`)
+  rather than assume an existing cached context entry is still valid if a cluster may have been
+  recreated since it was generated.
+- **AWS's new code (`config/aws/`, its tests, the `pom.xml`/`application.yml`/Terraform/k8s
+  changes) is uncommitted** as of this write-up - deliberately not committed yet, since the live
+  IAM-auth connection point above is still unverified. Committing before that live check would
+  mean committing code with an untested critical path, at odds with this project's own
+  "verify live before trusting" discipline throughout today.
+- **GCP's and Azure's own Lettuce credential-provider work hasn't been started** - explicitly
+  sequenced after AWS's (scope → implement → retest one cloud at a time, the user's own directive),
+  not attempted in parallel.
 
 ## Next
 
-1. **All three clouds are done for this session** - AWS, GCP, and Azure each fully deployed,
-   tested, torn down, and independently confirmed zero-residue against real cloud APIs. No further
-   action needed on any of them unless redeploying again later.
-2. Commit today's changes now that all three clouds' teardown cycles are done and every spin-off
-   issue is resolved (the user's explicit request) - this write-up is the natural checkpoint.
-3. **The Lettuce credential-provider app code, all three clouds** - the single biggest remaining
-   blocker to any of this Terraform actually being exercised by a real running pod. Needs its own
-   dedicated session/scoping pass (three separate provider-specific implementations plus tests, per
-   the "everything in one push" option the user explicitly declined this session in favor of
-   sequencing).
-4. **K8s ServiceAccount objects + manifest wiring**, all three clouds - smaller, more mechanical
-   than #3, could reasonably be done first/alongside it.
-5. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
+1. **Redeploy AWS and confirm the IAM-auth Redis connection actually works live** - the one
+   real unverified piece of tonight's work. `k8s/deploy-aws.sh` now provisions everything needed
+   (ServiceAccount, IRSA role annotation, the 3 new env vars); after it runs, use the
+   `kubectl logs -f` + Redis-touching-endpoint approach from tonight's conversation to confirm no
+   `NOAUTH`/`WRONGPASS`/`RedisConnectionException` shows up. Only once that's confirmed does it
+   make sense to re-enable `management.health.redis.enabled` for the `cloud-aws` case specifically
+   (leave GCP's/Azure's `cloud` profile disabled until their own credential-provider work lands -
+   re-enabling it project-wide now would crash-loop GCP/Azure again).
+2. Commit AWS's credential-provider work once step 1 confirms it live - not before.
+3. **GCP's and Azure's own Lettuce credential-provider implementations**, one at a time, following
+   the same scope-first pattern AWS's just went through (real jar/API inspection, a real reference
+   implementation to ground the token mechanism against, unit tests with a controllable fake
+   `Clock`, full-suite re-run after any `pom.xml` change) - GCP's IAM token and Azure's Entra ID
+   `WorkloadIdentityCredential` will each need their own equivalent research pass, not a copy-paste
+   of AWS's SigV4 mechanism.
+4. Longer-carried items: `kafka-leader-failover-rto.sh`'s JVM-spawn-cost fix,
    `docs/testing-expansion-scope.md` task #9+.

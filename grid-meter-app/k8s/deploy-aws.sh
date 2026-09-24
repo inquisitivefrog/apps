@@ -26,6 +26,9 @@ RDS_USERNAME="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sy
 RDS_SECRET_ARN="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rds_master_user_secret_arn"]["value"])')"
 CACHE_HOST="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_endpoint"]["value"])')"
 CACHE_PORT="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_port"]["value"])')"
+APP_IRSA_ROLE_ARN="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["app_irsa_role_arn"]["value"])')"
+CACHE_USER_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_app_user_id"]["value"])')"
+CACHE_REPLICATION_GROUP_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_replication_group_id"]["value"])')"
 
 echo "== Updating kubeconfig for $CLUSTER_NAME =="
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE"
@@ -80,13 +83,20 @@ echo "== Applying config (real RDS/ElastiCache endpoints, generated at deploy ti
 # Not a static committed configmap-aws.yaml, deliberately - these values are deploy-time facts
 # (they'd drift the moment RDS/ElastiCache is ever recreated with a new endpoint), same reasoning
 # already applied to the redis-entrypoint-script ConfigMap below.
+# SPRING_PROFILES_ACTIVE now "cloud,cloud-aws" (was just "cloud") - the extra profile activates
+# application.yml's cloud-aws block, which gates config.aws.AwsRedisConfig's bean tree (the
+# ElastiCache IAM-auth Lettuce credentials provider). The three new literals below are what that
+# config class reads.
 kubectl create configmap grid-meter-config \
-  --from-literal=SPRING_PROFILES_ACTIVE=cloud \
+  --from-literal=SPRING_PROFILES_ACTIVE=cloud,cloud-aws \
   --from-literal=SPRING_DATASOURCE_URL="jdbc:postgresql://${RDS_ENDPOINT}/gridmeter" \
   --from-literal=SPRING_DATASOURCE_USERNAME="$RDS_USERNAME" \
   --from-literal=SPRING_KAFKA_BOOTSTRAP_SERVERS="kafka-0.kafka-headless:9092,kafka-1.kafka-headless:9092,kafka-2.kafka-headless:9092" \
   --from-literal=SPRING_DATA_REDIS_HOST="$CACHE_HOST" \
   --from-literal=SPRING_DATA_REDIS_PORT="$CACHE_PORT" \
+  --from-literal=AWS_REGION="$AWS_REGION" \
+  --from-literal=GRID_METER_AWS_ELASTICACHE_USER_ID="$CACHE_USER_ID" \
+  --from-literal=GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID="$CACHE_REPLICATION_GROUP_ID" \
   --from-literal=GRID_METER_TRACING_SAMPLING_PROBABILITY="1.0" \
   --from-literal=JAVA_TOOL_OPTIONS="-Xmx384m" \
   --from-literal=MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED="false" \
@@ -105,7 +115,9 @@ echo "== Applying api + frontend (real image baked in before the first apply, no
 # original apply-then-patch design created three separate ReplicaSets in quick succession on the
 # first real deploy (one doomed from the literal placeholder string, two more from the
 # subsequent patches), which is wasted churn a single correct apply avoids entirely.
-sed "s|PLACEHOLDER_ECR_API_IMAGE|${ECR_API_URL}:latest|" "$K8S_DIR/api-aws.yaml" | kubectl apply -f -
+sed -e "s|PLACEHOLDER_ECR_API_IMAGE|${ECR_API_URL}:latest|" \
+    -e "s|PLACEHOLDER_APP_IRSA_ROLE_ARN|${APP_IRSA_ROLE_ARN}|" \
+    "$K8S_DIR/api-aws.yaml" | kubectl apply -f -
 sed "s|grid-meter-frontend:kind|${ECR_FRONTEND_URL}:latest|" "$K8S_DIR/frontend.yaml" | kubectl apply -f -
 
 echo "== Forcing a rollout restart (picks up a freshly-pushed :latest on a repeat run of this script, since the tag string itself doesn't change) =="

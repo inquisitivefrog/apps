@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 # k8s observability follow-up slice: kube-prometheus-stack (Helm, cluster/node metrics + the one
-# unified Prometheus/Grafana pair) plus Loki/Tempo/Alloy (plain YAML, app logs/traces). Run
-# ./k8s/deploy.sh first -- this assumes the grid-meter kind cluster and first-slice app are
-# already up. See k8s/README.md's "Observability follow-up slice" section for design notes.
+# unified Prometheus/Grafana pair) plus Loki/Tempo/Alloy (plain YAML, app logs/traces). Run the
+# app-layer deploy script for whichever target first (deploy.sh for kind, deploy-aws.sh/
+# deploy-gcp.sh/deploy-azure.sh for the real clouds) -- this assumes the first-slice app is
+# already up on whatever cluster kubectl's current context points at. See k8s/README.md's
+# "Observability follow-up slice" section for design notes.
+#
+# Target-agnostic despite the file's history: this script used to unconditionally re-apply
+# traefik.yaml (the kind-only manifest) here to retrofit --metrics.prometheus onto Traefik --
+# removed 2026-09-24 after it silently broke a live AWS deployment (traefik.yaml's
+# nodeSelector: ingress-ready=true has no equivalent label on real EKS/GKE/AKS nodes, so the
+# re-applied pod spec could never schedule). All four traefik*.yaml variants (kind/aws/gcp/azure)
+# already bake in --metrics.prometheus=true and the traefik-metrics Service natively now, applied
+# by their own app-layer deploy script before this one ever runs -- nothing left for this script
+# to retrofit.
 set -euo pipefail
 
 K8S_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,9 +53,6 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
   --namespace default \
   -f "$K8S_DIR/kube-prometheus-stack-values.yaml" \
   --wait --timeout 8m
-
-echo "== Re-applying traefik.yaml (adds --metrics.prometheus and the metrics Service) =="
-kubectl apply -f "$K8S_DIR/traefik.yaml"
 
 echo "== Applying Loki, Tempo, Alloy =="
 kubectl apply -f "$K8S_DIR/loki.yaml"

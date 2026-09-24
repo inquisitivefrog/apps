@@ -1,13 +1,28 @@
 # AWS-target variant of api.yaml. Same Deployment shape (2 replicas, matching the "scale api=2"
-# story everywhere else), different env var wiring: SPRING_PROFILES_ACTIVE=cloud activates
-# application.yml's plain host/port Redis block instead of Sentinel discovery (see that file's
-# own comment for why - a managed Redis endpoint has no Sentinel process to discover at all), and
+# story everywhere else), different env var wiring: SPRING_PROFILES_ACTIVE=cloud,cloud-aws
+# activates application.yml's plain host/port Redis block instead of Sentinel discovery (see that
+# file's own comment for why - a managed Redis endpoint has no Sentinel process to discover at
+# all) plus the AWS-specific ElastiCache IAM-auth block (config.aws.AwsRedisConfig), and
 # SPRING_DATA_REDIS_HOST/PORT replace SPRING_REDIS_SENTINEL_MASTER/NODES entirely. Kafka stays
 # wired exactly as kind's api.yaml does - self-hosted in-cluster identically on every target.
 #
 # image below is a placeholder - deploy-aws.sh applies this file as-is, then runs
 # `kubectl set image` immediately after with the real ECR image reference (a deploy-time fact,
 # not something to bake into a static, committed manifest that could go stale).
+#
+# ServiceAccount below (name "grid-meter-app", namespace default) is what terraform/aws/
+# elasticache-iam-auth.tf's IRSA trust policy already expects (its condition is scoped to exactly
+# "system:serviceaccount:default:grid-meter-app") - that Terraform was inert without this. Its
+# role-arn annotation is a placeholder for the same reason the image is: deploy-aws.sh
+# sed-substitutes the real terraform output (app_irsa_role_arn) in, since baking a real IAM role
+# ARN into a committed manifest would go stale the moment the role is ever recreated.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grid-meter-app
+  annotations:
+    eks.amazonaws.com/role-arn: PLACEHOLDER_APP_IRSA_ROLE_ARN
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,6 +37,7 @@ spec:
       labels:
         app: api
     spec:
+      serviceAccountName: grid-meter-app
       containers:
         - name: api
           image: PLACEHOLDER_ECR_API_IMAGE
@@ -62,6 +78,27 @@ spec:
                 configMapKeyRef:
                   name: grid-meter-config
                   key: SPRING_DATA_REDIS_PORT
+            # The three below feed config.aws.AwsRedisConfig, gated behind the "cloud-aws" profile
+            # (SPRING_PROFILES_ACTIVE above is "cloud,cloud-aws" here, not just "cloud" - see
+            # application.yml's cloud-aws profile block). AWS_REGION is the AWS SDK's own standard
+            # env var name (DefaultCredentialsProvider/region chain read it directly), not a
+            # GRID_METER_*-prefixed one, deliberately matching that convention instead of this
+            # project's own.
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: AWS_REGION
+            - name: GRID_METER_AWS_ELASTICACHE_USER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: GRID_METER_AWS_ELASTICACHE_USER_ID
+            - name: GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: grid-meter-config
+                  key: GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID
             - name: GRID_METER_JWT_SECRET
               valueFrom:
                 secretKeyRef:

@@ -369,3 +369,16 @@ management:
   health:
     redis:
       enabled: false
+
+---
+# AWS-specific counterpart, active alongside "cloud" (k8s/api-aws.yaml sets
+# SPRING_PROFILES_ACTIVE=cloud,cloud-aws), not a replacement for it -- the plain host/port
+# connection above still applies. This block only exists to gate config.aws.AwsRedisConfig's
+# bean tree to AWS specifically (via Spring's @Profile("cloud-aws")); the actual values it needs
+# (GRID_METER_AWS_ELASTICACHE_USER_ID/_REPLICATION_GROUP_ID, AWS_REGION) are read directly as env
+# vars via @Value("${ENV_VAR_NAME}"), same direct-placeholder pattern SPRING_DATA_REDIS_HOST above
+# already uses -- no intermediate grid-meter.* property path needed.
+spring:
+  config:
+    activate:
+      on-profile: "cloud-aws"

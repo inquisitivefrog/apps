@@ -142,6 +142,30 @@ else
 fi
 
 echo
+echo "== Step 4: tear down the observability follow-up slice (kube-prometheus-stack + Loki/Tempo/Alloy), if deployed =="
+# Optional, separate layer (k8s/deploy-observability.sh) - not part of every deploy-gcp.sh run,
+# so this step is itself conditional and safe whether or not it was ever applied. Found live
+# (2026-09-24, on AWS - same unmodified kube-prometheus-stack-values.yaml used across all three
+# clouds, so this holds here too) that none of this carries a real cloud-specific footprint the
+# way the LoadBalancer/PVCs above do: no persistence is configured for Prometheus, and no
+# additional LoadBalancer-type Service exists beyond traefik-web, already handled in Step 2 -
+# terraform destroy deleting the whole GKE cluster would clean all of this up regardless. Still
+# done explicitly here, matching Steps 2/3's own reasoning: kubectl-applied resources get torn
+# down via kubectl, not left to chance, and this stays correct even if a future change
+# (persistence, or a publicly-exposed Grafana LoadBalancer) introduces a real footprint later.
+if helm status kube-prometheus-stack >/dev/null 2>&1; then
+  helm uninstall kube-prometheus-stack
+  kubectl delete -f "$K8S_DIR/servicemonitor-api.yaml" --ignore-not-found
+  kubectl delete -f "$K8S_DIR/alloy.yaml" --ignore-not-found
+  kubectl delete -f "$K8S_DIR/tempo.yaml" --ignore-not-found
+  kubectl delete -f "$K8S_DIR/loki.yaml" --ignore-not-found
+  kubectl delete configmap grid-meter-grafana-alerting grid-meter-grafana-dashboard grid-meter-tempo-config grid-meter-alloy-config --ignore-not-found
+  echo "Confirmed: observability follow-up slice removed."
+else
+  echo "kube-prometheus-stack Helm release not found - observability was never deployed, or already torn down. Skipping."
+fi
+
+echo
 echo "== Kubernetes-provisioned GCP resources cleared. Now run: =="
 echo "    cd $(cd "$K8S_DIR/../terraform/gcp" && pwd)"
 echo "    terraform plan -destroy"

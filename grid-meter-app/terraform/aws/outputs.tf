@@ -53,6 +53,27 @@ output "elasticache_port" {
   value       = 6379
 }
 
+# Added 2026-09-23 alongside the AWS credential-provider app-code work
+# (api/src/main/java/com/gridmeter/api/config/aws/) - k8s/deploy-aws.sh needs all three to wire
+# up the app's ServiceAccount (IRSA role annotation) and the two GRID_METER_AWS_ELASTICACHE_*
+# env vars AwsRedisConfig reads. None of these existed as outputs before now because nothing
+# consumed them yet - elasticache-iam-auth.tf's own header comment already flagged this Terraform
+# as "inert until the app-code follow-up lands".
+output "app_irsa_role_arn" {
+  description = "IAM role ARN the app's K8s ServiceAccount (grid-meter-app, namespace default) assumes via IRSA for ElastiCache IAM auth. Annotate the ServiceAccount with eks.amazonaws.com/role-arn=<this value>."
+  value       = aws_iam_role.app_irsa.arn
+}
+
+output "elasticache_app_user_id" {
+  description = "IAM-auth-enabled ElastiCache user ID the app connects as. Feeds GRID_METER_AWS_ELASTICACHE_USER_ID."
+  value       = aws_elasticache_user.app.user_id
+}
+
+output "elasticache_replication_group_id" {
+  description = "Replication group ID (not the endpoint) - the identifier the SigV4-signed IAM auth token is built against. Feeds GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID."
+  value       = aws_elasticache_replication_group.main.replication_group_id
+}
+
 output "ecr_api_repository_url" {
   description = "ECR repository URL for the api image. Used by k8s/deploy-aws.sh."
   value       = aws_ecr_repository.api.repository_url
