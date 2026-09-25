@@ -11,15 +11,25 @@ See `docs/cloud-deployment-scope.md` for the full per-layer reasoning (why Postg
 managed here but Kafka is self-hosted in-cluster identically across every target — `kind`, this,
 and the GCP/Azure configs).
 
-## Status: fully applied and live, both layers confirmed end-to-end (2026-09-23)
+## Status: Redis credential-provider implemented, live-verified, fully torn down (2026-09-24)
 
-50 Terraform resources applied, `terraform/aws/check-resources-aws.sh` confirms 24/24 real
-resource checks clean. `k8s/deploy-aws.sh` run for real: `k8s/check-resources-aws.sh` confirms
-15/15, and a direct HTTP smoke test against the real LoadBalancer (frontend loads, login with the
-seeded `demo` credentials issues a real JWT) confirms the app is genuinely functional, not just
-"pods reported Running." This is a re-verification, not the original build - see "IAM-auth
-backport" below for what changed since the last full validation and the two real live bugs that
-change surfaced and fixed.
+The Lettuce credential-provider gap flagged throughout 2026-09-23's IAM-auth backport is now
+closed: `config.aws` (SigV4 ElastiCache IAM auth token, cached/expiring `RedisCredentialsProvider`)
+implemented, unit-tested, wired into `k8s/api-aws.yaml`/`deploy-aws.sh`, and **live-verified against
+real ElastiCache** - a real `Redis write attempt SUCCEEDED` log line from a running pod, not just
+passing unit tests. One real bug found and fixed along the way: `software.amazon.awssdk:sts` was
+missing from `pom.xml`, silently breaking `WebIdentityTokenFileCredentialsProvider` (the actual
+IRSA mechanism) behind a generic `RedisConnectionFailureException`. Separately found and fixed a
+real regression in `k8s/deploy-observability.sh` (stale `traefik.yaml` re-apply step overwriting
+the correct cloud-specific Traefik Deployment) - see "Observability" below.
+
+Full cycle re-verified end to end and then torn down: `terraform apply` (51 resources, the extra
+one being the new `sts`/`random`-adjacent additions) → `k8s/deploy-aws.sh` →
+`k8s/deploy-observability.sh` → live Redis-auth confirmation → `k8s/teardown-aws.sh` →
+`terraform destroy` (51 resources, zero errors) → 9 independent AWS API residue checks, all empty.
+**AWS is currently fully torn down, zero resources, zero cost accruing** - this is not a live/
+running deployment right now; see "Spin-up and teardown" below to bring it back up. Committed as
+`5480d06`.
 
 ## Prerequisites
 
@@ -37,7 +47,7 @@ change surfaced and fixed.
 | VPC, 3 AZs, public+private subnets, 1 NAT gateway | — | — |
 | EKS cluster + managed node group | 3x `t3.medium`, fixed size (no autoscaling) | The `kind` cluster |
 | RDS PostgreSQL | `db.t4g.micro`, single-AZ, 20GB gp3 | Self-hosted Patroni + Consul |
-| ElastiCache (Valkey) | `cache.t4g.micro`, single node, **IAM-auth only (2026-09-23)** | Self-hosted Redis + Sentinel |
+| ElastiCache (Valkey) | `cache.t4g.micro`, single node, **IAM-auth, app authenticates via Lettuce credential-provider (2026-09-24)** | Self-hosted Redis + Sentinel |
 | ECR (api + frontend repos) | 5-image lifecycle cap each | `kind load docker-image` |
 | EBS CSI driver + `gp3`/XFS StorageClass (via `k8s/storageclass-aws.yaml`) | — | `local-path-provisioner` |
 | `metrics-server` addon | — | (not present on `kind` either — new) |
@@ -84,20 +94,26 @@ confirmed:
   own comment). Fixed in `api/src/main/resources/application.yml`:
   `management.health.redis.enabled: false` for the "cloud" profile only, matching this app's
   already-documented cache-miss-fallback-to-Postgres design (Redis being unreachable is an
-  accepted degraded state, not one that should crash-loop the app). The app still cannot actually
-  authenticate to Redis yet either way - that needs a Lettuce credential-provider implementation
-  (AWS SigV4 IAM auth token), tracked as required follow-up, not attempted inline.
+  accepted degraded state, not one that should crash-loop the app). **Update (2026-09-24): the app
+  now genuinely authenticates to Redis** - `config.aws`'s Lettuce credential-provider implementation
+  is live-verified against real ElastiCache (see "Status" above) - this health-check disable is now
+  belt-and-suspenders for a real transient Redis outage, not masking a permanently-broken
+  connection.
 
 **Sizing philosophy**: smallest viable, matching this project's own stated practice of
 `terraform destroy` between interview/demo uses (see "Spin-up and teardown" below) — not tuned
 for production load.
 
-**Observability is not part of this deployment.** `kube-prometheus-stack`/Loki/Tempo/Alloy (the
-Grafana/Loki dashboard demo) is built and validated against the `kind` cluster only — this AWS
-deployment demonstrates real Terraform/cloud-native infrastructure provisioning, not the
-load+dashboards story. Two deliberately separate tracks; see `docs/cloud-deployment-scope.md`'s
-"Two tracks" section. Use `kind` for the load-test/dashboard demo, this for the "I can stand up
-real cloud infra with Terraform" demo.
+**Observability (2026-09-24 update): now demonstrated on real cloud infrastructure too, not just
+`kind`.** `k8s/deploy-observability.sh` was run for real against this AWS deployment
+(`kube-prometheus-stack` via Helm + Loki/Tempo/Alloy) as part of live-verifying the Redis
+credential-provider work above - found and fixed a real regression in the script itself (a stale
+"re-apply `traefik.yaml`" step, left over from before the multi-cloud
+`traefik-{aws,gcp,azure}.yaml` split, silently overwrote the correct cloud-specific Traefik
+Deployment with the `kind`-only manifest). `check-resources-aws.sh`/`teardown-aws.sh` both gained a
+conditional Observability section/step (Step 4: `helm uninstall` + delete the Loki/Tempo/Alloy
+manifests), live-tested clean. `kind` remains the primary load-test/dashboard demo track; this
+confirms the same observability story also works unmodified against real cloud infra when needed.
 
 ## Spin-up and teardown (interview day)
 
@@ -276,19 +292,14 @@ stack is left running between uses.
 
 ## Explicitly out of scope for this pass
 
-- Observability (`kube-prometheus-stack`, Loki/Tempo/Alloy, Grafana dashboards) — `kind`-only, by
-  deliberate choice (see "Observability is not part of this deployment" above).
 - A load test run against this specific deployment — `load-tests/*.jmx` has only ever targeted
   Compose/`kind`.
 - A real live-fire validation of RDS/ElastiCache failover behavior against this specific cluster
   — nothing to fail over to/from has been exercised yet at the time this was written.
-- **The Lettuce credential-provider app code** for IAM-auth Redis (AWS SigV4 token generation) —
-  the app can't actually authenticate to ElastiCache yet even with all the Terraform above applied
-  and live; `management.health.redis.enabled: false` (see "IAM-auth backport" above) keeps this
-  from crash-looping the app in the meantime, but it's a real, tracked gap, not a completed story.
-- **The K8s ServiceAccount object** the new IRSA role's trust policy is scoped to
-  (`system:serviceaccount:default:grid-meter-app`) — doesn't exist in `k8s/api-aws.yaml` yet, so
-  the IRSA role is real but currently inert (no pod can assume it).
+
+~~Observability~~, ~~the Lettuce credential-provider app code~~, and ~~the K8s ServiceAccount
+object~~ were all listed here previously - all three are now done (2026-09-24), see "Status" and
+"Observability" above.
 
 `terraform/gcp/` and `terraform/azure/` are no longer out of scope — both exist, and Azure's is
 fully applied and live (see `terraform/azure/README.md`); this note is stale from before either

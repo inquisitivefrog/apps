@@ -11,17 +11,32 @@ See `docs/cloud-deployment-scope.md` for the full per-layer reasoning (why Postg
 managed here but Kafka is self-hosted in-cluster identically across every target — `kind`, AWS,
 and this).
 
-## Status: fully torn down and confirmed clean (2026-09-22) — Terraform and k8s app-deploy layers both confidence-tested, matching AWS's bar
+## Status: Redis credential-provider implemented, live-verified, fully torn down (2026-09-24)
 
-**Real infrastructure was applied, deployed to, functionally tested end-to-end, and torn down
-again, all in this one session (2026-09-21)** — the full arc AWS's track took multiple sessions to
-reach. Currently: `terraform show` reports empty state, and every resource type this pass created
-was independently confirmed gone via live `gcloud` calls (not just trusted from "Destroy
-complete") — VPC, GKE cluster, Cloud SQL, Memorystore, Artifact Registry, disks, forwarding rules,
-the dedicated node service account. Zero residue, zero cost accruing. See "Deploy overlay" and
-"Remaining" below for the full account of what was found along the way, including two genuinely
-new teardown-time bugs (a Cloud SQL destroy-ordering race and a known upstream Terraform-provider
-bug), both fixed and now baked into this config for the next real cycle.
+The Lettuce credential-provider gap flagged since the 2026-09-23 IAM-auth backport is now closed:
+new `config.gcp` package (username the literal `"default"`, password a GCP OAuth2 access token
+from `IamCredentialsClient.generateAccessToken()` self-impersonating the app's own service
+account, matching Google's own official Lettuce IAM-auth reference sample), wired into
+`k8s/api-gcp.yaml`/`deploy-gcp.sh`, and **live-verified against real Memorystore** two ways: a real
+`Redis write attempt SUCCEEDED` log line, and a manual `kubectl exec` walkthrough doing the token
+exchange by hand. See "Redis credential-provider (2026-09-24)" below for the real bugs found along
+the way (a `protobuf-java` version conflict that broke the entire Spring context, a live TLS-trust
+gap against Memorystore's private CA, a self-caused deploy outage, a node-pool capacity ceiling,
+and a stale check-script validation gap).
+
+Also **observability (`kube-prometheus-stack`/Loki/Tempo/Alloy) was deployed and confirmed live
+against this real GKE cluster** during this pass, not just `kind` - see "Observability" below;
+the "Observability is not part of this deployment" framing below this line is now stale for GCP.
+
+Full cycle re-verified end to end and then torn down: `terraform apply` → `deploy-gcp.sh` →
+`deploy-observability.sh` → live Redis-auth confirmation (both ways above) → `teardown-gcp.sh` →
+`terraform destroy` (26 resources, zero errors) → 9 independent GCP API residue checks, all empty.
+**GCP is currently fully torn down, zero resources, zero cost accruing** - this is not a live/
+running deployment right now. Committed as `f79e276`.
+
+Everything below this point (through "Remaining") describes the original 2026-09-21/2026-09-22
+build-and-validate arc that got GCP to Terraform/app-deploy parity with AWS, preserved as history -
+the "Status" above is the current, final word on what state this environment is actually in.
 
 **Real apply happened 2026-09-21** (user-run, same pattern as AWS — Claude Code's own auto-mode
 classifier blocks `terraform apply` against real infrastructure, and every real apply on this
@@ -89,9 +104,14 @@ caveat this carries that AWS's equivalent script no longer does.
 Kafka is **not** created here — it stays self-hosted in-cluster (see `k8s/kafka.yaml`), same
 decision and reasoning as the AWS track.
 
-**Observability is not part of this deployment**, same deliberate split as AWS: `kind` remains the
-load-test/dashboard demo track; this demonstrates Terraform/cloud-native provisioning capability
-only.
+**Observability (2026-09-24 update): deployed and confirmed live against this real GKE cluster
+too**, not `kind`-only as originally scoped - `k8s/deploy-observability.sh` ran clean
+(`kube-prometheus-stack` via Helm + Loki/Tempo/Alloy), with one real, worth-noting finding: GKE's
+own default node monitoring (Google Managed Prometheus, `gmp-system` namespace) coexists harmlessly
+with the separately-installed `kube-prometheus-stack` - two independent Prometheus stacks running
+side by side, not a conflict, and GCP's own system-level metrics are never chargeable (only
+high-cardinality custom app metrics routed through Cloud Monitoring would be). `kind` remains the
+primary load-test/dashboard demo track.
 
 ## Real findings from this pass, live-checked rather than assumed
 
@@ -409,4 +429,66 @@ still open:
 
 1. Set up a Cloud Billing export to BigQuery (Console-only, one-time, per billing account) - see
    "No `check-costs-gcp.sh` yet" above - before the *next* real apply, so a delayed cost
-   cross-check has data to query once built.
+   cross-check has data to query once built. **Still not done as of 2026-09-24** -
+   `estimate-costs-gcp.sh`'s list-price estimate remains the only cost signal for this cloud.
+
+## 2026-09-23/2026-09-24: Redis IAM-auth backport (Terraform), then the real Lettuce credential-provider (app code), live-verified
+
+**2026-09-23, Terraform-only**: once Azure's Redis product was force-migrated onto Entra-ID-only
+auth, the user asked to backport the same tighter, IAM/token-based posture to AWS's ElastiCache and
+GCP's Memorystore rather than wait to be forced there too. Found live before writing anything:
+neither AWS nor GCP had *any* pod-level cloud identity at all (only node-level/addon-level identity
+existed) - this wasn't a flag flip, it needed new Workload Identity Federation infrastructure.
+Added: Workload Identity Federation enabled on the GKE cluster, a dedicated
+`google_service_account.app` bound to `system:serviceaccount:default:grid-meter-app` with
+`roles/memorystore.dbConnectionUser`, and `authorization_mode = "IAM_AUTH"`/
+`transit_encryption_mode = "SERVER_AUTHENTICATION"` on the Memorystore instance itself. Left
+genuinely inert at the end of that day - no app code, no K8s ServiceAccount object yet.
+
+**2026-09-24: the actual app code, implemented and live-verified end to end.** New `config.gcp`
+package, mirroring AWS's `config.aws` structure exactly:
+- `GcpMemorystoreCredentialsProvider` - a cached/expiring Lettuce `RedisCredentialsProvider`,
+  username the literal `"default"`, password a GCP OAuth2 access token from
+  `IamCredentialsClient.generateAccessToken()`, **self-impersonating the app's own service
+  account** (matching Google's own official Lettuce IAM-auth reference sample and a real
+  third-party production implementation, not guessed) - required a new
+  `roles/iam.serviceAccountTokenCreator`-on-itself Terraform grant beyond the existing Workload
+  Identity binding.
+- `GcpRedisConfig` - `@Profile("cloud-gcp")`-gated bean wiring, plus a second, dedicated
+  `LettuceClientOptionsBuilderCustomizer` bean wiring a custom SSL trust manager for Memorystore's
+  private per-instance CA certificate (`server_ca_mode = GOOGLE_MANAGED_PER_INSTANCE_CA`) - found
+  live-necessary after a real `SSLHandshakeException` ("PKIX path building failed"); `useSsl()`
+  alone only sets a simple on/off flag, not a trust manager. A new Terraform output
+  (`memorystore_server_ca_certificates`, a joined PEM bundle from the instance's nested
+  `managed_server_ca` attribute) feeds a ConfigMap the pod mounts the CA file from.
+
+Real bugs found and fixed along the way, none guessable in advance:
+- **`com.google.cloud:libraries-bom` pinned `protobuf-java` below what OpenTelemetry's own
+  generated proto classes needed**, breaking the *entire* Spring context (not just GCP beans) at
+  OTLP-exporter init time (`ProtobufRuntimeVersionException`) - fixed by explicitly pinning
+  `protobuf-java` in `dependencyManagement` to override the BOM (Maven's nearest-declaration
+  precedence).
+- **A self-caused live outage**: applied `api-gcp.yaml` directly via `kubectl apply -f` without
+  running it through `deploy-gcp.sh`'s `sed` placeholder substitution, applying literal
+  `PLACEHOLDER_*` strings as real values - combined with a rollout-strategy change already in
+  flight, this took `api` fully offline. Fixed immediately by re-running with real values from
+  `terraform output -raw`.
+- **A live node-pool memory capacity ceiling** (`0/4 nodes are available: 4 Insufficient memory`) -
+  this pool (4x `e2-medium`) was already at 97-98% memory requests running the app plus the full
+  observability slice, with no headroom for `RollingUpdate`'s surge pod. Fixed by switching `api`'s
+  rollout strategy to `Recreate` (accepted brief-downtime tradeoff for a demo project).
+- **`check-resources-gcp.sh`'s GCE-worker-instance check never actually validated a count** despite
+  its own label claiming "(expect 3, RUNNING)" - its `check()` function had no expected-value
+  parameter at all, unlike AWS's/Azure's identical scripts. Replaced with a real count comparison
+  (now correctly expecting 4: the main pool's 3 nodes + the extra pool's 1).
+- **A `GCE_STOCKOUT` spanning two of three node-pool zones simultaneously** - resolved by dropping
+  `gke_node_locations` to `us-central1-a` only and raising `gke_node_count` to 3 to preserve the
+  original 3-node-total intent (`variables.tf`).
+
+Full suite re-run clean after every dependency change (102/102, zero regressions). Live-verified
+two independent ways: a real `Redis write attempt SUCCEEDED` log line from a running pod against
+real Memorystore, and a manual `kubectl exec` walkthrough (with the user) doing the token-and-
+connect flow by hand. Committed as `f79e276`, then torn down again (`terraform destroy`: 26
+resources, zero errors; 9/9 independent GCP API residue checks empty). **This closes the last
+remaining gap from the "Remaining" section above** - GCP now matches AWS's/Azure's full
+implement-verify-teardown confidence bar, not just Terraform/app-deploy parity.

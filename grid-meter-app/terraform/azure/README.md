@@ -12,23 +12,38 @@ GCP, and this), and `docs/identity.md`/this file's own "Real findings" section f
 Azure identity-model context that kicked this pass off (Microsoft Entra ID vs. Azure Resource
 Manager being two genuinely separate control planes — see below).
 
-## Status: fully torn down, zero residue confirmed (2026-09-23)
+## Status: Redis credential-provider implemented, live-verified, fully torn down (2026-09-24)
 
-The full cycle is now complete and independently verified: `terraform apply` (live, both layers
-confirmed - 22/22 Terraform-layer checks, 15/15 kubectl-layer checks, a real HTTP smoke test with
-a real login/JWT via `k8s/deploy-azure.sh`), then `k8s/teardown-azure.sh` (clean on its first real
-run, no new bugs) and `terraform destroy` (20 resources, zero errors). **8 independent residue
-checks against real Azure APIs all confirmed empty/gone** - see "Teardown" below. This matches
-AWS's/GCP's own zero-residue confidence bar exactly - all three clouds now share the same
-deploy-confirm-teardown-confirm cycle, none of it assumed correct from tool output alone.
+The Lettuce credential-provider gap flagged throughout 2026-09-23's work (see "Redis: two real
+reversals" and "IAM-auth backport" below) is now closed: `config.azure.AzureRedisConfig`, using
+Lettuce's own built-in `io.lettuce.authx.TokenBasedRedisCredentialsProvider` paired with
+`redis.clients.authentication:redis-authx-entraid`, wired into `k8s/api-azure.yaml`/
+`deploy-azure.sh` (the AKS Workload Identity webhook mutates the pod automatically - no app-level
+identity value needs to be threaded through as an env var at all, a genuine structural difference
+from AWS's/GCP's own credential-provider designs). **Live-verified against real Managed Redis two
+independent ways**: a real `Redis write attempt SUCCEEDED` app log line, and a manual `kubectl exec`
+walkthrough doing the Entra ID token exchange by hand from inside a running pod (exchange the
+projected workload-identity token → decode the `oid` claim → `redis-cli AUTH` over TLS → `PONG` and
+a matching `GET` on the exact reading the app had written). See "Redis credential-provider
+(2026-09-24)" below for the full account, including a real infinite-retry bug found while building
+the test suite (not a hang, and not a bug in the production code).
+
+Terraform applied fresh again this pass (20 resources), full app-deploy + observability layers
+redeployed and confirmed (`check-resources-azure.sh`: 22/22 Terraform-layer, 21/21 kubectl-layer
+including the observability stack), then torn down again: `k8s/teardown-azure.sh` (clean, no new
+bugs) → `terraform destroy` (20 resources, zero errors) → 8 independent Azure API residue checks,
+all empty. **Azure is currently fully torn down, zero resources, zero cost accruing** - this is not
+a live/running deployment right now.
 
 To bring this back up: `cd terraform/azure && terraform init && terraform plan -out tfplan &&
 terraform apply tfplan`, then `../../k8s/deploy-azure.sh` - see "Usage" and "App-deploy layer"
 below.
 
-This pass went from plan-only to a real, twice-partially-failed, twice-fixed live apply — three
-separate real platform errors were found and fixed along the way, all live-verified, none guessed.
-See "Real findings" below for the full account.
+Everything below this point through "Teardown" describes the original 2026-09-22/2026-09-23
+build-and-validate arc (the three real platform errors from the first live apply, the Redis
+product reversal, the IAM-auth backport groundwork) - preserved as history. The "Status" above and
+the new "Redis credential-provider (2026-09-24)" section below it are the current, final word on
+what state this environment is actually in.
 
 ## Prerequisites
 
@@ -205,10 +220,10 @@ confirmed, not just trusted from "Apply complete."
    Kafka is already self-hosted identically across every cloud target). **User chose Azure Managed
    Redis** over both the (now-impossible) legacy option and self-hosting.
 
-**Consequence, now required, not optional**: the Spring Boot app's `spring.data.redis.*`
-host/port/password config cannot connect to Azure Managed Redis as configured - it needs a custom
-Lettuce credential provider doing Entra ID token acquisition/refresh (`azure-identity`'s
-`DefaultAzureCredential`/`WorkloadIdentityCredential`). Not yet implemented - see "What's next."
+**Consequence, now resolved (2026-09-24)**: the Spring Boot app's `spring.data.redis.*`
+host/port/password config could not connect to Azure Managed Redis as configured on its own - it
+needed a custom Lettuce credential provider doing Entra ID token acquisition/refresh. Implemented
+and live-verified - see "Status" above and "Redis credential-provider (2026-09-24)" below.
 
 ## IAM-auth backport (2026-09-23): AWS and GCP now get the same treatment
 
@@ -231,11 +246,60 @@ pass's own version of that backport:
   *resource*; access-policy-assignment governs actual data read/write) - not an inconsistency with
   how Key Vault access is granted.
 
-**Terraform-side, real but currently inert**: `k8s/api-azure.yaml` exists now (added 2026-09-23,
-see "App-deploy layer" below) but doesn't yet carry the ServiceAccount object/annotation this
-federated identity actually needs - no pod can federate it until that manifest work and the
-Lettuce credential-provider app code both land, tracked as required follow-up, the same split
-already applied to Azure's own Managed Redis Terraform-vs-app-code gap above.
+**Terraform-side, now fully activated (2026-09-24)**: `k8s/api-azure.yaml` carries both the
+ServiceAccount object (annotated with the real `app_identity_client_id` Terraform output) and the
+`azure.workload.identity/use: "true"` pod-template label this federated identity needs - found live
+that AKS Workload Identity requires **both** together, not just the ServiceAccount annotation
+alone; without the pod label, the webhook never mutates the pod at all. See "Redis
+credential-provider (2026-09-24)" below.
+
+## Redis credential-provider (2026-09-24): implemented and live-verified two independent ways
+
+Researched the real mechanism rather than assuming AWS's/GCP's own credential-provider designs
+would transfer. **Lettuce itself already ships `io.lettuce.authx.TokenBasedRedisCredentialsProvider`**
+(confirmed via `javap` against the installed jar) - implements `RedisCredentialsProvider,
+AutoCloseable` with native background token caching/renewal, so unlike AWS's/GCP's own
+hand-rolled cache/expiry classes, Azure needed no custom credentials-caching code at all. Paired
+with `redis.clients.authentication:redis-authx-entraid`/`redis-authx-core` (version `0.1.1-beta2`,
+confirmed via Maven Central, not a guessed number) for the Azure-specific `IdentityProvider`
+plumbing - the doc page's `.userAssignedManagedIdentity(...)` path is narrower/IMDS-oriented; the
+correct general path (`AzureTokenAuthConfigBuilder.defaultAzureCredential(DefaultAzureCredential)`)
+was found by reading the library's real GitHub source, not the docs alone.
+
+**A genuine structural difference from AWS's/GCP's own designs**: `DefaultAzureCredential`'s own
+`WorkloadIdentityCredential` fallback reads AKS-webhook-injected env vars
+(`AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_FEDERATED_TOKEN_FILE`/`AZURE_AUTHORITY_HOST`)
+automatically, so **no app-level identity value needs to be threaded through as an explicit env
+var at all** - unlike AWS's IRSA role ARN or GCP's service-account email, both of which the app
+does need passed in.
+
+**A real infinite-retry bug, initially misread as a hang**: `redis-authx-entraid`'s
+`AzureIdentityProvider` doesn't treat the access token as an opaque string - it parses it as a real
+JWT (via `com.auth0.jwt.JWT.decode()`) and reads two claims: `oid` (used as the Redis AUTH
+*username*, dynamically, not a fixed string) and `exp` (the token's real expiry). A test using a
+plain non-JWT fake string caused every internal renewal attempt to fail identically and retry
+forever (`JWTDecodeException`), invisible to a `.block()` caller since credentials never actually
+resolve - not a hang, and not a bug in `AzureRedisConfig` itself. Fixed by constructing a
+structurally-valid fake JWT with both required claims in the test. Full suite confirmed clean
+afterward: 103/103.
+
+Live-verified two independent ways, matching AWS's/GCP's own confidence bar:
+1. **App logs**: a real `Redis write attempt SUCCEEDED` line from a live pod (the first test
+   reading's log took longer than expected to appear - traced to cold-start latency on the very
+   first Entra ID token exchange/TLS handshake, not a bug; a second reading logged cleanly in
+   338ms).
+2. **A manual `kubectl exec` walkthrough**, doing the Entra ID token exchange by hand from inside a
+   running pod using the same federated-token-file mechanism `DefaultAzureCredential` uses
+   internally: exchanged the projected workload-identity token for a real access token, decoded its
+   `oid` claim, connected to Managed Redis over TLS with `redis-cli`, got `PONG`, and read back the
+   exact JSON the app had written earlier - proving the write landed for real, not just that a log
+   line printed.
+
+Committed as `e6465b8`, then torn down again - see "Status" above. One real secret-hygiene catch
+along the way: a raw status-log transcript had captured the actual Entra ID access token in full
+from the manual walkthrough - scrubbed before committing (the token was already moot by then, its
+Redis instance and identity having just been destroyed, but real credential material still
+shouldn't go into git history).
 
 ## App-deploy layer (2026-09-23): confirmed live end-to-end
 
@@ -262,9 +326,9 @@ into captured output by design; fixed by pre-installing the extension quietly up
 `k8s/check-resources-azure.sh` (15/15) both pass against the real, live-deployed cluster. A real
 HTTP smoke test (frontend `200`, login with the seeded `demo` credentials issuing a real JWT)
 confirms actual functionality - the app's Postgres/Kafka/JWT-auth path all genuinely work end to
-end on Azure. Redis remains unauthenticated as already documented (the Lettuce credential-provider
-gap) - the health-check fix keeps this from crash-looping the app, matching AWS's/GCP's own
-already-confirmed behavior.
+end on Azure. Redis was unauthenticated at the time of this original 2026-09-23 deploy (the Lettuce
+credential-provider gap, then still open) - **now resolved as of 2026-09-24**, see "Redis
+credential-provider (2026-09-24)" above.
 
 **One real, honestly-reported anomaly**: one of the two `api` pods restarted once during this
 first deploy (`kubectl describe`: two consecutive `Liveness`/`Readiness probe failed: connection
@@ -371,14 +435,20 @@ terraform apply tfplan   # run by the user, never Claude Code - see AWS/GCP READ
 3. ~~Run a real `k8s/teardown-azure.sh` + `terraform destroy` cycle~~ - **done**, clean on the
    first real run, zero residue independently confirmed - see "Teardown" above. Azure now matches
    AWS's/GCP's full confidence bar exactly.
-4. **Lettuce credential-provider app code (all three clouds now, not just Azure)**: AWS SigV4
-   ElastiCache IAM token, GCP IAM token, Azure Entra ID token via `WorkloadIdentityCredential` -
-   real Spring Boot/Java application work, materially different in kind from the Terraform/Bash
-   work above, not attempted inline. Needs matching tests.
-5. **K8s ServiceAccount objects + manifest wiring** for the identity-federation work to actually
-   activate, all three clouds (`system:serviceaccount:default:grid-meter-app`, annotated
-   per-cloud) - none of `api-aws.yaml`/`api-gcp.yaml`/`api-azure.yaml` carry a `ServiceAccount`
-   object or `serviceAccountName` field yet (all three currently run as the implicit `default` SA).
+4. ~~Lettuce credential-provider app code (all three clouds now, not just Azure)~~ - **done, all
+   three clouds** (2026-09-24): AWS SigV4 ElastiCache IAM token, GCP IAM token, Azure Entra ID
+   token via `TokenBasedRedisCredentialsProvider` - each implemented, unit-tested, and
+   live-verified against real infrastructure. See this file's "Redis credential-provider
+   (2026-09-24)" section and `terraform/aws/README.md`'s/`terraform/gcp/README.md`'s own
+   equivalents.
+5. ~~K8s ServiceAccount objects + manifest wiring~~ - **done, all three clouds** (2026-09-24):
+   `api-aws.yaml`/`api-gcp.yaml`/`api-azure.yaml` all now carry a `ServiceAccount` object and
+   `serviceAccountName` field wired to each cloud's identity-federation mechanism.
 6. ~~A cost-estimate or real cost-check script~~ - **done**: `check-costs-azure.sh`, real
    Cost Management billing data (no export setup needed, unlike GCP's own gap) - see "Cost check"
    above.
+
+**Nothing outstanding remains from this list** - the multi-cloud Redis credential-provider effort
+that motivated this whole "What's next" section is closed. Azure is currently torn down; the next
+real work here would be a fresh spin-up for a demo, or picking up unrelated longer-carried backlog
+items tracked in `status/`.
