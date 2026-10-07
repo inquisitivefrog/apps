@@ -38,11 +38,20 @@ CACHE_APP_PASSWORD="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.l
 VPC_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["vpc_id"]["value"])')"
 NLB_SUBNET_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["nlb_subnet_id"]["value"])')"
 
-# Persistent Elastic IP lives in bootstrap-freetier/'s own separate state (2026-10-07, see its
-# eip.tf for why - same cross-state read pattern already used for ECR before deploy-aws.sh moved
-# to computing that URL directly instead).
-EIP_ALLOCATION_ID="$(cd "$TF_DIR/bootstrap-freetier" && terraform output -raw app_eip_allocation_id)"
-EIP_PUBLIC_IP="$(cd "$TF_DIR/bootstrap-freetier" && terraform output -raw app_eip_public_ip)"
+# Persistent Elastic IP lives in bootstrap-freetier/'s own separate state - which is LOCAL,
+# not the S3 remote backend (deliberate, see that module's versions.tf - avoids a circular
+# bootstrap problem). That means a fresh CI checkout has NO state for this module at all, so a
+# cross-state `terraform output` read there fails - confirmed live (2026-10-07): a missing
+# output prints a multi-line warning to STDOUT instead of erroring cleanly, that warning text
+# got captured as the "value", and the embedded newline then broke the sed substitution below
+# with a confusing "unterminated `s' command" - the exact same failure SHAPE already documented
+# in terraform/aws/check-resources-aws.sh's tf_output() comment, just not guarded against here
+# until this broke live. Since these values are genuinely static (the whole point of pinning the
+# EIP), EIP_ALLOCATION_ID/EIP_PUBLIC_IP are read from the environment first (set as GitHub repo
+# variables for CI - see grid-meter-app-aws-startup.yml) and only fall back to the Terraform
+# read for local/human use, where bootstrap-freetier's local state is actually present.
+EIP_ALLOCATION_ID="${EIP_ALLOCATION_ID:-$(cd "$TF_DIR/bootstrap-freetier" && terraform output -raw app_eip_allocation_id)}"
+EIP_PUBLIC_IP="${EIP_PUBLIC_IP:-$(cd "$TF_DIR/bootstrap-freetier" && terraform output -raw app_eip_public_ip)}"
 
 echo "== Updating kubeconfig for $CLUSTER_NAME =="
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE"

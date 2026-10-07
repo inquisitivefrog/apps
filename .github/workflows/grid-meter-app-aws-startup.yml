@@ -36,6 +36,17 @@ env:
   # ephemeral runner, backed by the real grid-meter-app-ci user's keys, so none of those scripts
   # need any modification to run unattended here.
   AWS_PROFILE: grid-meter-freetier
+  # The persistent Elastic IP's values (bootstrap-freetier/eip.tf) are genuinely static - the
+  # whole point of pinning it - but that module's Terraform state is LOCAL-only (not the S3
+  # remote backend, deliberately, to avoid a circular bootstrap problem), so a fresh CI
+  # checkout has no state to read them from at all. Declared here as repo variables instead of
+  # re-reading via cross-state `terraform output` each run - confirmed live (2026-10-07) that
+  # read fails on a fresh checkout. k8s/deploy-aws.sh prefers these env vars when set, falling
+  # back to the Terraform read for local/human use. Update both (`gh variable set
+  # EIP_ALLOCATION_ID`/`EIP_PUBLIC_IP`) if the EIP is ever recreated - it shouldn't be, by
+  # design, but if it is, these go stale silently otherwise.
+  EIP_ALLOCATION_ID: ${{ vars.EIP_ALLOCATION_ID }}
+  EIP_PUBLIC_IP: ${{ vars.EIP_PUBLIC_IP }}
 
 jobs:
   startup:
