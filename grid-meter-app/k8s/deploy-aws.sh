@@ -35,6 +35,14 @@ CACHE_USER_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(s
 # metadata, not omitted) - read from the same $TF_OUT blob as everything else above rather than
 # a separate `-raw` call, for consistency.
 CACHE_APP_PASSWORD="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_app_password"]["value"])')"
+VPC_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["vpc_id"]["value"])')"
+NLB_SUBNET_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["nlb_subnet_id"]["value"])')"
+
+# Persistent Elastic IP lives in bootstrap-freetier/'s own separate state (2026-10-07, see its
+# eip.tf for why - same cross-state read pattern already used for ECR before deploy-aws.sh moved
+# to computing that URL directly instead).
+EIP_ALLOCATION_ID="$(cd "$TF_DIR/bootstrap-freetier" && terraform output -raw app_eip_allocation_id)"
+EIP_PUBLIC_IP="$(cd "$TF_DIR/bootstrap-freetier" && terraform output -raw app_eip_public_ip)"
 
 echo "== Updating kubeconfig for $CLUSTER_NAME =="
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE"
@@ -61,12 +69,31 @@ docker build --platform linux/amd64 -t "$ECR_FRONTEND_URL:latest" "$REPO_ROOT/fr
 docker push "$ECR_API_URL:latest"
 docker push "$ECR_FRONTEND_URL:latest"
 
+echo "== Installing/upgrading the AWS Load Balancer Controller (needed for traefik-web's pinned-EIP NLB) =="
+# No IRSA (same hard SCP block as everywhere else on this account) - the controller instead gets
+# its AWS permissions via the EC2 node role (terraform/aws/load-balancer-controller.tf), reached
+# over IMDS from wherever its pods land. They'll land on the EC2 node group by default (no
+# fargate=true label applied here), which is required for that IMDS path to actually work -
+# Fargate pods can't reach node-role credentials at all (same constraint ebs-csi.tf already hit).
+helm repo add eks https://aws.github.io/eks-charts >/dev/null 2>&1 || true
+helm repo update >/dev/null
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName="$CLUSTER_NAME" \
+  --set region="$AWS_REGION" \
+  --set vpcId="$VPC_ID" \
+  --wait --timeout 120s
+
 echo "== Applying Traefik CRDs + RBAC (shared with kind) =="
 kubectl apply -f "$K8S_DIR/traefik-crds.yaml"
 kubectl apply -f "$K8S_DIR/traefik-rbac.yaml"
 
 echo "== Applying Traefik controller (AWS variant - LoadBalancer, not hostPort) =="
-kubectl apply -f "$K8S_DIR/traefik-aws.yaml"
+# EIP allocation ID and subnet ID are deploy-time facts (same reasoning as api-aws.yaml's image
+# placeholder) - substituted here rather than baked into the committed manifest.
+sed -e "s|PLACEHOLDER_EIP_ALLOCATION_ID|${EIP_ALLOCATION_ID}|" \
+    -e "s|PLACEHOLDER_NLB_SUBNET_ID|${NLB_SUBNET_ID}|" \
+    "$K8S_DIR/traefik-aws.yaml" | kubectl apply -f -
 
 echo "== Applying default StorageClass (needed for Kafka's PVCs - EKS 1.30+ doesn't auto-mark one) =="
 kubectl apply -f "$K8S_DIR/storageclass-aws.yaml"
@@ -143,7 +170,7 @@ kubectl rollout status statefulset/kafka --timeout=180s
 kubectl rollout status deployment/api --timeout=240s
 kubectl rollout status deployment/frontend --timeout=180s
 
-echo "== Waiting for the LoadBalancer's public address (provisioning takes a minute or two) =="
+echo "== Waiting for the NLB to actually provision (confirming, not assuming - provisioning takes a minute or two) =="
 for i in $(seq 1 30); do
   LB_HOST="$(kubectl get svc traefik-web -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
   if [[ -n "$LB_HOST" ]]; then
@@ -154,8 +181,12 @@ done
 
 echo
 if [[ -n "${LB_HOST:-}" ]]; then
-  echo "Done. App should be reachable at http://$LB_HOST"
+  # The reported URL is the persistent Elastic IP, NOT $LB_HOST - the NLB's own AWS-assigned
+  # hostname is just as unstable across nightly rebuilds as the old Classic ELB's was. The whole
+  # point of the EIP pinning above is that this address stays the same every day; confirmed the
+  # NLB actually came up (not just assumed) via $LB_HOST before reporting it.
+  echo "Done. App should be reachable at http://$EIP_PUBLIC_IP (stable across nightly rebuilds)"
 else
-  echo "Done, but the LoadBalancer hostname wasn't assigned within the poll window - check"
-  echo "'kubectl get svc traefik-web' directly."
+  echo "Done, but the NLB wasn't confirmed ready within the poll window - check"
+  echo "'kubectl get svc traefik-web' directly before trusting http://$EIP_PUBLIC_IP yet."
 fi

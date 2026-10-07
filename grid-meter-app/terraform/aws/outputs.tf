@@ -80,3 +80,8 @@ output "elasticache_replication_group_id" {
 # persistent layer, not destroyed by this stack's nightly teardown - see that file's header
 # comment). k8s/deploy-aws.sh now computes the ECR URL directly (account ID + region + the
 # project's fixed naming convention) instead of reading it from this state.
+
+output "nlb_subnet_id" {
+  description = "The single public subnet the AWS Load Balancer Controller pins the demo NLB to (load-balancer-controller.tf / k8s/traefik-aws.yaml's aws-load-balancer-subnets annotation) - deliberately just one of the 3 public subnets, matching the single persistent Elastic IP in bootstrap-freetier/eip.tf (one EIP per subnet is a hard AWS requirement for this annotation, and single-AZ for the edge tier is already an accepted scope limit - see docs/ha-scope.md)."
+  value       = aws_subnet.public[0].id
+}

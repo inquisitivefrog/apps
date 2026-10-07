@@ -18,6 +18,16 @@ output "ecr_frontend_repository_url" {
   value       = aws_ecr_repository.frontend.repository_url
 }
 
+output "app_eip_allocation_id" {
+  description = "Allocation ID of the persistent Elastic IP the demo's NLB is pinned to (see eip.tf). Used by k8s/deploy-aws.sh for the aws-load-balancer-eip-allocations Service annotation."
+  value       = aws_eip.app.id
+}
+
+output "app_eip_public_ip" {
+  description = "The stable public IP address of the demo app - this is the actual resume-facing URL (http://<this>/meters), unlike the NLB's own hostname which is NOT stable across nightly rebuilds."
+  value       = aws_eip.app.public_ip
+}
+
 output "backend_config_snippet" {
   description = "Ready-to-paste backend \"s3\" block for ../backend.tf."
   value       = <<-EOT

@@ -5,11 +5,17 @@
 # Real reachability here comes from a Service: type: LoadBalancer, which provisions a real AWS
 # load balancer automatically - matching docs/cloud-deployment-scope.md's own already-decided
 # design ("each cloud's own load balancer sits in front of [Traefik] purely for public IP
-# assignment"). Confirmed live (2026-09-18) this resolves to a Classic ELB on this cluster, not an
-# NLB - no aws-load-balancer-type annotation is set here and no AWS Load Balancer Controller addon
-# is installed, so EKS's in-tree default provider is what handles it. Traefik itself stays a
-# single instance either way - HA for the edge tier is already explicitly out of scope per
-# docs/ha-scope.md.
+# assignment"). Traefik itself stays a single instance either way - HA for the edge tier is
+# already explicitly out of scope per docs/ha-scope.md.
+#
+# Changed 2026-10-07 from the in-tree default provider's auto-generated Classic ELB to an
+# AWS-Load-Balancer-Controller-managed NLB pinned to a persistent Elastic IP
+# (terraform/aws/bootstrap-freetier/eip.tf) - the resume-facing demo URL needs to survive the
+# nightly full destroy/rebuild cycle unchanged (confirmed live this session: a Classic ELB's
+# hostname is never reusable across recreations, and the in-tree provider has no static-IP
+# capability at all - see terraform/aws/load-balancer-controller.tf's header comment for the
+# full finding). PLACEHOLDER_EIP_ALLOCATION_ID and PLACEHOLDER_NLB_SUBNET_ID are deploy-time
+# facts substituted by k8s/deploy-aws.sh, same pattern as api-aws.yaml's image placeholder.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -52,13 +58,21 @@ spec:
             limits:
               memory: 128Mi
 ---
-# Public-facing - provisions a real AWS Network Load Balancer. This is the one resource in this
-# file whose existence has a direct AWS cost line (~$0.0225/hr + usage, see
-# terraform/aws/README.md).
+# Public-facing - provisions a real AWS Network Load Balancer, pinned to a persistent Elastic IP
+# so the public address stays fixed across every nightly destroy/rebuild. This is the one
+# resource in this file whose existence has a direct AWS cost line (~$0.025/hr + usage, see
+# terraform/aws/README.md) - plus the Elastic IP itself (~$0.005/hr, always-on by design since
+# it must survive the main stack's nightly teardown - see bootstrap-freetier/eip.tf).
 apiVersion: v1
 kind: Service
 metadata:
   name: traefik-web
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-eip-allocations: "PLACEHOLDER_EIP_ALLOCATION_ID"
+    service.beta.kubernetes.io/aws-load-balancer-subnets: "PLACEHOLDER_NLB_SUBNET_ID"
 spec:
   type: LoadBalancer
   selector:
