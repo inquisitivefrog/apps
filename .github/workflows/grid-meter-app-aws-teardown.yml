@@ -41,6 +41,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # See grid-meter-app-aws-startup.yml's Checkout step for the full reasoning - this
+          # workflow file must live on the default branch for GitHub to discover its triggers,
+          # but the actual AWS code stays isolated on aws-freetier via this explicit ref.
+          ref: aws-freetier
 
       - name: Configure AWS profile
         run: |

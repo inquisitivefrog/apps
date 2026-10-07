@@ -44,6 +44,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # This workflow FILE must live on the default branch for GitHub Actions to discover
+          # its schedule/workflow_dispatch triggers at all (a hard platform constraint, not a
+          # choice) - but the actual AWS infra/app code this workflow operates on is
+          # deliberately kept isolated on aws-freetier (see that branch's own commit history:
+          # this is a from-scratch AWS free-tier adaptation of a legacy project, kept separate
+          # on purpose). Explicitly checking out aws-freetier here means main gains only this
+          # thin trigger definition, never the AWS-specific substance.
+          ref: aws-freetier
 
       - name: Configure AWS profile
         run: |
