@@ -214,3 +214,33 @@ jobs:
       - name: Load test - rapid-spike (tuned to 100 threads for this architecture)
         working-directory: grid-meter-app/load-tests
         run: ./run.sh rapid-spike -Jhost="$EIP_PUBLIC_IP" -Jport=80 -Jthreads=100
+
+      # --- Demo-data polish ---
+      # Added 2026-10-07: the full nightly destroy/rebuild wipes RDS completely, so anything
+      # seeded "once" is gone by the next morning - these have to run every day, not just the
+      # one time they were first tried manually, or the demo comes up with no status variety
+      # and no reading history at all. common/provision-meters.jmx (used by the load tests
+      # above) only ever creates ACTIVE meters, so INACTIVE/MAINTENANCE examples need a
+      # separate step; readings from the load tests are all "now"-timestamped by design (they're
+      # validating real-time ingestion, not generating demo data - see
+      # scripts/seed-historical-readings.sh's own header comment), so the Readings page needs
+      # this explicit backfill to look like a real system with history rather than a pile of
+      # traffic from whenever the load tests last ran.
+      - name: Seed meter status variety (INACTIVE/MAINTENANCE)
+        run: |
+          TOKEN="$(curl -s -X POST "http://${EIP_PUBLIC_IP}/api/v1/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"demo","password":"GridMeter!Demo2026"}' | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')
+          for mstatus in INACTIVE MAINTENANCE; do
+            for i in 1 2 3; do
+              curl -sf -X POST "http://${EIP_PUBLIC_IP}/api/v1/meters" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H 'Content-Type: application/json' \
+                -d "{\"serialNumber\":\"DEMO-${mstatus}-${i}-$(date +%s)${RANDOM}\",\"location\":\"Demo pool\",\"status\":\"${mstatus}\",\"installedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+                -o /dev/null
+            done
+          done
+
+      - name: Seed historical readings
+        run: ./grid-meter-app/scripts/seed-historical-readings.sh "$EIP_PUBLIC_IP" 80
