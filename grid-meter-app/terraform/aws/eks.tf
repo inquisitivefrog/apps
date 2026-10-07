@@ -34,31 +34,46 @@ resource "aws_eks_cluster" "main" {
 
   access_config {
     authentication_mode = "API"
-    # Declared explicitly rather than relying on the (already-matching)
-    # default - this project's standing rule is that any access-control or
-    # durability-relevant setting gets declared, not left implicit. This is
-    # what grants the IAM principal that runs `terraform apply` (bluedragon,
-    # via the grid-meter profile) automatic cluster-admin kubectl access,
-    # with no separate aws_eks_access_entry resource needed - confirmed
-    # against HashiCorp's own provider docs, not assumed.
-    bootstrap_cluster_creator_admin_permissions = true
+    # Changed 2026-10-07 from true to false - confirmed live that true actively breaks the
+    # nightly CD cycle, not just "doesn't help" it: when the grid-meter-app-ci IAM user is the
+    # one whose `terraform apply` calls CreateCluster (the normal case once this pipeline is
+    # actually running on schedule), EKS auto-creates an IMPLICIT access entry for that exact
+    # principal - which then collides with the EXPLICIT aws_eks_access_entry.ci resource below,
+    # failing with "ResourceInUseException: The specified access entry resource is already in
+    # use on this cluster." This never surfaced in any of this session's prior human-run applies
+    # because the human and CI are different principals, so there was nothing to collide with -
+    # it only broke the very first time CI itself created the cluster. Two fully explicit access
+    # entries below (human + CI) replace this entirely, matching this project's own standing
+    # "declare explicitly, don't rely on an implicit default" rule - see CLAUDE.md.
+    bootstrap_cluster_creator_admin_permissions = false
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
 }
 
-# --- CI access entry ---
+# --- Access entries (human + CI) ---
 #
-# bootstrap_cluster_creator_admin_permissions above only grants Kubernetes RBAC access to
-# whichever IAM principal's `terraform apply` actually calls CreateCluster - the human operator,
-# historically. Under the nightly full-destroy/full-apply CD cycle (grid-meter-app-aws-startup.yml),
-# the grid-meter-app-ci IAM user usually ends up being that creator and would inherit this
-# automatically - but relying on that is fragile: AWS IAM authentication and Kubernetes RBAC
-# authorization are two separate layers, and any future manual `terraform apply` by a human
-# (exactly what this whole session has done repeatedly) would silently re-assign "creator" back
-# to the human, revoking CI's kubectl access with no error until the next automated run tried to
-# deploy. An explicit, permanent access entry removes that fragility entirely - added 2026-10-06
-# while building the AWS CI/CD pipeline.
+# Both explicit, both granted the same way, regardless of which one's `terraform apply` actually
+# creates the cluster - see access_config's comment above for why bootstrap_cluster_creator_admin
+# _permissions couldn't be used instead. The human entry matters just as much as the CI one: this
+# session has had many manual `terraform apply` runs by the grid-meter-freetier user, and without
+# an explicit entry for it too, a human-created cluster would leave the human with no kubectl
+# access of their own.
+resource "aws_eks_access_entry" "human" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/grid-meter-freetier"
+}
+
+resource "aws_eks_access_policy_association" "human_cluster_admin" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_eks_access_entry.human.principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+}
+
 resource "aws_eks_access_entry" "ci" {
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/grid-meter-app-ci"
