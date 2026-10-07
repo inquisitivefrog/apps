@@ -42,6 +42,12 @@ set -euo pipefail
 
 K8S_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_DIR="$K8S_DIR/../terraform/aws"
+# Tracks whether any "still there after polling" warning fired below. A human watching this
+# script's own stdout would notice a WARNING line and investigate before running terraform
+# destroy by hand - but this flag is what makes the same situation actually fail the script
+# (and therefore the CI job, and therefore trigger GitHub's failure-email alert) when CI=true
+# runs it unattended, instead of silently printing a warning nobody's there to read.
+STUCK_RESOURCE=0
 
 # Read the profile/region from Terraform's own outputs rather than hardcoding or relying on the
 # AWS CLI's default profile - the default profile is dead in this account (same class of bug
@@ -54,10 +60,19 @@ echo "Using AWS profile '$AWS_PROFILE' in region '$AWS_REGION'"
 echo "== Confirming kubectl is pointed at the right cluster =="
 CTX="$(kubectl config current-context)"
 echo "Current context: $CTX"
-read -p "Proceed with teardown against this context? [y/N] " CONFIRM
-if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-  echo "Aborted."
-  exit 1
+# CI=true is set automatically by GitHub Actions (and most other CI systems) - deliberately
+# bypassing the interactive prompt there, since the whole point of the nightly teardown workflow
+# is unattended execution. A deliberate, scoped override of this script's own stated philosophy
+# ("real, hard-to-reverse infrastructure teardown should be a deliberate, reviewed step") for that
+# one automated context specifically - an interactive human run still gets the real prompt.
+if [[ "${CI:-}" == "true" ]]; then
+  echo "CI=true detected - skipping interactive confirmation for unattended teardown."
+else
+  read -p "Proceed with teardown against this context? [y/N] " CONFIRM
+  if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    echo "Aborted."
+    exit 1
+  fi
 fi
 
 echo
@@ -106,6 +121,7 @@ else
   if [[ "$STILL_THERE" -eq 1 ]]; then
     echo "WARNING: load balancer for $LB_HOST still exists after 5 minutes of polling - check the" \
          "AWS console (EC2 -> Load Balancers) before running terraform destroy."
+    STUCK_RESOURCE=1
   fi
 fi
 
@@ -140,6 +156,7 @@ else
   if [[ -n "$REMAINING" ]]; then
     echo "WARNING: these volumes still exist after 5 minutes of polling: $REMAINING - check the" \
          "AWS console (EC2 -> Volumes) before running terraform destroy."
+    STUCK_RESOURCE=1
   fi
 fi
 
@@ -168,10 +185,18 @@ else
 fi
 
 echo
+if [[ "$STUCK_RESOURCE" -eq 1 ]]; then
+  echo "== FAILING: one or more AWS resources were still present after polling (see WARNING lines"
+  echo "   above) - not safe to proceed to terraform destroy automatically. =="
+  exit 1
+fi
+
 echo "== Kubernetes-provisioned AWS resources cleared. Now run: =="
 echo "    cd $(cd "$K8S_DIR/../terraform/aws" && pwd)"
 echo "    terraform plan -destroy"
 echo "    terraform destroy"
 echo
 echo "(Deliberately not run automatically from this script - real, hard-to-reverse infrastructure"
-echo " teardown should be a deliberate, reviewed step, not chained onto a kubectl cleanup script.)"
+echo " teardown should be a deliberate, reviewed step, not chained onto a kubectl cleanup script."
+echo " The nightly CI teardown workflow is the one deliberate, scoped exception to that - see"
+echo " this script's CI=true branch above.)"

@@ -384,6 +384,40 @@ spring:
       on-profile: "cloud-aws"
 
 ---
+# AWS password-auth counterpart - for the one AWS account (the free-tier/credits-program
+# account, see terraform/aws/elasticache-iam-auth.tf's header comment) where IAM auth is
+# impossible because IRSA itself is impossible there (a hard AWS Organizations SCP blocks
+# iam:CreateOpenIDConnectProvider outright, confirmed live 2026-10-06 - no OIDC provider means
+# no pod, Fargate or EC2, can assume any IAM role via IRSA on this account, period). Active
+# alongside "cloud" instead of "cloud-aws" (k8s/api-aws.yaml sets
+# SPRING_PROFILES_ACTIVE=cloud,cloud-aws-password for this deployment) - mutually exclusive
+# with "cloud-aws" in practice (a deployment picks one or the other), never both.
+#
+# Deliberately plain Spring Boot properties, not a custom bean like AwsRedisConfig - TLS
+# (ssl.enabled) and password auth are both natively supported by the auto-configured
+# LettuceConnectionFactory already, so no custom LettuceClientConfigurationBuilderCustomizer or
+# credential-provider class is needed for this path the way IAM auth's SigV4 token signing
+# required one. ssl.enabled is required here for the same reason "cloud-aws" needs useSsl() -
+# ElastiCache's transit_encryption_enabled=true is unconditional, not tied to the auth mechanism.
+# username is required alongside password, not just password alone - confirmed via javap against
+# the real installed spring-boot-data-redis-4.1.0.jar's DataRedisProperties class (has both
+# fields) before assuming: the app connects as a real ACL user ("grid-meter-app-app", not
+# Redis's "default" user), and Redis/Valkey's AUTH command requires `AUTH username password` for
+# any non-default ACL identity, not password alone. Reuses the existing
+# GRID_METER_AWS_ELASTICACHE_USER_ID env var already wired in k8s/api-aws.yaml for this - no new
+# env var needed for the username half.
+spring:
+  config:
+    activate:
+      on-profile: "cloud-aws-password"
+  data:
+    redis:
+      username: ${GRID_METER_AWS_ELASTICACHE_USER_ID}
+      password: ${GRID_METER_AWS_ELASTICACHE_PASSWORD}
+      ssl:
+        enabled: true
+
+---
 # GCP-specific counterpart, active alongside "cloud" (k8s/api-gcp.yaml sets
 # SPRING_PROFILES_ACTIVE=cloud,cloud-gcp), not a replacement for it -- same reasoning as
 # "cloud-aws" above. Gates config.gcp.GcpRedisConfig's bean tree to GCP specifically; the one

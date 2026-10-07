@@ -54,19 +54,21 @@ output "elasticache_port" {
 }
 
 # Added 2026-09-23 alongside the AWS credential-provider app-code work
-# (api/src/main/java/com/gridmeter/api/config/aws/) - k8s/deploy-aws.sh needs all three to wire
-# up the app's ServiceAccount (IRSA role annotation) and the two GRID_METER_AWS_ELASTICACHE_*
-# env vars AwsRedisConfig reads. None of these existed as outputs before now because nothing
-# consumed them yet - elasticache-iam-auth.tf's own header comment already flagged this Terraform
-# as "inert until the app-code follow-up lands".
-output "app_irsa_role_arn" {
-  description = "IAM role ARN the app's K8s ServiceAccount (grid-meter-app, namespace default) assumes via IRSA for ElastiCache IAM auth. Annotate the ServiceAccount with eks.amazonaws.com/role-arn=<this value>."
-  value       = aws_iam_role.app_irsa.arn
+# (api/src/main/java/com/gridmeter/api/config/aws/), originally for IRSA/IAM-auth. Reverted to
+# password auth 2026-10-06 for this account specifically - see elasticache-iam-auth.tf's header
+# comment for why. `app_irsa_role_arn` is gone (that role no longer exists); replaced with
+# `elasticache_app_password`. The app-side AwsRedisConfig class still expects the IAM-auth env
+# vars as of this write - switching it to read a password instead is real, separate app-code
+# work, not yet done (see k8s/deploy-aws.sh's own TODO once that lands).
+output "elasticache_app_user_id" {
+  description = "ElastiCache user ID the app connects as. Feeds whichever env var the app's Redis config expects for the username."
+  value       = aws_elasticache_user.app.user_id
 }
 
-output "elasticache_app_user_id" {
-  description = "IAM-auth-enabled ElastiCache user ID the app connects as. Feeds GRID_METER_AWS_ELASTICACHE_USER_ID."
-  value       = aws_elasticache_user.app.user_id
+output "elasticache_app_password" {
+  description = "Password for the ElastiCache app user (password auth, not IAM auth, on this account - see elasticache-iam-auth.tf). Never log this value; deploy-aws.sh reads it via `terraform output -raw elasticache_app_password` and injects it directly into the k8s secret."
+  value       = random_password.elasticache_app.result
+  sensitive   = true
 }
 
 output "elasticache_replication_group_id" {
@@ -74,12 +76,7 @@ output "elasticache_replication_group_id" {
   value       = aws_elasticache_replication_group.main.replication_group_id
 }
 
-output "ecr_api_repository_url" {
-  description = "ECR repository URL for the api image. Used by k8s/deploy-aws.sh."
-  value       = aws_ecr_repository.api.repository_url
-}
-
-output "ecr_frontend_repository_url" {
-  description = "ECR repository URL for the frontend image. Used by k8s/deploy-aws.sh."
-  value       = aws_ecr_repository.frontend.repository_url
-}
+# ECR outputs removed 2026-10-06 - the repos themselves moved to bootstrap-freetier/ecr.tf (a
+# persistent layer, not destroyed by this stack's nightly teardown - see that file's header
+# comment). k8s/deploy-aws.sh now computes the ECR URL directly (account ID + region + the
+# project's fixed naming convention) instead of reading it from this state.

@@ -1,0 +1,111 @@
+name: grid-meter-app AWS teardown
+
+# Nightly teardown of the AWS free-tier demo deployment - see grid-meter-app-aws-startup.yml's
+# header comment for the full cost rationale (EKS control plane, NAT Gateway, ElastiCache, and
+# the Load Balancer all bill hourly with no stop/start feature, so full destroy/recreate costs
+# meaningfully less than leaving them up 24/7).
+#
+# Real order matters here, and skipping straight to `terraform destroy` would be a genuine bug,
+# not just a style choice: the traefik-web LoadBalancer Service and Kafka's 3 PVCs trigger AWS
+# resources (a real Classic ELB, 3 real EBS volumes) that Terraform never created and therefore
+# cannot delete - `terraform destroy` alone can hang on the LB's orphaned ENIs blocking VPC/subnet
+# deletion, or worse, silently leave the EBS volumes behind, still billing, with no Terraform
+# resource left to ever clean them up. k8s/teardown-aws.sh exists specifically to delete those
+# first and confirm (by polling the real AWS API, not a fixed sleep) that they're actually gone
+# before terraform destroy ever runs - see that script's own header comment for the full account,
+# including the live 2026-09-18/2026-09-23 findings that drove it.
+#
+# IMPORTANT: unlike the startup workflow's check-resources-aws.sh steps, the two check-resources
+# steps here are NOT pass/fail gates (see their `continue-on-error: true` and comments below) -
+# both scripts assert that resources EXIST, so after a successful teardown they correctly report
+# everything as FAIL (because everything is, correctly, gone). The real gates are
+# k8s/teardown-aws.sh's own exit code (which now genuinely fails - see that script's
+# STUCK_RESOURCE handling - if an LB/EBS volume is still present after polling) and
+# `terraform destroy`'s own exit code.
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: us-east-2
+  AWS_PROFILE: grid-meter-freetier
+  # Picked up directly by k8s/teardown-aws.sh - see that script's own CI=true branch for why
+  # (bypasses its interactive confirmation prompt, which only makes sense for a human watching).
+  CI: 'true'
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure AWS profile
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.AWS_CI_ACCESS_KEY_ID }}" --profile "$AWS_PROFILE"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_CI_SECRET_ACCESS_KEY }}" --profile "$AWS_PROFILE"
+          aws configure set region "$AWS_REGION" --profile "$AWS_PROFILE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.13.2'
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Terraform init
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform init -input=false
+
+      - name: Point kubectl at the cluster
+        # teardown-aws.sh assumes kubectl is already configured (true for a human who just ran
+        # deploy-aws.sh in the same session) - this is a fresh runner with no prior context, so
+        # this step does explicitly what deploy-aws.sh does implicitly on the startup side.
+        working-directory: grid-meter-app/terraform/aws
+        run: |
+          CLUSTER_NAME="$(terraform output -raw eks_cluster_name)"
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE"
+
+      # --- Step 1: k8s/teardown-aws.sh ---
+      - name: Tear down Kubernetes-provisioned AWS resources (LB, EBS volumes, Kafka, api)
+        # The real gate for this step - fails the job (and triggers GitHub's failure-email alert)
+        # if an LB or EBS volume is still present after polling. See this script's own
+        # STUCK_RESOURCE handling.
+        run: ./grid-meter-app/k8s/teardown-aws.sh
+
+      # --- Step 2: k8s/check-resources-aws.sh (visibility only, not a gate - see header comment) ---
+      - name: Snapshot Kubernetes app layer post-teardown (expected to show failures - informational)
+        if: always()
+        continue-on-error: true
+        run: ./grid-meter-app/k8s/check-resources-aws.sh
+
+      # --- Step 3: kubectl get nodes|services|pods ---
+      - name: Cluster snapshot (nodes/services/pods)
+        if: always()
+        run: |
+          kubectl get nodes -o wide
+          echo
+          kubectl get services -A -o wide
+          echo
+          kubectl get pods -A -o wide
+
+      # --- Step 4: terraform destroy ---
+      - name: Terraform plan -destroy
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform plan -input=false -destroy -out=tfplan
+
+      - name: Terraform destroy
+        working-directory: grid-meter-app/terraform/aws
+        # Applying a saved (-destroy) plan file is already non-interactive - see
+        # grid-meter-app-aws-startup.yml's Terraform apply step for the full reasoning.
+        run: terraform apply -input=false tfplan
+
+      # --- Step 5: terraform/aws/check-resources-aws.sh (visibility only, not a gate) ---
+      - name: Snapshot Terraform-provisioned AWS resources post-destroy (expected to show failures - informational)
+        if: always()
+        continue-on-error: true
+        working-directory: grid-meter-app/terraform/aws
+        run: ./check-resources-aws.sh

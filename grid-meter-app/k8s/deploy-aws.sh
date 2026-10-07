@@ -19,16 +19,22 @@ TF_OUT="$(cd "$TF_DIR" && terraform output -json)"
 CLUSTER_NAME="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["eks_cluster_name"]["value"])')"
 AWS_REGION="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["aws_region"]["value"])')"
 AWS_PROFILE="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["aws_profile"]["value"])')"
-ECR_API_URL="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ecr_api_repository_url"]["value"])')"
-ECR_FRONTEND_URL="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ecr_frontend_repository_url"]["value"])')"
+# ECR repos live in bootstrap-freetier/'s persistent state now (2026-10-06, see that module's
+# ecr.tf for why), not this one - computed directly from the account ID + region + this
+# project's fixed naming convention instead of a cross-state `terraform output` read.
+AWS_ACCOUNT_ID="$(aws sts get-caller-identity --profile "$AWS_PROFILE" --query Account --output text)"
+ECR_API_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/grid-meter-app-api"
+ECR_FRONTEND_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/grid-meter-app-frontend"
 RDS_ENDPOINT="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rds_endpoint"]["value"])')"
 RDS_USERNAME="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rds_master_username"]["value"])')"
 RDS_SECRET_ARN="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rds_master_user_secret_arn"]["value"])')"
 CACHE_HOST="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_endpoint"]["value"])')"
 CACHE_PORT="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_port"]["value"])')"
-APP_IRSA_ROLE_ARN="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["app_irsa_role_arn"]["value"])')"
 CACHE_USER_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_app_user_id"]["value"])')"
-CACHE_REPLICATION_GROUP_ID="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_replication_group_id"]["value"])')"
+# Sensitive output, but still present in `terraform output -json` (marked sensitive in its own
+# metadata, not omitted) - read from the same $TF_OUT blob as everything else above rather than
+# a separate `-raw` call, for consistency.
+CACHE_APP_PASSWORD="$(echo "$TF_OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["elasticache_app_password"]["value"])')"
 
 echo "== Updating kubeconfig for $CLUSTER_NAME =="
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" --profile "$AWS_PROFILE"
@@ -77,26 +83,26 @@ echo "== Applying secrets (generated at deploy time, never committed) =="
 kubectl create secret generic grid-meter-secrets \
   --from-literal=SPRING_DATASOURCE_PASSWORD="$RDS_PASSWORD" \
   --from-literal=GRID_METER_JWT_SECRET="$JWT_SECRET" \
+  --from-literal=GRID_METER_AWS_ELASTICACHE_PASSWORD="$CACHE_APP_PASSWORD" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 echo "== Applying config (real RDS/ElastiCache endpoints, generated at deploy time) =="
 # Not a static committed configmap-aws.yaml, deliberately - these values are deploy-time facts
 # (they'd drift the moment RDS/ElastiCache is ever recreated with a new endpoint), same reasoning
 # already applied to the redis-entrypoint-script ConfigMap below.
-# SPRING_PROFILES_ACTIVE now "cloud,cloud-aws" (was just "cloud") - the extra profile activates
-# application.yml's cloud-aws block, which gates config.aws.AwsRedisConfig's bean tree (the
-# ElastiCache IAM-auth Lettuce credentials provider). The three new literals below are what that
-# config class reads.
+# SPRING_PROFILES_ACTIVE is "cloud,cloud-aws-password" (not "cloud,cloud-aws") - this account
+# can't use IRSA at all (hard SCP block on iam:CreateOpenIDConnectProvider, see
+# terraform/aws/elasticache-iam-auth.tf), so the app authenticates to ElastiCache with a real
+# password instead of an IAM-signed token. GRID_METER_AWS_ELASTICACHE_USER_ID doubles as the
+# Redis AUTH username (see application.yml's cloud-aws-password profile block).
 kubectl create configmap grid-meter-config \
-  --from-literal=SPRING_PROFILES_ACTIVE=cloud,cloud-aws \
+  --from-literal=SPRING_PROFILES_ACTIVE=cloud,cloud-aws-password \
   --from-literal=SPRING_DATASOURCE_URL="jdbc:postgresql://${RDS_ENDPOINT}/gridmeter" \
   --from-literal=SPRING_DATASOURCE_USERNAME="$RDS_USERNAME" \
   --from-literal=SPRING_KAFKA_BOOTSTRAP_SERVERS="kafka-0.kafka-headless:9092,kafka-1.kafka-headless:9092,kafka-2.kafka-headless:9092" \
   --from-literal=SPRING_DATA_REDIS_HOST="$CACHE_HOST" \
   --from-literal=SPRING_DATA_REDIS_PORT="$CACHE_PORT" \
-  --from-literal=AWS_REGION="$AWS_REGION" \
   --from-literal=GRID_METER_AWS_ELASTICACHE_USER_ID="$CACHE_USER_ID" \
-  --from-literal=GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID="$CACHE_REPLICATION_GROUP_ID" \
   --from-literal=GRID_METER_TRACING_SAMPLING_PROBABILITY="1.0" \
   --from-literal=JAVA_TOOL_OPTIONS="-Xmx384m" \
   --from-literal=MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED="false" \
@@ -115,10 +121,14 @@ echo "== Applying api + frontend (real image baked in before the first apply, no
 # original apply-then-patch design created three separate ReplicaSets in quick succession on the
 # first real deploy (one doomed from the literal placeholder string, two more from the
 # subsequent patches), which is wasted churn a single correct apply avoids entirely.
-sed -e "s|PLACEHOLDER_ECR_API_IMAGE|${ECR_API_URL}:latest|" \
-    -e "s|PLACEHOLDER_APP_IRSA_ROLE_ARN|${APP_IRSA_ROLE_ARN}|" \
-    "$K8S_DIR/api-aws.yaml" | kubectl apply -f -
+sed "s|PLACEHOLDER_ECR_API_IMAGE|${ECR_API_URL}:latest|" "$K8S_DIR/api-aws.yaml" | kubectl apply -f -
 sed "s|grid-meter-frontend:kind|${ECR_FRONTEND_URL}:latest|" "$K8S_DIR/frontend.yaml" | kubectl apply -f -
+# frontend.yaml is shared across every target (kind + all three clouds), so the AWS-only
+# "fargate: true" label (picked up by terraform/aws/fargate.tf's selector) is patched on here
+# rather than baked into that shared manifest - api-aws.yaml/traefik-aws.yaml carry it directly
+# since those files are already AWS-specific.
+kubectl patch deployment frontend --type=merge \
+  -p '{"spec":{"template":{"metadata":{"labels":{"fargate":"true"}}}}}'
 
 echo "== Forcing a rollout restart (picks up a freshly-pushed :latest on a repeat run of this script, since the tag string itself doesn't change) =="
 kubectl rollout restart deployment/api

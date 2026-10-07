@@ -1,27 +1,25 @@
 # AWS-target variant of api.yaml. Same Deployment shape (2 replicas, matching the "scale api=2"
-# story everywhere else), different env var wiring: SPRING_PROFILES_ACTIVE=cloud,cloud-aws
+# story everywhere else), different env var wiring: SPRING_PROFILES_ACTIVE=cloud,cloud-aws-password
 # activates application.yml's plain host/port Redis block instead of Sentinel discovery (see that
 # file's own comment for why - a managed Redis endpoint has no Sentinel process to discover at
-# all) plus the AWS-specific ElastiCache IAM-auth block (config.aws.AwsRedisConfig), and
-# SPRING_DATA_REDIS_HOST/PORT replace SPRING_REDIS_SENTINEL_MASTER/NODES entirely. Kafka stays
-# wired exactly as kind's api.yaml does - self-hosted in-cluster identically on every target.
+# all) plus the AWS password-auth ElastiCache block, and SPRING_DATA_REDIS_HOST/PORT replace
+# SPRING_REDIS_SENTINEL_MASTER/NODES entirely. Kafka stays wired exactly as kind's api.yaml does
+# - self-hosted in-cluster identically on every target.
 #
 # image below is a placeholder - deploy-aws.sh applies this file as-is, then runs
 # `kubectl set image` immediately after with the real ECR image reference (a deploy-time fact,
 # not something to bake into a static, committed manifest that could go stale).
 #
-# ServiceAccount below (name "grid-meter-app", namespace default) is what terraform/aws/
-# elasticache-iam-auth.tf's IRSA trust policy already expects (its condition is scoped to exactly
-# "system:serviceaccount:default:grid-meter-app") - that Terraform was inert without this. Its
-# role-arn annotation is a placeholder for the same reason the image is: deploy-aws.sh
-# sed-substitutes the real terraform output (app_irsa_role_arn) in, since baking a real IAM role
-# ARN into a committed manifest would go stale the moment the role is ever recreated.
+# Changed 2026-10-06 from cloud-aws (IAM auth via IRSA) to cloud-aws-password: this account has a
+# hard AWS Organizations SCP blocking iam:CreateOpenIDConnectProvider, making IRSA impossible
+# here regardless of IAM policy - see terraform/aws/elasticache-iam-auth.tf's header comment for
+# the full finding. The ServiceAccount below no longer carries an IRSA role-arn annotation (there
+# is no OIDC provider for EKS's Pod Identity webhook to act on even if one were set) - it exists
+# only as an ordinary ServiceAccount now, not an IRSA identity.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: grid-meter-app
-  annotations:
-    eks.amazonaws.com/role-arn: PLACEHOLDER_APP_IRSA_ROLE_ARN
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -36,6 +34,7 @@ spec:
     metadata:
       labels:
         app: api
+        fargate: "true" # picked up by terraform/aws/fargate.tf's label-selector Fargate profile - see that file's own comment for why
     spec:
       serviceAccountName: grid-meter-app
       containers:
@@ -78,27 +77,24 @@ spec:
                 configMapKeyRef:
                   name: grid-meter-config
                   key: SPRING_DATA_REDIS_PORT
-            # The three below feed config.aws.AwsRedisConfig, gated behind the "cloud-aws" profile
-            # (SPRING_PROFILES_ACTIVE above is "cloud,cloud-aws" here, not just "cloud" - see
-            # application.yml's cloud-aws profile block). AWS_REGION is the AWS SDK's own standard
-            # env var name (DefaultCredentialsProvider/region chain read it directly), not a
-            # GRID_METER_*-prefixed one, deliberately matching that convention instead of this
-            # project's own.
-            - name: AWS_REGION
-              valueFrom:
-                configMapKeyRef:
-                  name: grid-meter-config
-                  key: AWS_REGION
+            # The two below feed application.yml's "cloud-aws-password" profile block.
+            # GRID_METER_AWS_ELASTICACHE_USER_ID doubles as the Redis AUTH username (a real ACL
+            # user, "grid-meter-app-app", not Redis's "default" user - AUTH needs both username
+            # and password for any non-default identity). AWS_REGION and
+            # GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID are deliberately gone - both were
+            # SigV4-token-signing-only (config.aws.AwsRedisConfig's IAM path, still used by
+            # "cloud-aws" on any other, non-restricted AWS account), unused by plain password
+            # auth.
             - name: GRID_METER_AWS_ELASTICACHE_USER_ID
               valueFrom:
                 configMapKeyRef:
                   name: grid-meter-config
                   key: GRID_METER_AWS_ELASTICACHE_USER_ID
-            - name: GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID
+            - name: GRID_METER_AWS_ELASTICACHE_PASSWORD
               valueFrom:
-                configMapKeyRef:
-                  name: grid-meter-config
-                  key: GRID_METER_AWS_ELASTICACHE_REPLICATION_GROUP_ID
+                secretKeyRef:
+                  name: grid-meter-secrets
+                  key: GRID_METER_AWS_ELASTICACHE_PASSWORD
             - name: GRID_METER_JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -133,18 +129,32 @@ spec:
           # near-zero local latency never surfaced this. initialDelaySeconds raised for startup
           # margin AND timeoutSeconds raised for steady-state margin - the delay fix alone
           # wouldn't have been sufficient given failures continued well past the startup window.
+          #
+          # Raised again 2026-10-06 after moving api to Fargate (fargate.tf): real measured
+          # startup time jumped to 92.69s (Spring Boot's own "Started GridMeterApiApplication"
+          # log timestamp), nearly 4x the ~25s this was tuned against on the EC2 node group -
+          # confirmed live via a crash-loop where the app logged a clean startup immediately
+          # followed by graceful shutdown, each cycle. Root cause: the OLD livenessProbe
+          # (initialDelaySeconds 45 + periodSeconds 10 x default failureThreshold 3 = killed at
+          # 75s) was killing the container ~17s before Spring Boot ever finished starting -
+          # not a slow-probe-response problem like the readiness fix above, a probe firing
+          # before the app exists at all. Whether this is Fargate's own CPU/network
+          # provisioning being genuinely slower than the EC2 node group, or some other
+          # Fargate-specific factor, wasn't isolated further - the fix is the same either way.
+          # Generous margin added (not just matched to 92.69s) since Fargate startup time may
+          # vary run-to-run in ways not yet observed across multiple deploys.
           readinessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 100
             periodSeconds: 5
             timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /actuator/health
               port: 8080
-            initialDelaySeconds: 45
+            initialDelaySeconds: 120
             periodSeconds: 10
             timeoutSeconds: 5
           resources:

@@ -32,6 +32,7 @@ spec:
     metadata:
       labels:
         app: traefik
+        fargate: "true" # picked up by terraform/aws/fargate.tf's label-selector Fargate profile - see that file's own comment for why
     spec:
       serviceAccountName: traefik-ingress-controller
       containers:

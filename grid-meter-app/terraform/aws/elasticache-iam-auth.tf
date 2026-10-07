@@ -1,56 +1,24 @@
-# IAM-based Redis (Valkey) auth via IRSA - backported 2026-09-23 after Azure Managed Redis's
-# forced move to Entra-ID-only auth prompted an explicit decision (user sign-off) to align AWS
-# and GCP onto the same tighter posture rather than leave them on password auth just because
-# nothing forced it yet. Confirmed live (docs.aws.amazon.com/AmazonElastiCache/latest/dg/auth-iam.html):
-# IAM auth works with the valkey engine already in use in elasticache.tf, not redis-only, and
-# requires transit encryption - see transit_encryption_enabled below.
+# Redis (Valkey) auth for this account. Originally IAM-based via IRSA - backported 2026-09-23
+# after Azure Managed Redis's forced move to Entra-ID-only auth prompted an explicit decision
+# (user sign-off) to align AWS and GCP onto the same tighter posture. That IAM-auth path was
+# real, working code (a Lettuce credential provider using AWS SDK's ElastiCache IAM auth token
+# signer, live-verified 2026-09-24 against this same account before it became the dedicated
+# free-tier account).
 #
-# This introduces IRSA (IAM Roles for Service Accounts) scoped to the *app's own* K8s
-# ServiceAccount - previously the only IRSA role in this config was ebs-csi.tf's, for the
-# EBS CSI driver addon, not the application itself. The app has never needed its own cloud
-# identity before now (Postgres uses a Secrets-Manager-stored password, not IAM DB auth).
-#
-# Terraform-side only, deliberately: the actual token-generation client code (a Lettuce
-# credential provider using AWS SDK's ElastiCache IAM auth token signer) and the matching
-# k8s/api-aws.yaml ServiceAccount (name "grid-meter-app", namespace "default" - matching the
-# subject condition below) are real application-code/manifest work, tracked as a required
-# follow-up alongside Azure's own already-flagged Entra ID Lettuce provider gap - not attempted
-# inline here. This Terraform is inert (no pod can assume the role yet) until that follow-up
-# lands, same as Azure Managed Redis's Terraform was already fully correct before its own
-# app-code gap is closed.
+# Reverted to password-based auth 2026-10-06, specifically for this account only, after
+# confirming live that it has a hard AWS Organizations SCP explicit-denying
+# iam:CreateOpenIDConnectProvider - no OIDC provider means no IRSA is possible here at all, for
+# anything. This isn't a narrow EBS-CSI-only problem (see ebs-csi.tf, which could fall back to
+# node-role-based permissions instead): AWS's own EKS Fargate docs state plainly that a Fargate
+# pod cannot assume any IAM role without IRSA ("the containers running in the Fargate Pod can't
+# assume the IAM permissions associated with a Pod execution role... you must use IAM roles for
+# service accounts") - and `api` runs on Fargate on this account (see fargate.tf), not the EC2
+# node group, so there's no shared node role to fall back to the way EBS CSI could. Password
+# auth is the only mechanism left that works under this constraint. A real, acknowledged
+# regression from the multi-cloud IAM-auth alignment goal above, scoped to this one account -
+# AWS/GCP's other, non-restricted accounts are unaffected and keep IAM auth.
 
 data "aws_caller_identity" "current" {}
-
-data "aws_iam_policy_document" "app_irsa_assume_role" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.eks.arn]
-    }
-
-    # Scoped to exactly the app's own service account, same pattern as ebs-csi.tf's driver role -
-    # not a blanket trust of anything in the cluster.
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
-      values   = ["system:serviceaccount:default:grid-meter-app"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "app_irsa" {
-  name               = "${var.project_name}-app-role"
-  assume_role_policy = data.aws_iam_policy_document.app_irsa_assume_role.json
-}
 
 # ElastiCache requires a "default" user present in every user group (confirmed live via
 # `aws elasticache create-user-group` validation) - explicitly disabled (access_string "off") so
@@ -79,6 +47,17 @@ resource "aws_elasticache_user" "default_disabled" {
   }
 }
 
+# Generated once, stable across deploys (unlike the JWT secret, which deploy-aws.sh freely
+# regenerates every run) - this is a persisted ElastiCache user identity, not an ephemeral
+# per-deploy value. Retrieved by deploy-aws.sh via `terraform output -raw elasticache_app_password`
+# (see outputs.tf) and injected into the k8s secret, same delivery pattern as RDS's password
+# except RDS's comes from AWS-managed Secrets Manager and this one is Terraform-managed directly -
+# ElastiCache has no equivalent managed-password/Secrets-Manager integration for its users.
+resource "random_password" "elasticache_app" {
+  length  = 32
+  special = false
+}
+
 resource "aws_elasticache_user" "app" {
   user_id       = "${var.project_name}-app"
   user_name     = "${var.project_name}-app"
@@ -86,7 +65,8 @@ resource "aws_elasticache_user" "app" {
   access_string = "on ~* +@all" # full access - matches this project's existing no-auth-restriction posture; narrowing command/key scope is a separate hardening axis from the auth mechanism itself
 
   authentication_mode {
-    type = "iam"
+    type      = "password"
+    passwords = [random_password.elasticache_app.result]
   }
 }
 
@@ -97,25 +77,4 @@ resource "aws_elasticache_user_group" "app" {
     aws_elasticache_user.default_disabled.user_id,
     aws_elasticache_user.app.user_id,
   ]
-}
-
-data "aws_iam_policy_document" "elasticache_connect" {
-  statement {
-    effect  = "Allow"
-    actions = ["elasticache:Connect"]
-    resources = [
-      aws_elasticache_replication_group.main.arn,
-      "arn:aws:elasticache:${var.aws_region}:${data.aws_caller_identity.current.account_id}:user:${aws_elasticache_user.app.user_id}",
-    ]
-  }
-}
-
-resource "aws_iam_policy" "elasticache_connect" {
-  name   = "${var.project_name}-elasticache-connect"
-  policy = data.aws_iam_policy_document.elasticache_connect.json
-}
-
-resource "aws_iam_role_policy_attachment" "app_elasticache_connect" {
-  role       = aws_iam_role.app_irsa.name
-  policy_arn = aws_iam_policy.elasticache_connect.arn
 }

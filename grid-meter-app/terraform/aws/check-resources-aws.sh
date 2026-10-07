@@ -80,7 +80,7 @@ check "EKS node group size" aws eks describe-nodegroup --cluster-name "$CLUSTER_
 for addon in vpc-cni kube-proxy coredns aws-ebs-csi-driver metrics-server; do
   check "EKS addon: $addon" aws eks describe-addon --cluster-name "$CLUSTER_NAME" --addon-name "$addon" --query 'addon.status' --output text
 done
-check "EC2 worker nodes (expect 3, Running)" aws ec2 describe-instances \
+check "EC2 worker nodes (expect 4, Running)" aws ec2 describe-instances \
   --filters "Name=tag:eks:cluster-name,Values=$CLUSTER_NAME" "Name=instance-state-name,Values=running" \
   --query 'length(Reservations[].Instances[])' --output text
 echo
@@ -100,8 +100,18 @@ echo
 echo "-- IAM --"
 check "IAM role: eks-cluster" aws iam get-role --role-name grid-meter-app-eks-cluster-role --query 'Role.RoleName' --output text
 check "IAM role: eks-node" aws iam get-role --role-name grid-meter-app-eks-node-role --query 'Role.RoleName' --output text
-check "IAM role: ebs-csi-driver" aws iam get-role --role-name grid-meter-app-ebs-csi-driver-role --query 'Role.RoleName' --output text
-check "OIDC provider" aws iam list-open-id-connect-providers --query "length(OpenIDConnectProviderList[?contains(Arn, '$CLUSTER_NAME') || contains(Arn, 'eks')])" --output text
+check "IAM role: eks-fargate-pod-execution" aws iam get-role --role-name grid-meter-app-fargate-pod-execution-role --query 'Role.RoleName' --output text
+# No "ebs-csi-driver" role or OIDC provider check here, deliberately - this account has a hard
+# SCP block on iam:CreateOpenIDConnectProvider (see elasticache-iam-auth.tf/ebs-csi.tf), so IRSA
+# was abandoned 2026-10-06 in favor of granting EBS CSI permissions directly to the node role
+# (eks.tf's ebs_csi_driver_on_node_role attachment, checked below) - no dedicated IAM role or
+# OIDC provider ever exists on this account, by design, not by oversight. The two checks that
+# used to live here were stale leftovers from the abandoned IRSA approach and would have failed
+# unconditionally forever, which is exactly the kind of permanent false-positive this script
+# exists to avoid producing once it's wired into unattended CI.
+check "IAM role policy: EBS CSI driver on node role" aws iam list-attached-role-policies \
+  --role-name grid-meter-app-eks-node-role \
+  --query "length(AttachedPolicies[?PolicyName=='AmazonEBSCSIDriverPolicy'])" --output text
 echo
 
 echo "== Summary: $PASS passed, $FAIL failed =="

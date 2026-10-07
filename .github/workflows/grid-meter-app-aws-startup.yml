@@ -1,0 +1,127 @@
+name: grid-meter-app AWS startup
+
+# Nightly cold-start of the AWS free-tier demo deployment, mirroring exactly the sequence used
+# interactively all through the 2026-10-06 session that built this (see
+# status/claude_code_2026-10-06.md): terraform apply -> terraform/aws/check-resources-aws.sh ->
+# k8s/deploy-aws.sh -> k8s/check-resources-aws.sh -> kubectl get nodes|services|pods, plus a final
+# end-to-end login check as the real "is the app actually usable" gate.
+#
+# Paired with grid-meter-app-aws-teardown.yml, which destroys everything the evening before -
+# see that workflow's own header comment for why a full nightly destroy/recreate cycle costs
+# meaningfully less than leaving the non-stoppable resources (EKS control plane, NAT Gateway,
+# ElastiCache, Load Balancer - none of which have a stop/start feature) running 24/7.
+#
+# Deliberately separate from grid-meter-app-ci.yml/e2e.yml/load-test.yml (the original local/kind
+# demo's own pipelines) - this is a genuinely different deployment target with its own real AWS
+# cost and its own dedicated, least-privilege CI IAM user (grid-meter-app-ci), not a variant of
+# the existing CI story.
+#
+# Cron caveat: GitHub Actions cron is UTC-only, no timezone/DST awareness. 11:00 UTC is 4:00am
+# PDT (daylight) but 3:00am PST (standard time) - this workflow will run an hour earlier than
+# intended for roughly half the year. Not worth the complexity of two seasonal cron entries for a
+# demo project; re-check this if interviews are ever scheduled during PST months and the buffer
+# before 5am matters.
+on:
+  schedule:
+    - cron: '0 11 * * *'
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: us-east-2
+  # Every script this workflow calls (terraform/aws/check-resources-aws.sh, k8s/deploy-aws.sh,
+  # k8s/check-resources-aws.sh) reads a named AWS CLI profile via `terraform output -raw
+  # aws_profile`, which defaults to the literal string "grid-meter-freetier" - not this user's
+  # actual identity name, just the profile name terraform/aws/variables.tf happens to use. The
+  # "Configure AWS profile" step below creates a LOCAL profile under that same name on the
+  # ephemeral runner, backed by the real grid-meter-app-ci user's keys, so none of those scripts
+  # need any modification to run unattended here.
+  AWS_PROFILE: grid-meter-freetier
+
+jobs:
+  startup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure AWS profile
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.AWS_CI_ACCESS_KEY_ID }}" --profile "$AWS_PROFILE"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_CI_SECRET_ACCESS_KEY }}" --profile "$AWS_PROFILE"
+          aws configure set region "$AWS_REGION" --profile "$AWS_PROFILE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.13.2'
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      # --- Step 1: terraform init | fmt | validate | plan | apply ---
+      - name: Terraform init
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform init -input=false
+
+      - name: Terraform fmt check
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform fmt -check
+
+      - name: Terraform validate
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Terraform apply
+        working-directory: grid-meter-app/terraform/aws
+        # Applying a saved plan file is already non-interactive by design (no -auto-approve
+        # needed or meaningful here - confirmed throughout this session, every manual
+        # `terraform apply "tfplan"` command ran with zero prompt). The real, deliberate, scoped
+        # exception to this project's "a human always runs real apply/destroy" rule is this whole
+        # workflow existing and running unattended on a schedule at all - every interactive
+        # session (Claude Code included) keeps running plan/apply by hand as before.
+        run: terraform apply -input=false tfplan
+
+      # --- Step 2: terraform/aws/check-resources-aws.sh ---
+      - name: Verify Terraform-provisioned AWS resources
+        working-directory: grid-meter-app/terraform/aws
+        run: ./check-resources-aws.sh
+
+      # --- Step 3: k8s/deploy-aws.sh ---
+      - name: Deploy to AWS (build+push images, apply k8s manifests)
+        run: ./grid-meter-app/k8s/deploy-aws.sh
+
+      # --- Step 4: k8s/check-resources-aws.sh ---
+      - name: Verify Kubernetes-deployed app layer
+        run: ./grid-meter-app/k8s/check-resources-aws.sh
+
+      # --- Step 5: kubectl get nodes|services|pods ---
+      - name: Cluster snapshot (nodes/services/pods)
+        if: always()
+        run: |
+          kubectl get nodes -o wide
+          echo
+          kubectl get services -A -o wide
+          echo
+          kubectl get pods -A -o wide
+
+      # --- Final gate: real end-to-end login, the actual "is the app usable" check ---
+      - name: End-to-end login health check
+        run: |
+          LB_HOST="$(kubectl get svc traefik-web -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
+          echo "Testing login against http://$LB_HOST"
+          HTTP_STATUS="$(curl -s -o /tmp/login-response.json -w '%{http_code}' -X POST \
+            "http://$LB_HOST/api/v1/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"demo","password":"GridMeter!Demo2026"}')"
+          echo "HTTP status: $HTTP_STATUS"
+          if [[ "$HTTP_STATUS" != "200" ]]; then
+            echo "Login check failed - app is not actually usable despite passing resource checks."
+            cat /tmp/login-response.json
+            exit 1
+          fi
+          echo "Login check passed. App reachable at http://$LB_HOST"
