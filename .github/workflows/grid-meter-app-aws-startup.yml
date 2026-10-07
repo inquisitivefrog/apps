@@ -73,6 +73,17 @@ jobs:
         working-directory: grid-meter-app/terraform/aws
         run: terraform init -input=false
 
+      # k8s/deploy-aws.sh reads EIP outputs from bootstrap-freetier/'s own, separate Terraform
+      # state (persistent layer, never touched by this workflow's own apply/destroy - see that
+      # module's eip.tf). It needs its own independent `terraform init` - confirmed live
+      # (2026-10-07) that skipping this fails deploy-aws.sh with "Required plugins are not
+      # installed" the moment it tries to read that output, since a fresh CI checkout has no
+      # .terraform/ cache there at all. Never surfaced locally because this directory has stayed
+      # initialized on this Mac since it was first bootstrapped.
+      - name: Terraform init (bootstrap-freetier, for deploy-aws.sh's EIP output reads)
+        working-directory: grid-meter-app/terraform/aws/bootstrap-freetier
+        run: terraform init -input=false
+
       - name: Terraform fmt check
         working-directory: grid-meter-app/terraform/aws
         run: terraform fmt -check
