@@ -176,7 +176,15 @@ kubectl apply -f "$K8S_DIR/ingressroute.yaml"
 echo "== Waiting for rollouts =="
 kubectl rollout status deployment/traefik --timeout=180s
 kubectl rollout status statefulset/kafka --timeout=180s
-kubectl rollout status deployment/api --timeout=240s
+# 240s -> 400s (2026-10-07): confirmed live this timeout is too tight on its own terms, not
+# just theoretically - a real CI run's rollout genuinely finished successfully (both new pods
+# reached 1/1 Ready, old pod correctly terminated) a short time AFTER `kubectl rollout status`
+# had already given up and failed the job. With api-aws.yaml's own probe timing tuned to a
+# ~100-120s real startup time (see that file's own comment), 2 replicas rolling - not always
+# fully parallel, depending on the Deployment's maxUnavailable/maxSurge calculation - can
+# genuinely approach or exceed 240s end to end, especially with image pull and Fargate
+# scheduling time added on top.
+kubectl rollout status deployment/api --timeout=400s
 kubectl rollout status deployment/frontend --timeout=180s
 
 echo "== Waiting for the NLB to actually provision (confirming, not assuming - provisioning takes a minute or two) =="
