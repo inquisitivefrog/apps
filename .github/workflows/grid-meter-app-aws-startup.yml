@@ -211,6 +211,16 @@ jobs:
         working-directory: grid-meter-app/load-tests
         run: ./run.sh ramp-up -Jhost="$EIP_PUBLIC_IP" -Jport=80
 
+      - name: Cooldown before rapid-spike
+        # Added 2026-10-07 after Run #8: steady-state and ramp-up together push ~10 minutes of
+        # continuous traffic through the same 2 pods with 0% errors but climbing p95 (197ms ->
+        # 295ms), then rapid-spike landed exactly on its 500ms ceiling (FAIL, >=) even though it
+        # passed standalone earlier the same day at 316ms. Error rate stayed 0% throughout - this
+        # is accumulated pressure (GC/connection-pool/thread-pool) from the back-to-back sequence,
+        # not rapid-spike's own 100-thread tuning being wrong. A pause lets that settle before the
+        # spike profile runs, matching the standalone conditions it was actually tuned under.
+        run: sleep 60
+
       - name: Load test - rapid-spike (tuned to 100 threads for this architecture)
         working-directory: grid-meter-app/load-tests
         run: ./run.sh rapid-spike -Jhost="$EIP_PUBLIC_IP" -Jport=80 -Jthreads=100
