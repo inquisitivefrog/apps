@@ -14,9 +14,12 @@
 # its whole job is to trigger the main stack's own nightly create/destroy cycle - it must not be
 # destroyed alongside what it's scheduling.
 #
-# TEST SCHEDULES ONLY for now (one-time `at(...)` expressions, near-term) - validating that
-# EventBridge can actually replace GitHub's scheduler before committing to the permanent daily
-# 11:00 UTC / 01:00 UTC cron times, per explicit plan (status/claude_code_2026-10-08.md).
+# Validated 2026-10-08 via two one-time near-term test rules before committing to these permanent
+# daily times: both fired within ~20 seconds of their scheduled time (20:10:17 vs 20:10:00 for
+# startup, 21:00:15 vs 21:00:00 for teardown), and the startup test was also the first-ever fully
+# green run of the complete pipeline with every 2026-10-08 fix in place. Converted to the real
+# daily schedule below (11:00 UTC / 4am PDT startup, 01:00 UTC / 6pm PDT teardown) immediately
+# after - see status/claude_code_2026-10-08.md for the full validation account.
 
 variable "github_pat" {
   description = "Fine-grained GitHub PAT, repo-scoped to inquisitivefrog/apps with Actions: Read and write only. Never set a default - pass via TF_VAR_github_pat in the shell running `terraform apply`, never committed or pasted into chat."
@@ -109,32 +112,37 @@ resource "aws_iam_role_policy" "events_invoke_api_destinations" {
   })
 }
 
-# --- One-time TEST rules (near-term, UTC) - see header comment ---
-# cron(minutes hours day-of-month month ? year) pinned to one specific date/time - EventBridge
-# requires `?` in exactly one of day-of-month/day-of-week, never both. Both targets post
-# {"ref":"main"}, matching exactly what `gh workflow run <workflow> --ref main` sends - the same
-# manual trigger used successfully all session.
-resource "aws_cloudwatch_event_rule" "test_startup" {
-  name                = "${var.project_name}-test-startup-once"
-  description         = "One-time test firing of the AWS startup pipeline, to validate EventBridge can replace GitHub's own delayed scheduler."
-  schedule_expression = "cron(10 20 8 10 ? 2026)"
+# --- Permanent daily rules (UTC) ---
+# cron(minutes hours day-of-month month day-of-week year) - `?` required in exactly one of
+# day-of-month/day-of-week, `*` in the other, matching AWS's own documented daily-rule pattern.
+# Both targets post {"ref":"main"}, matching exactly what `gh workflow run <workflow> --ref main`
+# sends - the same manual trigger used successfully all session.
+#
+# Cron caveat (carried over from grid-meter-app-aws-startup.yml's own header comment): these are
+# UTC-only, no timezone/DST awareness. 11:00 UTC is 4:00am PDT (daylight) but 3:00am PST (standard
+# time) - this will fire an hour earlier than intended for roughly half the year. Re-check if
+# interviews are ever scheduled during PST months and the buffer before 5am matters.
+resource "aws_cloudwatch_event_rule" "daily_startup" {
+  name                = "${var.project_name}-daily-startup"
+  description         = "Daily cold-start of the AWS free-tier demo deployment, 11:00 UTC / ~4am PDT."
+  schedule_expression = "cron(0 11 * * ? *)"
 }
 
-resource "aws_cloudwatch_event_target" "test_startup" {
-  rule     = aws_cloudwatch_event_rule.test_startup.name
+resource "aws_cloudwatch_event_target" "daily_startup" {
+  rule     = aws_cloudwatch_event_rule.daily_startup.name
   arn      = aws_cloudwatch_event_api_destination.startup.arn
   role_arn = aws_iam_role.events_exec.arn
   input    = jsonencode({ ref = "main" })
 }
 
-resource "aws_cloudwatch_event_rule" "test_teardown" {
-  name                = "${var.project_name}-test-teardown-once"
-  description         = "One-time test firing of the AWS teardown pipeline, ~50min after the startup test, to validate EventBridge can replace GitHub's own delayed scheduler."
-  schedule_expression = "cron(0 21 8 10 ? 2026)"
+resource "aws_cloudwatch_event_rule" "daily_teardown" {
+  name                = "${var.project_name}-daily-teardown"
+  description         = "Daily teardown of the AWS free-tier demo deployment, 01:00 UTC / ~6pm PDT the evening before."
+  schedule_expression = "cron(0 1 * * ? *)"
 }
 
-resource "aws_cloudwatch_event_target" "test_teardown" {
-  rule     = aws_cloudwatch_event_rule.test_teardown.name
+resource "aws_cloudwatch_event_target" "daily_teardown" {
+  rule     = aws_cloudwatch_event_rule.daily_teardown.name
   arn      = aws_cloudwatch_event_api_destination.teardown.arn
   role_arn = aws_iam_role.events_exec.arn
   input    = jsonencode({ ref = "main" })
