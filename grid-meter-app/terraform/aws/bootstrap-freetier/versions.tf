@@ -1,12 +1,13 @@
 terraform {
-  # Tightened from ">= 1.11.0" to an exact pin, matching terraform/aws/versions.tf's identical
+  # Tightened from ">= 1.11.0" to `~> 1.13.0`, matching terraform/aws/versions.tf's identical
   # change (2026-10-08) - see that file's own comment for the full account: a real cross-version
   # behavioral difference in `terraform output -raw` on empty state (1.13.2 leaks a warning onto
   # stdout, 1.16.4 doesn't) broke a live CI check, and this dev machine's actual installed
   # version had silently drifted from the 1.13.2 this comment used to claim (via an unpinned
-  # `brew upgrade`) without anyone noticing until that bug surfaced. An exact pin makes that kind
-  # of drift a loud `terraform init` failure instead of a silent gap.
-  required_version = "= 1.13.2"
+  # `brew upgrade` from an unrelated earlier Terraform project) without anyone noticing until
+  # that bug surfaced. `~>` (not an exact pin) blocks that same minor-version drift while still
+  # allowing bug-fix-only patch bumps, matching the `required_providers` convention below.
+  required_version = "~> 1.13.0"
 
   required_providers {
     aws = {
