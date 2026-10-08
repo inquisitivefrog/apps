@@ -309,7 +309,7 @@ jobs:
           TOKEN="$(curl -s -X POST "http://${EIP_PUBLIC_IP}/api/v1/auth/login" \
             -H 'Content-Type: application/json' \
             -d '{"username":"demo","password":"GridMeter!Demo2026"}' | \
-            python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')"
           for mstatus in INACTIVE MAINTENANCE; do
             for i in 1 2 3; do
               curl -sf -X POST "http://${EIP_PUBLIC_IP}/api/v1/meters" \
