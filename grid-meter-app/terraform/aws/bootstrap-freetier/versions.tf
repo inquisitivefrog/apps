@@ -1,11 +1,12 @@
 terraform {
-  # >= 1.11.0 is the real functional floor: S3-native state locking
-  # (use_lockfile, used in the main config's backend.tf) stabilized out of
-  # experimental status in 1.11 and made the old dynamodb_table approach
-  # deprecated (confirmed against HashiCorp's own S3 backend docs, not
-  # assumed). This dev machine actually has 1.13.2 installed, verified via
-  # `terraform version` - both facts checked live, not from memory.
-  required_version = ">= 1.11.0"
+  # Tightened from ">= 1.11.0" to an exact pin, matching terraform/aws/versions.tf's identical
+  # change (2026-10-08) - see that file's own comment for the full account: a real cross-version
+  # behavioral difference in `terraform output -raw` on empty state (1.13.2 leaks a warning onto
+  # stdout, 1.16.4 doesn't) broke a live CI check, and this dev machine's actual installed
+  # version had silently drifted from the 1.13.2 this comment used to claim (via an unpinned
+  # `brew upgrade`) without anyone noticing until that bug surfaced. An exact pin makes that kind
+  # of drift a loud `terraform init` failure instead of a silent gap.
+  required_version = "= 1.13.2"
 
   required_providers {
     aws = {
