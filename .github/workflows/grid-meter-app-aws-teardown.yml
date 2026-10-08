@@ -73,8 +73,14 @@ jobs:
       - name: Check for existing resources
         id: check
         working-directory: grid-meter-app/terraform/aws
+        # NOT `terraform output -raw eks_cluster_name 2>/dev/null || true` - see
+        # grid-meter-app-aws-startup.yml's identical check step for the full account: Terraform
+        # 1.13.2 prints a "Warning: No outputs found" to STDOUT (not stderr) for -raw on empty
+        # state, which `2>/dev/null` never catches, false-positiving this check live on
+        # 2026-10-08. `-json`'s full-output form stays clean JSON regardless of whether the key
+        # exists, so it's parsed structurally instead.
         run: |
-          CLUSTER_NAME="$(terraform output -raw eks_cluster_name 2>/dev/null || true)"
+          CLUSTER_NAME="$(terraform output -json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("eks_cluster_name",{}).get("value",""))' 2>/dev/null || true)"
           if [[ -n "$CLUSTER_NAME" ]]; then
             echo "EKS cluster '$CLUSTER_NAME' found in Terraform state - proceeding with teardown."
             echo "has_resources=true" >> "$GITHUB_OUTPUT"
