@@ -42,3 +42,6 @@ jmeter.log
 *.tfstate.*
 tfplan
 *.tfplan
+
+# Personal scratch note (AuthN reference, not project docs) - deliberately untracked.
+grid-meter-app/README.demo.md
