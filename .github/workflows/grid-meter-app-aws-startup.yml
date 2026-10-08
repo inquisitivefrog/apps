@@ -88,8 +88,17 @@ jobs:
       - name: Check for an already-running stack
         id: check
         working-directory: grid-meter-app/terraform/aws
+        # NOT `terraform output -raw eks_cluster_name 2>/dev/null || true` - confirmed live
+        # (2026-10-08) that Terraform 1.13.2 (this workflow's pinned version) prints a multi-line
+        # "Warning: No outputs found" to STDOUT (not stderr) for -raw on genuinely empty state,
+        # which `2>/dev/null` never catches - CLUSTER_NAME captured that warning text itself as a
+        # non-empty string, so this check false-positived "already up" on every real run today,
+        # silently no-op'ing both the real schedule firing and a manual re-trigger without ever
+        # actually deploying anything. `-json`'s full-output form stays clean JSON (`{}` on empty
+        # state, confirmed on 1.16.4 locally) regardless - parsing that structurally instead of
+        # trusting -raw's stdout to only ever contain the value.
         run: |
-          CLUSTER_NAME="$(terraform output -raw eks_cluster_name 2>/dev/null || true)"
+          CLUSTER_NAME="$(terraform output -json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("eks_cluster_name",{}).get("value",""))' 2>/dev/null || true)"
           if [[ -n "$CLUSTER_NAME" ]]; then
             echo "EKS cluster '$CLUSTER_NAME' already exists in Terraform state - stack is already up. No-op."
             echo "already_up=true" >> "$GITHUB_OUTPUT"
