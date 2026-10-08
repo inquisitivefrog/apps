@@ -35,7 +35,57 @@ env:
   CI: 'true'
 
 jobs:
+  # Added 2026-10-08: GitHub's schedule trigger has shown a consistent ~6-7hr dispatch lag on
+  # this repo (confirmed against grid-meter-app-load-test.yml's weeks of history against its own
+  # cron - a GitHub-side scheduling characteristic, not an AWS Free Tier capacity-queue effect).
+  # That lag let this exact scenario happen live on 2026-10-08: a human manually tore everything
+  # down the night before, then this workflow's own delayed schedule fired ~6 hours late against
+  # an already-empty stack - "Point kubectl at the cluster" hard-failed (`terraform output -raw
+  # eks_cluster_name` has nothing to return), and the unconditional `if: always()` cluster-snapshot
+  # step failed too (kubectl has no valid context), a confusing red X for a run that had nothing
+  # wrong to actually fix. This check job makes a re-fire against an already-empty stack a clean
+  # no-op instead.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      has_resources: ${{ steps.check.outputs.has_resources }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: aws-freetier
+
+      - name: Configure AWS profile
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.AWS_CI_ACCESS_KEY_ID }}" --profile "$AWS_PROFILE"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_CI_SECRET_ACCESS_KEY }}" --profile "$AWS_PROFILE"
+          aws configure set region "$AWS_REGION" --profile "$AWS_PROFILE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.13.2'
+
+      - name: Terraform init
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform init -input=false
+
+      - name: Check for existing resources
+        id: check
+        working-directory: grid-meter-app/terraform/aws
+        run: |
+          CLUSTER_NAME="$(terraform output -raw eks_cluster_name 2>/dev/null || true)"
+          if [[ -n "$CLUSTER_NAME" ]]; then
+            echo "EKS cluster '$CLUSTER_NAME' found in Terraform state - proceeding with teardown."
+            echo "has_resources=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing cluster found in Terraform state - nothing to tear down. No-op."
+            echo "has_resources=false" >> "$GITHUB_OUTPUT"
+          fi
+
   teardown:
+    needs: check
+    if: needs.check.outputs.has_resources == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -90,6 +140,7 @@ jobs:
       # --- Step 3: kubectl get nodes|services|pods ---
       - name: Cluster snapshot (nodes/services/pods)
         if: always()
+        continue-on-error: true
         run: |
           kubectl get nodes -o wide
           echo

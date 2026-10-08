@@ -49,7 +49,58 @@ env:
   EIP_PUBLIC_IP: ${{ vars.EIP_PUBLIC_IP }}
 
 jobs:
+  # Added 2026-10-08: GitHub's schedule trigger has shown a consistent ~6-7hr dispatch lag on
+  # this repo (confirmed against grid-meter-app-load-test.yml's weeks of history against its own
+  # cron - a GitHub-side scheduling characteristic, not an AWS Free Tier capacity-queue effect).
+  # That lag can let a startup firing land after a previous day's stack is still up (teardown
+  # hasn't run yet, or itself ran late) - re-running the full apply/deploy against an
+  # already-live cluster risks real breakage, not just wasted work: a `helm upgrade --install`
+  # onto the existing AWS Load Balancer Controller release can leave its webhook serving a stale
+  # TLS cert if the pod didn't restart (hit live this session), and deploy-aws.sh unconditionally
+  # generates a fresh JWT secret + forces an `api`/`frontend` rollout restart every run, which
+  # would silently invalidate any live session and bounce pods on infra that didn't need it.
+  # This check job exists purely to make a re-fire against a live stack a clean no-op instead.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      already_up: ${{ steps.check.outputs.already_up }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: aws-freetier
+
+      - name: Configure AWS profile
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.AWS_CI_ACCESS_KEY_ID }}" --profile "$AWS_PROFILE"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_CI_SECRET_ACCESS_KEY }}" --profile "$AWS_PROFILE"
+          aws configure set region "$AWS_REGION" --profile "$AWS_PROFILE"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.13.2'
+
+      - name: Terraform init
+        working-directory: grid-meter-app/terraform/aws
+        run: terraform init -input=false
+
+      - name: Check for an already-running stack
+        id: check
+        working-directory: grid-meter-app/terraform/aws
+        run: |
+          CLUSTER_NAME="$(terraform output -raw eks_cluster_name 2>/dev/null || true)"
+          if [[ -n "$CLUSTER_NAME" ]]; then
+            echo "EKS cluster '$CLUSTER_NAME' already exists in Terraform state - stack is already up. No-op."
+            echo "already_up=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing cluster found in Terraform state - proceeding with full startup."
+            echo "already_up=false" >> "$GITHUB_OUTPUT"
+          fi
+
   startup:
+    needs: check
+    if: needs.check.outputs.already_up == 'false'
     runs-on: ubuntu-latest
     # Bumped from 45 to 60 (2026-10-07) - adding ~14 min of load tests (steady-state + ramp-up +
     # tuned rapid-spike, confirmed via real timed runs) on top of the existing ~9 min deploy
