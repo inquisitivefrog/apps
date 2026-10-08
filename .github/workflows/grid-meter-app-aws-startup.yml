@@ -225,6 +225,19 @@ jobs:
         working-directory: grid-meter-app/load-tests
         run: ./run.sh rapid-spike -Jhost="$EIP_PUBLIC_IP" -Jport=80 -Jthreads=100
 
+      - name: Upload load-test results
+        # Added 2026-10-07 after Run #9's ramp-up failure (a 60s burst of errors at peak
+        # concurrency, self-recovering, 1.33% overall) couldn't be diagnosed - the raw JTL/HTML
+        # report only ever existed on the ephemeral ubuntu-latest runner and was gone once the
+        # job ended. if: always() so this captures whatever ran even if an earlier load-test step
+        # failed the job.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-${{ github.run_id }}
+          path: grid-meter-app/load-tests/results/
+          retention-days: 7
+
       # --- Demo-data polish ---
       # Added 2026-10-07: the full nightly destroy/rebuild wipes RDS completely, so anything
       # seeded "once" is gone by the next morning - these have to run every day, not just the
