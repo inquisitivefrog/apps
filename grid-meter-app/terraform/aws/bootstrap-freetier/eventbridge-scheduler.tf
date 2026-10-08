@@ -69,23 +69,32 @@ resource "aws_cloudwatch_event_api_destination" "teardown" {
   connection_arn                   = aws_cloudwatch_event_connection.github_api.arn
 }
 
-# --- IAM role EventBridge Scheduler assumes to invoke the API Destinations ---
-resource "aws_iam_role" "scheduler_exec" {
-  name = "${var.project_name}-eventbridge-scheduler-exec"
+# --- IAM role EventBridge Rules assumes to invoke the API Destinations ---
+# NOT EventBridge *Scheduler* (scheduler.amazonaws.com) - confirmed live (2026-10-08) via a real
+# failed apply that Scheduler's `aws_scheduler_schedule` does NOT support API Destinations as a
+# target at all (only "templated" targets like SQS/Lambda/Step Functions, or "universal" targets
+# that call an AWS service API directly - a third-party HTTPS endpoint is neither). API
+# Destinations are a feature of the older EventBridge Rules service instead
+# (`aws_cloudwatch_event_rule`/`aws_cloudwatch_event_target`), confirmed against AWS's own docs,
+# which supports them natively. Rules don't have Scheduler's one-time `at(...)` expression though
+# - only `cron(...)`/`rate(...)` - so the near-term tests below use a cron expression pinned to a
+# specific date/time, which only ever matches once by construction.
+resource "aws_iam_role" "events_exec" {
+  name = "${var.project_name}-eventbridge-rules-exec"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = "scheduler.amazonaws.com" }
+      Principal = { Service = "events.amazonaws.com" }
       Action    = "sts:AssumeRole"
     }]
   })
 }
 
-resource "aws_iam_role_policy" "scheduler_invoke_api_destinations" {
+resource "aws_iam_role_policy" "events_invoke_api_destinations" {
   name = "${var.project_name}-invoke-github-dispatch"
-  role = aws_iam_role.scheduler_exec.id
+  role = aws_iam_role.events_exec.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -100,37 +109,33 @@ resource "aws_iam_role_policy" "scheduler_invoke_api_destinations" {
   })
 }
 
-# --- One-time TEST schedules (near-term, UTC) - see header comment ---
-# Both post {"ref":"main"} as the request body, matching exactly what `gh workflow run
-# <workflow> --ref main` sends - the same manual trigger used successfully all session.
-resource "aws_scheduler_schedule" "test_startup" {
-  name                         = "${var.project_name}-test-startup-once"
-  schedule_expression          = "at(2026-10-08T20:05:00)"
-  schedule_expression_timezone = "UTC"
-
-  flexible_time_window {
-    mode = "OFF"
-  }
-
-  target {
-    arn      = aws_cloudwatch_event_api_destination.startup.arn
-    role_arn = aws_iam_role.scheduler_exec.arn
-    input    = jsonencode({ ref = "main" })
-  }
+# --- One-time TEST rules (near-term, UTC) - see header comment ---
+# cron(minutes hours day-of-month month ? year) pinned to one specific date/time - EventBridge
+# requires `?` in exactly one of day-of-month/day-of-week, never both. Both targets post
+# {"ref":"main"}, matching exactly what `gh workflow run <workflow> --ref main` sends - the same
+# manual trigger used successfully all session.
+resource "aws_cloudwatch_event_rule" "test_startup" {
+  name                = "${var.project_name}-test-startup-once"
+  description         = "One-time test firing of the AWS startup pipeline, to validate EventBridge can replace GitHub's own delayed scheduler."
+  schedule_expression = "cron(10 20 8 10 ? 2026)"
 }
 
-resource "aws_scheduler_schedule" "test_teardown" {
-  name                         = "${var.project_name}-test-teardown-once"
-  schedule_expression          = "at(2026-10-08T20:55:00)"
-  schedule_expression_timezone = "UTC"
+resource "aws_cloudwatch_event_target" "test_startup" {
+  rule     = aws_cloudwatch_event_rule.test_startup.name
+  arn      = aws_cloudwatch_event_api_destination.startup.arn
+  role_arn = aws_iam_role.events_exec.arn
+  input    = jsonencode({ ref = "main" })
+}
 
-  flexible_time_window {
-    mode = "OFF"
-  }
+resource "aws_cloudwatch_event_rule" "test_teardown" {
+  name                = "${var.project_name}-test-teardown-once"
+  description         = "One-time test firing of the AWS teardown pipeline, ~50min after the startup test, to validate EventBridge can replace GitHub's own delayed scheduler."
+  schedule_expression = "cron(0 21 8 10 ? 2026)"
+}
 
-  target {
-    arn      = aws_cloudwatch_event_api_destination.teardown.arn
-    role_arn = aws_iam_role.scheduler_exec.arn
-    input    = jsonencode({ ref = "main" })
-  }
+resource "aws_cloudwatch_event_target" "test_teardown" {
+  rule     = aws_cloudwatch_event_rule.test_teardown.name
+  arn      = aws_cloudwatch_event_api_destination.teardown.arn
+  role_arn = aws_iam_role.events_exec.arn
+  input    = jsonencode({ ref = "main" })
 }
