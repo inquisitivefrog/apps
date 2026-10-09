@@ -211,19 +211,33 @@ jobs:
       # internal implementation detail that changes every rebuild, same as the Classic ELB it
       # replaced.
       - name: End-to-end login health check
+        # Was a single curl attempt, no retry - confirmed live 2026-10-09 that this let a real,
+        # genuine outage (traefik's Fargate pod landed outside the NLB's single enabled AZ -
+        # fixed in terraform/aws/fargate.tf's aws_eks_fargate_profile.traefik_single_az) slip
+        # through as a hard failure with zero chance to recover, when a short poll would have
+        # given the same gate a fair chance against any transient cause too (e.g. the NLB's own
+        # target-health-check promotion, which takes a real, nonzero number of seconds after a
+        # fresh deploy even when everything is correctly configured - not something a single
+        # immediate attempt can ever account for). Same standing lesson as this project's
+        # chaos-test scripts: poll for the actual readiness condition, don't assume a fixed/single
+        # check reflects real convergence.
         run: |
-          echo "Testing login against http://$EIP_PUBLIC_IP"
-          HTTP_STATUS="$(curl -s -o /tmp/login-response.json -w '%{http_code}' -X POST \
-            "http://$EIP_PUBLIC_IP/api/v1/auth/login" \
-            -H 'Content-Type: application/json' \
-            -d '{"username":"demo","password":"GridMeter!Demo2026"}')"
-          echo "HTTP status: $HTTP_STATUS"
-          if [[ "$HTTP_STATUS" != "200" ]]; then
-            echo "Login check failed - app is not actually usable despite passing resource checks."
-            cat /tmp/login-response.json
-            exit 1
-          fi
-          echo "Login check passed. App reachable at http://$EIP_PUBLIC_IP"
+          echo "Testing login against http://$EIP_PUBLIC_IP (polling up to 2 minutes)"
+          for i in $(seq 1 12); do
+            HTTP_STATUS="$(curl -s -m 10 -o /tmp/login-response.json -w '%{http_code}' -X POST \
+              "http://$EIP_PUBLIC_IP/api/v1/auth/login" \
+              -H 'Content-Type: application/json' \
+              -d '{"username":"demo","password":"GridMeter!Demo2026"}' || echo "000")"
+            echo "Attempt $i: HTTP status $HTTP_STATUS"
+            if [[ "$HTTP_STATUS" == "200" ]]; then
+              echo "Login check passed. App reachable at http://$EIP_PUBLIC_IP"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Login check failed after 2 minutes of polling - app is not actually usable despite passing resource checks."
+          cat /tmp/login-response.json 2>/dev/null || true
+          exit 1
 
       # --- Daily demo traffic variety (steady-state / ramp-up / rapid-spike) ---
       # Added 2026-10-07, re-scoped 2026-10-07 after Runs #8/#9/#10 each failed differently
