@@ -38,7 +38,7 @@ spec:
     metadata:
       labels:
         app: traefik
-        fargate: "true" # picked up by terraform/aws/fargate.tf's label-selector Fargate profile - see that file's own comment for why
+        fargate-single-az: "true" # picked up by terraform/aws/fargate.tf's dedicated single-AZ Fargate profile (aws_eks_fargate_profile.traefik_single_az) - NOT the shared fargate=true label api/frontend use, since traefik specifically must land in the same AZ as the NLB (see that resource's own comment for the real outage this fixes)
     spec:
       serviceAccountName: traefik-ingress-controller
       containers:

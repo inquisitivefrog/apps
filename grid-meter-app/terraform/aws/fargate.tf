@@ -13,8 +13,10 @@
 # cannot move to Fargate - it stays on the existing EC2 node group. This Fargate profile is scoped
 # via a label selector (not just the namespace) specifically so Kafka's pods are excluded and
 # continue scheduling onto the EC2 node group as before; only pods explicitly labeled
-# `fargate: "true"` (intended: api, frontend, traefik - the stateless, memory-hungry-relative-to-
-# node-size pods) match this profile.
+# `fargate: "true"` (api, frontend - the stateless, memory-hungry-relative-to-node-size pods)
+# match this profile. traefik moved to its own dedicated, single-AZ profile below
+# (aws_eks_fargate_profile.traefik_single_az) on 2026-10-09 - see that resource's own comment
+# for why it can't share this one.
 
 # --- Fargate pod execution role ---
 # Every Fargate profile needs one of these - it's the role AWS uses on your behalf to pull images
@@ -85,6 +87,47 @@ resource "aws_eks_fargate_profile" "default_ns_selected_pods" {
     namespace = "kube-system"
     labels = {
       fargate = "true"
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_fargate_pod_execution_policy,
+    aws_eks_node_group.main,
+  ]
+}
+
+# --- Dedicated single-AZ Fargate profile for traefik only ---
+# The NLB (traefik-aws.yaml's Service) is deliberately pinned to a single AZ/subnet (us-east-2a,
+# aws_subnet.public[0] - matching eip.tf's single persistent EIP) - an NLB can only route to
+# targets inside its own enabled AZs. The broad profile above spans all 3 AZs
+# (aws_subnet.private[*]), so if the traefik pod itself ever lands on a Fargate node outside
+# us-east-2a, the NLB's target shows up as State: "unused" / "Target.NotInUse" / "Target is in an
+# Availability Zone that is not enabled for the load balancer" - a complete, silent public outage
+# despite every kubectl-level health check passing cleanly. Confirmed live 2026-10-09: the
+# EventBridge-triggered morning run deployed cleanly (every pod Ready, all CI checks green up to
+# this point), but Fargate happened to schedule traefik into us-east-2b, and the app was 100%
+# unreachable - a TCP SYN timeout, not an HTTP error, confirmed via curl/nc/ping all independently
+# - for over 5 hours until caught manually, because the "End-to-end login health check" step's
+# single curl attempt had no retry and only ran once, early in the run.
+#
+# This profile exists specifically to make that scheduling outcome impossible: only the traefik
+# pod (carrying its own distinct `fargate-single-az: "true"` label, deliberately NOT the shared
+# `fargate: "true"` the broad profile above matches) is scheduled here, restricted to the one
+# private subnet in the same AZ as the NLB. Kept as a separate profile rather than just narrowing
+# the broad one's subnet_ids, since AWS's own docs state pod-to-profile matching is undefined when
+# a pod could satisfy more than one Fargate profile's selector - giving traefik a distinct label
+# key (not just reusing fargate=true) avoids that ambiguity entirely, rather than relying on
+# profile evaluation order.
+resource "aws_eks_fargate_profile" "traefik_single_az" {
+  cluster_name           = aws_eks_cluster.main.name
+  fargate_profile_name   = "${var.project_name}-traefik-single-az"
+  pod_execution_role_arn = aws_iam_role.eks_fargate_pod_execution.arn
+  subnet_ids             = [aws_subnet.private[0].id] # us-east-2a - confirmed live via `terraform state show`, must match the NLB's enabled AZ
+
+  selector {
+    namespace = "default"
+    labels = {
+      "fargate-single-az" = "true"
     }
   }
 
