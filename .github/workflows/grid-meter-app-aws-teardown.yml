@@ -73,16 +73,21 @@ jobs:
       - name: Check for existing resources
         id: check
         working-directory: grid-meter-app/terraform/aws
-        # NOT `terraform output -raw eks_cluster_name 2>/dev/null || true` - see
-        # grid-meter-app-aws-startup.yml's identical check step for the full account: Terraform
-        # 1.13.2 prints a "Warning: No outputs found" to STDOUT (not stderr) for -raw on empty
-        # state, which `2>/dev/null` never catches, false-positiving this check live on
-        # 2026-10-08. `-json`'s full-output form stays clean JSON regardless of whether the key
-        # exists, so it's parsed structurally instead.
+        # NOT `terraform output -raw eks_cluster_name 2>/dev/null || true`, and NOT (as of
+        # 2026-10-10) `terraform output -json` either - see
+        # grid-meter-app-aws-startup.yml's identical check step for the full two-bug account:
+        # -raw leaked a stdout warning past `2>/dev/null` (2026-10-08); -json's structural parse
+        # fixed that but had its own live failure (2026-10-10) when a cancelled `terraform
+        # destroy` left `aws_eks_cluster.main` genuinely still present/`ACTIVE`, but two
+        # *unrelated* already-destroyed-resource outputs (`rds_endpoint`/`elasticache_endpoint`)
+        # failed to evaluate and wiped the entire outputs map as a side effect - this check then
+        # reported a false "nothing to tear down" for a cluster that was still there and still
+        # billing. Checking actual resource presence in `terraform state list` instead - immune
+        # to outputs being collaterally emptied by unrelated resources elsewhere in the same
+        # state.
         run: |
-          CLUSTER_NAME="$(terraform output -json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("eks_cluster_name",{}).get("value",""))' 2>/dev/null || true)"
-          if [[ -n "$CLUSTER_NAME" ]]; then
-            echo "EKS cluster '$CLUSTER_NAME' found in Terraform state - proceeding with teardown."
+          if terraform state list 2>/dev/null | grep -qx 'aws_eks_cluster.main'; then
+            echo "EKS cluster found in Terraform state - proceeding with teardown."
             echo "has_resources=true" >> "$GITHUB_OUTPUT"
           else
             echo "No existing cluster found in Terraform state - nothing to tear down. No-op."
