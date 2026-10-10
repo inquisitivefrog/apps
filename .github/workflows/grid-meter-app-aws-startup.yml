@@ -92,15 +92,24 @@ jobs:
         # (2026-10-08) that Terraform 1.13.2 (this workflow's pinned version) prints a multi-line
         # "Warning: No outputs found" to STDOUT (not stderr) for -raw on genuinely empty state,
         # which `2>/dev/null` never catches - CLUSTER_NAME captured that warning text itself as a
-        # non-empty string, so this check false-positived "already up" on every real run today,
+        # non-empty string, so this check false-positived "already up" on every real run that day,
         # silently no-op'ing both the real schedule firing and a manual re-trigger without ever
-        # actually deploying anything. `-json`'s full-output form stays clean JSON (`{}` on empty
-        # state, confirmed on 1.16.4 locally) regardless - parsing that structurally instead of
-        # trusting -raw's stdout to only ever contain the value.
+        # actually deploying anything.
+        #
+        # ALSO not `terraform output -json` at all (even the structurally-parsed form this step
+        # used until 2026-10-10) - confirmed live that day via a second, different false result:
+        # a `terraform destroy` cancelled mid-run (by the teardown job's own timeout, see that
+        # workflow's header) left `aws_eks_cluster.main` genuinely still in state/still `ACTIVE`
+        # in AWS, but `rds_endpoint`/`elasticache_endpoint` - two *other* outputs in the same
+        # outputs.tf, referencing the RDS/ElastiCache resources that destroy run HAD finished
+        # destroying - failed to evaluate, which wiped out the entire outputs map (including the
+        # otherwise-fine `eks_cluster_name`) as a side effect. Any -json output check reported a
+        # false "nothing exists" for a cluster that was very much still there and still billing.
+        # Checking actual resource presence in `terraform state list` instead - immune to outputs
+        # being collaterally emptied by unrelated resources elsewhere in the same state.
         run: |
-          CLUSTER_NAME="$(terraform output -json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("eks_cluster_name",{}).get("value",""))' 2>/dev/null || true)"
-          if [[ -n "$CLUSTER_NAME" ]]; then
-            echo "EKS cluster '$CLUSTER_NAME' already exists in Terraform state - stack is already up. No-op."
+          if terraform state list 2>/dev/null | grep -qx 'aws_eks_cluster.main'; then
+            echo "EKS cluster already exists in Terraform state - stack is already up. No-op."
             echo "already_up=true" >> "$GITHUB_OUTPUT"
           else
             echo "No existing cluster found in Terraform state - proceeding with full startup."
