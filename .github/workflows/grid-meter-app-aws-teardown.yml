@@ -93,7 +93,16 @@ jobs:
     needs: check
     if: needs.check.outputs.has_resources == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Bumped 30 -> 45 (2026-10-10) after a real, live cancellation: the 2026-10-10 01:00 UTC
+    # scheduled run hit this ceiling mid-`terraform destroy`, right as it reached
+    # `aws_eks_cluster.main: Destroying...` - the EKS node group alone took 8m13s that run (vs.
+    # much faster in prior runs), leaving no budget left for the cluster delete that follows it
+    # in the dependency graph. GitHub Actions force-cancelled the job and orphaned the terraform
+    # process, leaving an empty but still-`ACTIVE` (and still billing) EKS control plane behind -
+    # confirmed live via `aws eks describe-cluster` after the fact. 45 minutes gives real headroom
+    # given EKS cluster deletion alone commonly takes 10-15 minutes even with nothing left inside
+    # it.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7
