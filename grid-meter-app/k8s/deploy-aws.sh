@@ -87,33 +87,31 @@ echo "== Installing/upgrading the AWS Load Balancer Controller (needed for traef
 helm repo add eks https://aws.github.io/eks-charts >/dev/null 2>&1 || true
 helm repo update >/dev/null
 
-# Retried (2026-10-15, up to 5 attempts, 10s apart) after a real live failure: `helm upgrade
-# --install` applies this chart's own CRDs (TargetGroupBinding, IngressClassParams) and
-# resources using them in the same release - EKS's API server is a load-balanced, multi-replica
-# backend, and a CRD registered on one replica isn't always visible yet on whichever replica
-# validates the very next request a few hundred ms later. Surfaced live as "Error: unable to
-# build kubernetes objects from release manifest: error validating \"\": error validating data:
-# the server is currently unable to handle the request" on a run where CoreDNS/metrics-server/
-# EBS CSI had all installed fine moments earlier through the same API server - a CRD-propagation
-# race specific to this one chart's self-bundled CRDs, not a sign the cluster itself was
-# unhealthy. Retrying the same idempotent `helm upgrade --install` absorbs it instead of failing
-# the whole run on what's normally a one-off, few-second blip.
-for attempt in 1 2 3 4 5; do
-  if helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-    -n kube-system \
-    --set clusterName="$CLUSTER_NAME" \
-    --set region="$AWS_REGION" \
-    --set vpcId="$VPC_ID" \
-    --wait --timeout 120s; then
-    break
-  fi
-  if [[ "$attempt" == 5 ]]; then
-    echo "aws-load-balancer-controller install failed after 5 attempts - not a transient blip. Giving up."
-    exit 1
-  fi
-  echo "aws-load-balancer-controller install failed (attempt $attempt/5) - retrying in 10s..."
-  sleep 10
-done
+# --disable-openapi-validation added 2026-10-15 after a real, live, 100%-reproducible failure -
+# NOT a transient/timing issue (an earlier version of this fix tried a 5-attempt retry loop on
+# the theory that it was a CRD-propagation race; that fix did NOT work, failing identically on
+# all 5 attempts across two separate fresh clusters, including one retried again 25+ minutes
+# after cluster creation with no change). Root-caused by extracting the chart's rendered
+# manifest (`helm template`) and bisecting it via `kubectl apply --dry-run=server`: every
+# resource validated fine individually EXCEPT templates/ingressclass.yaml's `kind: List` object,
+# which wraps one CRD-typed item (IngressClassParams, elbv2.k8s.aws/v1beta1) and one built-in-
+# type item (IngressClass, networking.k8s.io/v1) together. That specific combination - a `List`
+# mixing a custom-resource item with a built-in-type item - reproducibly breaks OpenAPI v3
+# schema validation against this EKS version's (1.36) API server with the generic, unhelpful
+# "error validating \"\": error validating data: the server is currently unable to handle the
+# request". Confirmed via `kubectl apply --dry-run=server --validate=false` on the extracted
+# List object: succeeds cleanly once validation is skipped, and nothing else about the List's
+# content changes. Helm's equivalent flag (--disable-openapi-validation) skips the same
+# client-side schema-validation pass that's hitting this bug, without disabling the API server's
+# own real validation (still enforced on the actual object creation, confirmed via the
+# successful real install below).
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName="$CLUSTER_NAME" \
+  --set region="$AWS_REGION" \
+  --set vpcId="$VPC_ID" \
+  --disable-openapi-validation \
+  --wait --timeout 120s
 
 echo "== Applying Traefik CRDs + RBAC (shared with kind) =="
 kubectl apply -f "$K8S_DIR/traefik-crds.yaml"
