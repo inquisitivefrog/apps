@@ -86,12 +86,34 @@ echo "== Installing/upgrading the AWS Load Balancer Controller (needed for traef
 # Fargate pods can't reach node-role credentials at all (same constraint ebs-csi.tf already hit).
 helm repo add eks https://aws.github.io/eks-charts >/dev/null 2>&1 || true
 helm repo update >/dev/null
-helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system \
-  --set clusterName="$CLUSTER_NAME" \
-  --set region="$AWS_REGION" \
-  --set vpcId="$VPC_ID" \
-  --wait --timeout 120s
+
+# Retried (2026-10-15, up to 5 attempts, 10s apart) after a real live failure: `helm upgrade
+# --install` applies this chart's own CRDs (TargetGroupBinding, IngressClassParams) and
+# resources using them in the same release - EKS's API server is a load-balanced, multi-replica
+# backend, and a CRD registered on one replica isn't always visible yet on whichever replica
+# validates the very next request a few hundred ms later. Surfaced live as "Error: unable to
+# build kubernetes objects from release manifest: error validating \"\": error validating data:
+# the server is currently unable to handle the request" on a run where CoreDNS/metrics-server/
+# EBS CSI had all installed fine moments earlier through the same API server - a CRD-propagation
+# race specific to this one chart's self-bundled CRDs, not a sign the cluster itself was
+# unhealthy. Retrying the same idempotent `helm upgrade --install` absorbs it instead of failing
+# the whole run on what's normally a one-off, few-second blip.
+for attempt in 1 2 3 4 5; do
+  if helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+    -n kube-system \
+    --set clusterName="$CLUSTER_NAME" \
+    --set region="$AWS_REGION" \
+    --set vpcId="$VPC_ID" \
+    --wait --timeout 120s; then
+    break
+  fi
+  if [[ "$attempt" == 5 ]]; then
+    echo "aws-load-balancer-controller install failed after 5 attempts - not a transient blip. Giving up."
+    exit 1
+  fi
+  echo "aws-load-balancer-controller install failed (attempt $attempt/5) - retrying in 10s..."
+  sleep 10
+done
 
 echo "== Applying Traefik CRDs + RBAC (shared with kind) =="
 kubectl apply -f "$K8S_DIR/traefik-crds.yaml"

@@ -124,7 +124,18 @@ jobs:
     # tuned rapid-spike, confirmed via real timed runs) on top of the existing ~9 min deploy
     # cycle leaves less margin than is comfortable at 45, especially given CI-runner performance
     # variability this project hasn't characterized yet.
-    timeout-minutes: 60
+    #
+    # Bumped again 60 -> 80 (2026-10-15) after two real, live cancellations: both the 2026-10-13
+    # and 2026-10-14 scheduled runs hit this exact ceiling mid-`ramp-up`, within a minute of each
+    # other (12:01 UTC both days) - RDS/ElastiCache creation time during `terraform apply` ran
+    # longer those two days than the ~9 min this comment's own prior estimate assumed, eating
+    # into the budget meant for the load tests that follow. Matches the same "job timeout too
+    # tight for a slow day" bug shape already fixed once on the teardown workflow's own job
+    # (30 -> 45, 2026-10-09) - worth treating generally: this project's AWS resource creation/
+    # destruction times have real day-to-day variance (see the still-open load-test
+    # run-to-run-variance item in status/), and tightly-tuned job timeouts don't have margin for
+    # it.
+    timeout-minutes: 80
     steps:
       - name: Checkout
         uses: actions/checkout@v7
