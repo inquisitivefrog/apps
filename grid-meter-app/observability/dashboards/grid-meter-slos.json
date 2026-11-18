@@ -1,0 +1,455 @@
+{
+  "title": "Grid Meter \u2014 SLOs",
+  "uid": "grid-meter-slos",
+  "tags": [
+    "grid-meter"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "grid-meter"
+      ],
+      "asDropdown": false,
+      "keepTime": false,
+      "includeVars": false,
+      "title": "Grid Meter dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "id": 41,
+      "type": "stat",
+      "title": "Availability SLI (7d)",
+      "description": "Share of API requests not answered with a 5xx or shed with a 429, measured at Traefik's router (so it counts failures the app never sees: no healthy backend, load shedding). SLO 99.5%; orange below SLO, red below the illustrative 99% SLA.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "noValue": "no traffic",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.99
+              },
+              {
+                "color": "green",
+                "value": 0.995
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "1 - (((sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\", code=~\"5..|429\"}[7d])) or vector(0)) / sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[7d]))) and on() (sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[7d])) > 0))",
+          "legendFormat": "Availability SLI (7d)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "stat",
+      "title": "Availability error budget left (7d)",
+      "description": "Share of the 0.5% error budget not yet spent this window. Negative = SLO missed.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "noValue": "no traffic",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 0.25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "1 - (((sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\", code=~\"5..|429\"}[7d])) or vector(0)) / sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[7d]))) and on() (sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[7d])) > 0)) / 0.005",
+          "legendFormat": "Availability error budget left (7d)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "stat",
+      "title": "Latency SLI (7d): under 500ms",
+      "description": "Share of API requests (health checks excluded) served in under 500ms, measured by the app. SLO 99%.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "noValue": "no traffic",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "1 - ((1 - sum(increase(http_server_requests_seconds_bucket{le=\"0.5\", uri!~\"/actuator.*\"}[7d])) / sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[7d]))) and on() (sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[7d])) > 0))",
+          "legendFormat": "Latency SLI (7d): under 500ms",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 44,
+      "type": "stat",
+      "title": "Latency error budget left (7d)",
+      "description": "Share of the 1% slow-request budget not yet spent this window. Negative = SLO missed.",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "noValue": "no traffic",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 0.25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "1 - ((1 - sum(increase(http_server_requests_seconds_bucket{le=\"0.5\", uri!~\"/actuator.*\"}[7d])) / sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[7d]))) and on() (sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[7d])) > 0)) / 0.01",
+          "legendFormat": "Latency error budget left (7d)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Availability (1h rolling) \u2014 dashed: SLO 99.5% \u00b7 SLA 99% (illustrative)",
+      "description": "The same SLI over a rolling hour, to show when budget was spent. The SLA line is illustrative: this app has no customer contract, but an SLA is always set looser than the SLO so a problem is caught internally before a contract is breached.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMin": 0.98,
+            "axisSoftMax": 1
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.99
+              },
+              {
+                "color": "orange",
+                "value": 0.995
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "1 - (((sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\", code=~\"5..|429\"}[1h])) or vector(0)) / sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[1h]))) and on() (sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[1h])) > 0))",
+          "legendFormat": "availability",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "Latency under 500ms (1h rolling) \u2014 dashed: SLO 99%",
+      "description": "The latency SLI over a rolling hour.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMin": 0.98,
+            "axisSoftMax": 1
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.99
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "1 - ((1 - sum(increase(http_server_requests_seconds_bucket{le=\"0.5\", uri!~\"/actuator.*\"}[1h])) / sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[1h]))) and on() (sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[1h])) > 0))",
+          "legendFormat": "under 500ms",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 47,
+      "type": "timeseries",
+      "title": "Error budget burn rate (1h) \u2014 dashed: 6x slow-burn \u00b7 14.4x fast-burn alert levels",
+      "description": "How fast each budget is being spent: 1x spends exactly the whole budget over the window. The burn-rate alerts (alert group slo) fire when both a long and a short window exceed these levels, so a brief blip that has already stopped doesn't page.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:x",
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 6
+              },
+              {
+                "color": "red",
+                "value": 14.4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "(((sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\", code=~\"5..|429\"}[1h])) or vector(0)) / sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[1h]))) and on() (sum(increase(traefik_router_requests_total{service=\"grid-meter-api-edge\"}[1h])) > 0)) / 0.005",
+          "legendFormat": "availability",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "((1 - sum(increase(http_server_requests_seconds_bucket{le=\"0.5\", uri!~\"/actuator.*\"}[1h])) / sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[1h]))) and on() (sum(increase(http_server_requests_seconds_count{uri!~\"/actuator.*\"}[1h])) > 0)) / 0.01",
+          "legendFormat": "latency",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}

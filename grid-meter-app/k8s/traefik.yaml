@@ -55,6 +55,18 @@ spec:
             # slice's Prometheus via additionalScrapeConfigs (kube-prometheus-stack-values.yaml),
             # not a ServiceMonitor, to avoid hand-editing the vendored traefik-rbac.yaml further.
             - --metrics.prometheus=true
+            # Per-router request counts, labeled with the router's service: the only Traefik metric that
+            # sees EVERY request to the api routes -- served, 5xx, shed (429 from a middleware) and
+            # 'no healthy backend' 503s. traefik_service_requests_total misses the last two (2026-11-18:
+            # 199,508 no-backend 503s during a total api outage, 0 on the service metric), so the
+            # availability SLI reads this one.
+            - --metrics.prometheus.addRoutersLabels=true
+            # Default false DROPS a router whose Service has no ready endpoints, so during a total
+            # api outage /api/* fell through to the PathPrefix(`/`) frontend route and nginx
+            # answered POSTs with 405 -- a 4xx the availability SLO doesn't count, hiding the
+            # outage (51,905 of them in the 2026-11-18 600-thread spike). true keeps the router
+            # and returns 503.
+            - --providers.kubernetescrd.allowEmptyServices=true
           ports:
             - name: web
               containerPort: 80
@@ -62,8 +74,16 @@ spec:
             - name: metrics
               containerPort: 8080
           resources:
+            # The 2026-11-18 600-thread rapid-spike runs on kind: 128Mi was OOMKilled under ~600
+            # held connections, and with no CPU request Traefik got the same share as everything
+            # else on the one node while Alloy and Tempo took 5-7 cores -- it ended up wedged
+            # (a goroutine dump showed 430 requests queued on net/http.Transport's idle-connection
+            # mutex, the holder starved of CPU). The request gives the edge a guaranteed share
+            # under contention; no CPU limit, so it can still burst.
+            requests:
+              cpu: 500m
             limits:
-              memory: 128Mi
+              memory: 512Mi  # 256Mi OOMKilled twice at 600 threads (2026-11-18): ~1,200 sockets in and out
 ---
 # ClusterIP only -- in-cluster metrics scraping, not a second way to reach the dashboard from the
 # host. Doesn't contradict k8s/README.md's "No Traefik dashboard exposed" simplification, which is

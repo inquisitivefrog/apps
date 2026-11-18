@@ -63,8 +63,17 @@ spec:
             - name: config
               mountPath: /etc/alloy
           resources:
+            # A log shipper must never starve what it observes. On 2026-11-18 Alloy used 5-7
+            # cores of the 8-core node twice: once with no load at all (10:18-10:32, while its pod
+            # discovery had silently stalled after a Docker restart), once during and after a
+            # 600-thread spike while pods restarted. The cause isn't pinned down yet; the limit
+            # bounds the damage either way. Throttled, Alloy falls behind and catches up -- logs
+            # arrive late rather than the edge falling over.
+            requests:
+              cpu: 100m
             limits:
-              memory: 128Mi
+              cpu: "1"
+              memory: 256Mi  # 128Mi OOMKilled at 600 threads (2026-11-18): CPU-capped, it buffers a backlog
       volumes:
         - name: config
           configMap:

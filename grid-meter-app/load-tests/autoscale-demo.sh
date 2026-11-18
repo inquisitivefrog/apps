@@ -19,7 +19,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 source scripts/check-disk-headroom.sh || exit 1
 
-export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
+export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-golden-signals/grid-meter-golden-signals?kiosk&refresh=15s"
 export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/autoscale-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"

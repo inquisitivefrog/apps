@@ -22,6 +22,50 @@
 alertmanager:
   enabled: false
 
+# The chart's built-in Prometheus ALERTING rules are off for the same reason: with no
+# Alertmanager they notify no one, and on kind 13 of them fired or sat pending falsely
+# (TargetDown, etcdInsufficientMembers, Watchdog, ...), burying this project's own rules on
+# Grafana's Alert rules page. The basic Kubernetes checks worth keeping (service down/degraded,
+# container restarts) live in observability/alerting/rules.yml's service-health group instead.
+#
+# Its RECORDING rules stay on: the bundled Kubernetes dashboards are built on them. Learned the hard
+# way -- defaultRules.create: false removed both kinds, and the Kubernetes / API server and
+# Namespace (Pods) dashboards went to "No data" at the moment of the upgrade. Every group below
+# was checked (helm template, counting alert: vs record: entries) to be purely alerting; each
+# group is one or the other, never mixed.
+defaultRules:
+  rules:
+    alertmanager: false
+    configReloaders: false
+    etcd: false
+    general: false
+    kubeApiserverSlos: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeStateMetrics: false
+    kubernetesApps: false
+    kubernetesResources: false
+    kubernetesStorage: false
+    kubernetesSystem: false
+    network: false
+    nodeExporterAlerting: false
+    prometheus: false
+    prometheusOperator: false
+    windows: false
+
+# Control-plane components bind to localhost on kind (and are hidden by the provider on managed
+# EKS/GKE/AKS), so these scrapes only ever produced DOWN targets: confirmed live as connection
+# refused on :10257 (controller-manager), :2381 (etcd), :10249 (kube-proxy), :10259 (scheduler).
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
 prometheus:
   prometheusSpec:
     resources:
@@ -43,8 +87,15 @@ prometheus:
         # edge-5xx-rate rule works unchanged regardless of which provider generated the label, and
         # keeps working if the hash changes later -- rather than hardcoding a snapshot of it.
         metric_relabel_configs:
+          # Exactly the api backend. Both api routes go through the api-edge TraefikService
+          # (ingressroute.yaml), and Traefik labels request metrics with the leaf service it
+          # reaches: <namespace>-<service>-<port>, stable and unique (confirmed live 2026-11-18).
+          # The earlier '.*grid-meter.*@kubernetescrd' also matched the frontend route's hashed
+          # name, merging frontend traffic into the api's SLI.
+          # Router metrics (traefik.yaml's addRoutersLabels, what the SLI reads) carry the
+          # TraefikService name instead, so both map to the one canonical value.
           - source_labels: [service]
-            regex: '.*grid-meter.*@kubernetescrd'
+            regex: 'default-api-8080@kubernetescrd|default-api-edge@kubernetescrd'
             target_label: service
             replacement: grid-meter-api-edge
 
@@ -107,6 +158,15 @@ grafana:
   env:
     GF_AUTH_ANONYMOUS_ENABLED: "true"
     GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    # Links in alert emails point here (the port-forward k8s/README.md uses), not Grafana's
+    # in-cluster default of localhost:3000.
+    GF_SERVER_ROOT_URL: http://localhost:3001
+  # SMTP settings and the alert recipient (GF_SMTP_*, GRID_METER_ALERT_EMAIL), from the local,
+  # gitignored .alert-email.env via deploy-observability.sh. Optional, so Grafana still starts
+  # when the secret doesn't exist -- alerts then just aren't emailed.
+  envFromSecrets:
+    - name: grafana-alert-email
+      optional: true
   additionalDataSources:
     - name: Loki
       type: loki
@@ -118,6 +178,14 @@ grafana:
       access: proxy
       url: http://tempo:3200
       uid: tempo
+  # The chart provisions an "Alertmanager" datasource by default (sidecar.datasources.alertmanager,
+  # confirmed via `helm get values --all`) independently of the top-level alertmanager.enabled
+  # above -- with Alertmanager disabled, that left a datasource in Grafana's Connections page
+  # pointing at a kube-prometheus-stack-alertmanager Service that doesn't exist.
+  sidecar:
+    datasources:
+      alertmanager:
+        enabled: false
   # sidecar.dashboards is chart-default-enabled and searches ALL namespaces, so a ConfigMap
   # labeled grafana_dashboard: "1" (see deploy-observability.sh) is picked up automatically.
   # Alert rules have no equivalent sidecar in this chart version (confirmed via `helm show

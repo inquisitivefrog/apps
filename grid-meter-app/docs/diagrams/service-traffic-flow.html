@@ -1,0 +1,244 @@
+<!doctype html>
+<!-- Source for service-traffic-flow.pdf. Re-render with:
+     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --no-pdf-header-footer \
+       --print-to-pdf=service-traffic-flow.pdf service-traffic-flow.html -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>grid-meter-app service and traffic flow</title>
+<style>
+  @page { size: 1120px 840px; margin: 0; }
+  html, body { margin: 0; padding: 0; background: #ffffff; }
+  svg { display: block; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  .zone { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1; }
+  .zone-label { font-size: 12px; font-weight: 700; fill: #475569; letter-spacing: 0.06em; }
+  .box { fill: #ffffff; stroke: #334155; stroke-width: 1.2; }
+  .box-primary { fill: #eff6ff; stroke: #1d4ed8; stroke-width: 1.4; }
+  .box-dashed { fill: #ffffff; stroke: #334155; stroke-width: 1.2; stroke-dasharray: 5 3; }
+  .group { fill: #f1f5f9; stroke: #64748b; stroke-width: 1; }
+  .t { font-size: 13px; font-weight: 600; fill: #0f172a; }
+  .s { font-size: 10.5px; fill: #475569; }
+  .g { font-size: 12px; font-weight: 700; fill: #334155; }
+  .flow { stroke: #2563eb; stroke-width: 2; fill: none; marker-end: url(#a-blue); }
+  .tele { stroke: #d97706; stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; marker-end: url(#a-orange); }
+  .ctrl { stroke: #6b7280; stroke-width: 1.3; fill: none; stroke-dasharray: 2 3; }
+  .badge { fill: #2563eb; }
+  .badge-t { font-size: 10.5px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+  .lbl-o { font-size: 10px; fill: #b45309; }
+  .lbl-g { font-size: 10px; fill: #4b5563; }
+</style>
+</head>
+<body>
+<svg width="1120" height="840" viewBox="0 0 1120 840" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="a-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d97706"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="20" y="34" style="font-size:20px;font-weight:700;fill:#0f172a">grid-meter-app: services and traffic flow</text>
+  <text x="20" y="56" class="s" style="font-size:12px">Local Docker Compose HA stack (docker-compose.yml). Cloud deployments (EKS / GKE / AKS) swap Patroni and Sentinel for managed PostgreSQL and Redis.</text>
+
+  <!-- Zones -->
+  <rect class="zone" x="20" y="76" width="155" height="334" rx="8"/>
+  <text class="zone-label" x="34" y="96">CLIENTS</text>
+  <rect class="zone" x="195" y="76" width="175" height="334" rx="8"/>
+  <text class="zone-label" x="209" y="96">EDGE</text>
+  <rect class="zone" x="390" y="76" width="205" height="334" rx="8"/>
+  <text class="zone-label" x="404" y="96">APPLICATION</text>
+  <rect class="zone" x="615" y="76" width="485" height="480" rx="8"/>
+  <text class="zone-label" x="629" y="96">DATA TIER (each component HA, 3 nodes)</text>
+  <rect class="zone" x="20" y="575" width="850" height="245" rx="8"/>
+  <text class="zone-label" x="34" y="595">OBSERVABILITY</text>
+  <rect class="zone" x="885" y="575" width="215" height="245" rx="8"/>
+  <text class="zone-label" x="899" y="595">REQUEST FLOW</text>
+
+  <!-- Clients -->
+  <rect class="box" x="35" y="125" width="120" height="60" rx="6"/>
+  <text class="t" x="47" y="150">Browser</text>
+  <text class="s" x="47" y="168">operator / demo user</text>
+  <rect class="box" x="35" y="250" width="120" height="60" rx="6"/>
+  <text class="t" x="47" y="275">JMeter</text>
+  <text class="s" x="47" y="293">load generator</text>
+
+  <!-- Traefik -->
+  <rect class="box-primary" x="210" y="110" width="140" height="275" rx="6"/>
+  <text class="t" x="222" y="134">Traefik 3.7</text>
+  <text class="s" x="222" y="152">single edge: routing +</text>
+  <text class="s" x="222" y="166">load balancing</text>
+  <text class="s" x="222" y="194" style="font-weight:700">:80 HTTP</text>
+  <text class="s" x="222" y="210">/  → frontend</text>
+  <text class="s" x="222" y="225">/api, /actuator → api</text>
+  <text class="s" x="222" y="240">/grafana → Grafana</text>
+  <text class="s" x="222" y="255">/prometheus → Prometheus</text>
+  <text class="s" x="222" y="283" style="font-weight:700">:55432 TCP</text>
+  <text class="s" x="222" y="298">→ Postgres primary</text>
+  <text class="s" x="222" y="326" style="font-weight:700">:8080 dashboard</text>
+  <text class="s" x="222" y="354">health-checked</text>
+  <text class="s" x="222" y="368">backends</text>
+
+  <!-- Application -->
+  <rect class="box" x="405" y="112" width="175" height="58" rx="6"/>
+  <text class="t" x="417" y="136">frontend</text>
+  <text class="s" x="417" y="154">Nginx · React 19 SPA</text>
+
+  <rect class="group" x="400" y="195" width="185" height="195" rx="8"/>
+  <text class="g" x="412" y="214">api × 2 replicas</text>
+  <rect class="box" x="412" y="224" width="161" height="70" rx="6"/>
+  <text class="t" x="424" y="246">replica 1</text>
+  <text class="s" x="424" y="263">Spring Boot 4.1 · Tomcat</text>
+  <text class="s" x="424" y="278">Kafka producer + consumer</text>
+  <rect class="box" x="412" y="306" width="161" height="70" rx="6"/>
+  <text class="t" x="424" y="328">replica 2</text>
+  <text class="s" x="424" y="345">Spring Boot 4.1 · Tomcat</text>
+  <text class="s" x="424" y="360">Kafka producer + consumer</text>
+
+  <!-- Kafka -->
+  <rect class="group" x="635" y="108" width="445" height="92" rx="8"/>
+  <text class="g" x="647" y="127">Kafka 4.3 · KRaft (no ZooKeeper)</text>
+  <rect class="box" x="660" y="140" width="120" height="44" rx="6"/>
+  <text class="t" x="672" y="160">kafka-1</text>
+  <text class="s" x="672" y="175">broker + controller</text>
+  <rect class="box" x="800" y="140" width="120" height="44" rx="6"/>
+  <text class="t" x="812" y="160">kafka-2</text>
+  <text class="s" x="812" y="175">broker + controller</text>
+  <rect class="box" x="940" y="140" width="120" height="44" rx="6"/>
+  <text class="t" x="952" y="160">kafka-3</text>
+  <text class="s" x="952" y="175">broker + controller</text>
+
+  <!-- Redis -->
+  <rect class="group" x="635" y="218" width="445" height="132" rx="8"/>
+  <text class="g" x="647" y="237">Redis 8 · Sentinel failover</text>
+  <rect class="box-primary" x="660" y="250" width="120" height="42" rx="6"/>
+  <text class="t" x="672" y="269">redis</text>
+  <text class="s" x="672" y="284">primary (cache)</text>
+  <rect class="box" x="800" y="250" width="120" height="42" rx="6"/>
+  <text class="t" x="812" y="269">redis-replica-1</text>
+  <text class="s" x="812" y="284">replica</text>
+  <rect class="box" x="940" y="250" width="120" height="42" rx="6"/>
+  <text class="t" x="952" y="269">redis-replica-2</text>
+  <text class="s" x="952" y="284">replica</text>
+  <rect class="box-dashed" x="660" y="308" width="120" height="30" rx="6"/>
+  <text class="s" x="672" y="327" style="font-weight:600;fill:#0f172a">sentinel-1</text>
+  <rect class="box-dashed" x="800" y="308" width="120" height="30" rx="6"/>
+  <text class="s" x="812" y="327" style="font-weight:600;fill:#0f172a">sentinel-2</text>
+  <rect class="box-dashed" x="940" y="308" width="120" height="30" rx="6"/>
+  <text class="s" x="952" y="327" style="font-weight:600;fill:#0f172a">sentinel-3</text>
+  <line class="ctrl" x1="720" y1="308" x2="720" y2="292"/>
+  <line class="ctrl" x1="860" y1="308" x2="860" y2="292"/>
+  <line class="ctrl" x1="1000" y1="308" x2="1000" y2="292"/>
+
+  <!-- Postgres -->
+  <rect class="group" x="635" y="368" width="445" height="175" rx="8"/>
+  <text class="g" x="647" y="387">PostgreSQL 18 · Patroni + Consul · quorum sync (ANY 1)</text>
+  <rect class="box-dashed" x="650" y="405" width="128" height="58" rx="6"/>
+  <text class="t" x="660" y="425">Traefik :55432</text>
+  <text class="s" x="660" y="441">TCP route to the</text>
+  <text class="s" x="660" y="454">current primary</text>
+  <rect class="box-primary" x="795" y="405" width="85" height="58" rx="6"/>
+  <text class="t" x="805" y="427">patroni-1</text>
+  <text class="s" x="805" y="444">primary</text>
+  <text class="s" x="805" y="457">(elected)</text>
+  <rect class="box" x="890" y="405" width="85" height="58" rx="6"/>
+  <text class="t" x="900" y="427">patroni-2</text>
+  <text class="s" x="900" y="444">replica</text>
+  <rect class="box" x="985" y="405" width="85" height="58" rx="6"/>
+  <text class="t" x="995" y="427">patroni-3</text>
+  <text class="s" x="995" y="444">replica</text>
+  <rect class="box-dashed" x="795" y="490" width="85" height="34" rx="6"/>
+  <text class="s" x="805" y="511" style="font-weight:600;fill:#0f172a">consul-1</text>
+  <rect class="box-dashed" x="890" y="490" width="85" height="34" rx="6"/>
+  <text class="s" x="900" y="511" style="font-weight:600;fill:#0f172a">consul-2</text>
+  <rect class="box-dashed" x="985" y="490" width="85" height="34" rx="6"/>
+  <text class="s" x="995" y="511" style="font-weight:600;fill:#0f172a">consul-3</text>
+  <line class="ctrl" x1="837" y1="463" x2="837" y2="490"/>
+  <line class="ctrl" x1="932" y1="463" x2="932" y2="490"/>
+  <line class="ctrl" x1="1027" y1="463" x2="1027" y2="490"/>
+  <path class="ctrl" d="M795,507 L714,507 L714,463"/>
+  <text class="lbl-g" x="650" y="537">Consul holds the Patroni leader lock; Traefik reads its catalog to find the primary</text>
+
+  <!-- Request / data flow -->
+  <line class="flow" x1="155" y1="155" x2="208" y2="155"/>
+  <line class="flow" x1="350" y1="141" x2="403" y2="141"/>
+  <line class="flow" x1="155" y1="280" x2="208" y2="280"/>
+  <line class="flow" x1="350" y1="290" x2="398" y2="290"/>
+  <line class="flow" x1="573" y1="240" x2="658" y2="165"/>
+  <line class="flow" x1="660" y1="180" x2="575" y2="256"/>
+  <line class="flow" x1="573" y1="330" x2="658" y2="275"/>
+  <line class="flow" x1="573" y1="352" x2="648" y2="430"/>
+  <line class="flow" x1="778" y1="434" x2="793" y2="434"/>
+
+  <g><circle class="badge" cx="181" cy="143" r="9"/><text class="badge-t" x="181" y="147">1</text></g>
+  <g><circle class="badge" cx="376" cy="129" r="9"/><text class="badge-t" x="376" y="133">2</text></g>
+  <g><circle class="badge" cx="181" cy="268" r="9"/><text class="badge-t" x="181" y="272">3</text></g>
+  <g><circle class="badge" cx="374" cy="278" r="9"/><text class="badge-t" x="374" y="282">4</text></g>
+  <g><circle class="badge" cx="604" cy="196" r="9"/><text class="badge-t" x="604" y="200">5</text></g>
+  <g><circle class="badge" cx="628" cy="225" r="9"/><text class="badge-t" x="628" y="229">6</text></g>
+  <g><circle class="badge" cx="604" cy="294" r="9"/><text class="badge-t" x="604" y="298">7</text></g>
+  <g><circle class="badge" cx="598" cy="394" r="9"/><text class="badge-t" x="598" y="398">8</text></g>
+
+  <!-- Observability -->
+  <rect class="box" x="50" y="612" width="170" height="56" rx="6"/>
+  <text class="t" x="62" y="635">Prometheus</text>
+  <text class="s" x="62" y="653">metrics (pull / scrape)</text>
+  <rect class="box" x="260" y="612" width="170" height="56" rx="6"/>
+  <text class="t" x="272" y="635">Tempo</text>
+  <text class="s" x="272" y="653">distributed traces</text>
+  <rect class="box" x="470" y="612" width="170" height="56" rx="6"/>
+  <text class="t" x="482" y="635">Alloy</text>
+  <text class="s" x="482" y="653">tails every container's logs</text>
+  <rect class="box" x="680" y="612" width="170" height="56" rx="6"/>
+  <text class="t" x="692" y="635">Loki</text>
+  <text class="s" x="692" y="653">log storage + query</text>
+  <rect class="box-primary" x="200" y="725" width="520" height="60" rx="6"/>
+  <text class="t" x="214" y="750">Grafana 13</text>
+  <text class="s" x="214" y="768">6 linked dashboards incl. SLOs · 13 provisioned alert rules · logs and traces linked</text>
+
+  <!-- Telemetry -->
+  <line class="tele" x1="465" y1="390" x2="160" y2="610"/>
+  <line class="tele" x1="262" y1="385" x2="120" y2="610"/>
+  <line class="tele" x1="520" y1="390" x2="355" y2="610"/>
+  <line class="tele" x1="640" y1="640" x2="678" y2="640"/>
+  <line class="tele" x1="260" y1="725" x2="150" y2="670"/>
+  <line class="tele" x1="345" y1="725" x2="345" y2="670"/>
+  <line class="tele" x1="660" y1="725" x2="755" y2="670"/>
+  <text class="lbl-o" x="40" y="468">scrape traefik:8080</text>
+  <text class="lbl-o" x="40" y="481">metrics</text>
+  <text class="lbl-o" x="232" y="500">scrape /actuator/prometheus</text>
+  <text class="lbl-o" x="440" y="500">OTLP traces :4318</text>
+  <text class="lbl-o" x="195" y="700">query</text>
+  <text class="lbl-o" x="352" y="700">query</text>
+  <text class="lbl-o" x="712" y="700">query</text>
+
+  <!-- Legend -->
+  <g font-size="10.5" fill="#1e293b">
+    <g><circle class="badge" cx="907" cy="616" r="8"/><text class="badge-t" x="907" y="620" style="font-size:9.5px">1</text></g>
+    <text x="921" y="620">Browser loads the app via :80</text>
+    <g><circle class="badge" cx="907" cy="636" r="8"/><text class="badge-t" x="907" y="640" style="font-size:9.5px">2</text></g>
+    <text x="921" y="640">"/" served by frontend (SPA)</text>
+    <g><circle class="badge" cx="907" cy="656" r="8"/><text class="badge-t" x="907" y="660" style="font-size:9.5px">3</text></g>
+    <text x="921" y="660">JMeter drives load at /api</text>
+    <g><circle class="badge" cx="907" cy="676" r="8"/><text class="badge-t" x="907" y="680" style="font-size:9.5px">4</text></g>
+    <text x="921" y="680">/api/v1/* (JWT) balanced</text>
+    <g><circle class="badge" cx="907" cy="696" r="8"/><text class="badge-t" x="907" y="700" style="font-size:9.5px">5</text></g>
+    <text x="921" y="700">POST reading → Kafka</text>
+    <g><circle class="badge" cx="907" cy="716" r="8"/><text class="badge-t" x="907" y="720" style="font-size:9.5px">6</text></g>
+    <text x="921" y="720">api consumer reads event</text>
+    <g><circle class="badge" cx="907" cy="736" r="8"/><text class="badge-t" x="907" y="740" style="font-size:9.5px">7</text></g>
+    <text x="921" y="740">latest reading → Redis</text>
+    <g><circle class="badge" cx="907" cy="756" r="8"/><text class="badge-t" x="907" y="760" style="font-size:9.5px">8</text></g>
+    <text x="921" y="760">record → Postgres primary</text>
+  </g>
+  <line class="flow" x1="899" y1="782" x2="929" y2="782" style="marker-end:none"/>
+  <text class="s" x="936" y="786">request / data flow</text>
+  <line class="tele" x1="899" y1="797" x2="929" y2="797" style="marker-end:none"/>
+  <text class="s" x="936" y="801">telemetry</text>
+  <line class="ctrl" x1="899" y1="812" x2="929" y2="812"/>
+  <text class="s" x="936" y="816">HA control plane</text>
+</svg>
+</body>
+</html>

@@ -36,8 +36,17 @@ spec:
             - name: config
               mountPath: /etc/tempo
           resources:
+            # Took 2-3 cores during the 2026-11-18 600-thread spike on kind (tracing samples
+            # 100% of requests, configmap.yaml's GRID_METER_TRACING_SAMPLING_PROBABILITY). Capped
+            # so trace ingestion can't starve the request path; under a spike it may drop spans,
+            # which the api reports as "Failed to export spans" rather than slowing requests.
+            requests:
+              cpu: 100m
             limits:
-              memory: 256Mi
+              cpu: "1"
+              # 256Mi OOMKilled 3x at 100% trace sampling; 512Mi OOMKilled twice at 100% (rapid-spike,
+              # 100 threads) and again at 10% after a 600-thread run (~490 traces/s), all 2026-11-18.
+              memory: 1Gi
       volumes:
         - name: config
           configMap:

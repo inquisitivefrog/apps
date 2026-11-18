@@ -1,0 +1,199 @@
+{
+  "title": "Grid Meter \u2014 Logins",
+  "uid": "grid-meter-logins",
+  "tags": [
+    "grid-meter"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "grid-meter"
+      ],
+      "asDropdown": false,
+      "keepTime": true,
+      "includeVars": false,
+      "title": "Grid Meter dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "id": 51,
+      "type": "logs",
+      "title": "Recent logins",
+      "description": "Every login attempt, newest first, from the API's \"event=login\" log line (Loki). Usernames are in logs rather than Prometheus labels: one label value per user would mean one time series per user.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "options": {
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "queryType": "range",
+          "expr": "{app=\"api\"} |= \"event=login\" | regexp \"outcome=(?P<outcome>\\\\w+) user=(?P<user>\\\\S+)\" | line_format \"{{.outcome}}  {{.user}}\""
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "type": "table",
+      "title": "Logins per user (time range)",
+      "description": "Successful logins per user over the dashboard's time range. Load-test users log in once per run (threads share each user's token).",
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "logins",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none in this time range"
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "logins",
+              "Value": "logins"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "logins",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "queryType": "instant",
+          "expr": "sum by (user) (count_over_time({app=\"api\"} |= \"event=login outcome=success\" | regexp \"user=(?P<user>\\\\S+)\" [$__range]))",
+          "legendFormat": "{{user}}"
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "type": "table",
+      "title": "Failed logins by attempted username (time range)",
+      "description": "Failed attempts per username as typed by the client. Many failures for one name suggests password guessing; many distinct names suggests username enumeration.",
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "failed attempts",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "none in this time range"
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "failed attempts",
+              "Value": "failed attempts"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "failed attempts",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "queryType": "instant",
+          "expr": "sum by (user) (count_over_time({app=\"api\"} |= \"event=login outcome=failure\" | regexp \"user=(?P<user>\\\\S+)\" [$__range]))",
+          "legendFormat": "{{user}}"
+        }
+      ]
+    }
+  ]
+}

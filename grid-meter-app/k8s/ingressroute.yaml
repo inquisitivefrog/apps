@@ -2,6 +2,42 @@
 # /api and /actuator (actuator lives outside /api/v1 deliberately — see api-and-data-model.md —
 # and needs its own PathPrefix match or it silently falls through to frontend's catch-all),
 # frontend gets everything else at lower priority.
+#
+# Both api routes point at the named TraefikService "api-edge" rather than the api Service
+# directly. Traefik then labels request metrics with the leaf service it reaches, the stable
+# "default-api-8080@kubernetescrd" (confirmed live). Routes that reference a Service directly get
+# "default-grid-meter-<hash>@kubernetescrd" instead, one hash per route;
+# the Prometheus relabel that matched those with ".*grid-meter.*" also caught the frontend route,
+# so until 2026-11-18 the availability SLI counted frontend page loads as api traffic.
+apiVersion: traefik.io/v1alpha1
+kind: TraefikService
+metadata:
+  name: api-edge
+spec:
+  weighted:
+    services:
+      - name: api
+        port: 8080
+        weight: 1
+---
+# Load shedding: at most 300 api requests in flight across the edge (requestHost groups every
+# client hitting this host into one bucket, i.e. a global cap). Requests over the cap get an
+# immediate 429 instead of queueing. 300 is the measured capacity on kind (2026-11-18 rapid-spike:
+# 300 threads, 3,970 req/s, 0 errors, p95 170ms); at 600 with no cap the api, then Traefik, ran
+# out of memory and every client got errors, including the ones the system could have served.
+# Shed requests never reach the api or its Traefik service metric; they show up in the router
+# metric (traefik_router_requests_total{code="429"}, traefik.yaml's addRoutersLabels), which is
+# what the availability SLI reads -- so they count as failures (rules.yml, SLOs dashboard).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: api-shed
+spec:
+  inFlightReq:
+    amount: 300
+    sourceCriterion:
+      requestHost: true
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -10,12 +46,22 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: PathPrefix(`/api`) || PathPrefix(`/actuator`)
+    - match: PathPrefix(`/api`)
+      kind: Rule
+      priority: 10
+      middlewares:
+        - name: api-shed
+      services:
+        - name: api-edge
+          kind: TraefikService
+    # Health and metrics are never shed: an overloaded-but-alive api must still answer its
+    # probes, or shedding would turn into Kubernetes and Traefik marking it down.
+    - match: PathPrefix(`/actuator`)
       kind: Rule
       priority: 10
       services:
-        - name: api
-          port: 8080
+        - name: api-edge
+          kind: TraefikService
     - match: PathPrefix(`/`)
       kind: Rule
       priority: 1

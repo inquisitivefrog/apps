@@ -27,6 +27,12 @@ services:
       # metric never sees it (not as a success, not as a failure) -- Traefik itself is what
       # generates the resulting 502, so it's the only place this failure class is visible.
       - --metrics.prometheus=true
+      # Per-router request counts, labeled with the router's service: the only Traefik metric that
+      # sees EVERY request to the api routes -- served, 5xx, shed (429 from a middleware) and
+      # 'no healthy backend' 503s. traefik_service_requests_total misses the last two (2026-11-18:
+      # 199,508 no-backend 503s during a total api outage, 0 on the service metric), so the
+      # availability SLI reads this one.
+      - --metrics.prometheus.addRoutersLabels=true
       # Postgres HA client-write-routing (docs/postgres-ha-scope.md's "Patroni deployment
       # model" §4) -- a separate TCP entrypoint + Consul Catalog provider, now the app's real
       # datasource path (see api's SPRING_DATASOURCE_URL below) after this mechanism was
@@ -460,7 +466,7 @@ services:
   # treatment of the Kafka brokers (state is expected to reset on container recreation).
   sentinel-1:
     image: redis:8.10
-    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
     depends_on:
       - redis
     logging: *default-logging
@@ -473,7 +479,7 @@ services:
 
   sentinel-2:
     image: redis:8.10
-    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
     depends_on:
       - redis
     logging: *default-logging
@@ -486,7 +492,7 @@ services:
 
   sentinel-3:
     image: redis:8.10
-    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --loglevel debug --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
+    command: sh -c "rm -f /tmp/sentinel.conf && touch /tmp/sentinel.conf && exec redis-server /tmp/sentinel.conf --sentinel --port 26379 --sentinel resolve-hostnames yes --sentinel announce-hostnames yes --sentinel monitor mymaster redis 6379 2 --sentinel down-after-milliseconds mymaster 5000 --sentinel failover-timeout mymaster 10000"
     depends_on:
       - redis
     logging: *default-logging
@@ -515,6 +521,10 @@ services:
     environment:
       CLUSTER_ID: zWOyaccGQkG1ikHT88v3XA
       KAFKA_NODE_ID: 1
+      # Declared, not the image default (-Xmx1G -Xms1G when unset): that heap is bigger than this
+      # container's 768m limit, so a busy broker was always going to be OOMKilled -- kafka-1 was
+      # on kind, 2026-11-18. Same value as k8s/kafka.yaml.
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
@@ -552,6 +562,7 @@ services:
     environment:
       CLUSTER_ID: zWOyaccGQkG1ikHT88v3XA
       KAFKA_NODE_ID: 2
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092
@@ -584,6 +595,7 @@ services:
     environment:
       CLUSTER_ID: zWOyaccGQkG1ikHT88v3XA
       KAFKA_NODE_ID: 3
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092

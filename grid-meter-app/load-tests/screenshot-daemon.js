@@ -46,7 +46,8 @@ if (!dashboardUrl || !alertingUrl) {
   const alertsPage = await context.newPage();
   await alertsPage.goto(alertingUrl, { waitUntil: 'load' });
   await alertsPage.waitForTimeout(2000);
-  // Expand the "grid-meter-alerts" rule group so individual rule states are visible, not just the
+  // Expand the first rule group ("golden-signals": API down, HTTP and edge error rates -- the rules
+  // every chaos/spike demo exercises) so individual rule states are visible, not just the
   // collapsed group row. Coordinates match this page's fixed layout (Alert rules list, "Grouped"
   // view, first custom folder) -- re-verify if Grafana's alerting UI layout changes.
   await alertsPage.mouse.click(647, 396);
