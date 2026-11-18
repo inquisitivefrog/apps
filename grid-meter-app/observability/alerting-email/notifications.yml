@@ -1,0 +1,51 @@
+# Where Grafana sends alert notifications: one email contact point, used for every alert.
+#
+# Kept out of observability/alerting/ on purpose: that directory is always loaded, and this file
+# needs GRID_METER_ALERT_EMAIL and Grafana's SMTP settings, which only exist when the local,
+# gitignored grid-meter-app/.alert-email.env does (see .alert-email.env.example). An email
+# contact point with no address fails Grafana's provisioning, so k8s/deploy-observability.sh adds
+# this file only when that env file is present. Without it, alerts still show in Grafana; they
+# just notify no one.
+#
+# The address comes from the environment, not this file: the repo is public.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: email
+    receivers:
+      - uid: grid-meter-email
+        type: email
+        settings:
+          addresses: $GRID_METER_ALERT_EMAIL
+          singleEmail: true
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: email
+    # One email per alert rule, not one per firing series. Waits 30s to batch alerts that fire
+    # together (a spike fires several at once), re-sends every 4h while still firing, and sends
+    # a "resolved" email when it clears.
+    group_by: ["grafana_folder", "alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    # severity=info rules are record-only by design (rules.yml: the JVM old-gen trend and reading
+    # delivery failures say "not paged"), so they stay visible in Grafana without an email.
+    # Routed to email but muted around the clock: Grafana rejects a contact point with no
+    # integrations (2026-11-18: "receiver 'record-only' does not exist"), so a mute timing is how
+    # "show in Grafana, notify no one" is expressed.
+    routes:
+      - receiver: email
+        object_matchers:
+          - ["severity", "=", "info"]
+        mute_time_intervals: ["always"]
+
+muteTimes:
+  - orgId: 1
+    name: always
+    time_intervals:
+      - times:
+          - start_time: "00:00"
+            end_time: "24:00"

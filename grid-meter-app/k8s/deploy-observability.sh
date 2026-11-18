@@ -27,12 +27,26 @@ helm repo update >/dev/null
 # Generated from the same source files Compose mounts directly, so the two environments share one
 # source of truth instead of duplicating YAML/JSON content into hand-written k8s manifests.
 echo "== Generating ConfigMaps from observability/ source files =="
-kubectl create configmap grid-meter-grafana-alerting \
-  --from-file=rules.yaml="$OBS_DIR/alerting/rules.yml" \
+# Alert email (optional): only when the local, gitignored .alert-email.env exists -- it holds the
+# Gmail app password and recipient, which can't live in this public repo. Its values become env
+# vars on Grafana (kube-prometheus-stack-values.yaml's envFromSecrets) and the contact point file
+# is added to the alerting ConfigMap. Without it, alerts still show in Grafana but notify no one.
+ALERT_EMAIL_ENV="$K8S_DIR/../.alert-email.env"
+ALERTING_FILES=(--from-file=rules.yaml="$OBS_DIR/alerting/rules.yml")
+if [ -f "$ALERT_EMAIL_ENV" ]; then
+  echo "== Alert email: $ALERT_EMAIL_ENV found, enabling notifications =="
+  kubectl create secret generic grafana-alert-email --from-env-file="$ALERT_EMAIL_ENV" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  ALERTING_FILES+=(--from-file=notifications.yaml="$OBS_DIR/alerting-email/notifications.yml")
+else
+  echo "== Alert email: no .alert-email.env, alerts will not be sent anywhere (see .alert-email.env.example) =="
+  kubectl delete secret grafana-alert-email --ignore-not-found >/dev/null
+fi
+kubectl create configmap grid-meter-grafana-alerting "${ALERTING_FILES[@]}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create configmap grid-meter-grafana-dashboard \
-  --from-file=grid-meter-overview.json="$OBS_DIR/dashboards/grid-meter-overview.json" \
+  --from-file="$OBS_DIR/dashboards/" \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl label configmap grid-meter-grafana-dashboard grafana_dashboard=1 --overwrite >/dev/null
 

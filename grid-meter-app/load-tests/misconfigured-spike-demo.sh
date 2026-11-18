@@ -44,7 +44,7 @@ source scripts/check-disk-headroom.sh || exit 1
 # SUB_PATH -- that setting only affects the UI's own page/asset URLs (used for GRAFANA_URL/
 # ALERTING_URL below), not the backend API alert_firing() below calls directly.
 GRAFANA_HOST="http://localhost:3001"
-export GRAFANA_URL="${GRAFANA_HOST}/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
+export GRAFANA_URL="${GRAFANA_HOST}/grafana/d/grid-meter-golden-signals/grid-meter-golden-signals?kiosk&refresh=15s"
 export ALERTING_URL="${GRAFANA_HOST}/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/misconfigured-spike-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"

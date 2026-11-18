@@ -1,0 +1,268 @@
+{
+  "title": "Grid Meter — Service Health",
+  "uid": "grid-meter-service-health",
+  "tags": [
+    "grid-meter"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "grid-meter"
+      ],
+      "asDropdown": false,
+      "keepTime": true,
+      "includeVars": false,
+      "title": "Grid Meter dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "id": 34,
+      "type": "stat",
+      "title": "Active users",
+      "description": "Distinct users who logged in within the token lifetime (1 hour), i.e. hold a still-valid token. Shared across API replicas via Redis, so max() not sum(). Blank = Redis unreachable.",
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max(auth_active_users)",
+          "legendFormat": "active users",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Services ready",
+      "description": "Ready replicas / desired replicas per Deployment and StatefulSet, from kube-state-metrics (Kubernetes only; Compose has no equivalent exporter).",
+      "gridPos": {
+        "h": 6,
+        "w": 20,
+        "x": 4,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN"
+                },
+                "1": {
+                  "text": "UP"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "max by (workload) (label_replace(kube_deployment_status_replicas_available{namespace=\"default\"} / kube_deployment_spec_replicas{namespace=\"default\"}, \"workload\", \"$1\", \"deployment\", \"(.*)\") or label_replace(kube_statefulset_status_replicas_ready{namespace=\"default\"} / kube_statefulset_replicas{namespace=\"default\"}, \"workload\", \"$1\", \"statefulset\", \"(.*)\"))",
+          "legendFormat": "{{workload}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Container restarts (crashes)",
+      "description": "Restarts per container in each 5-minute window. Any bar is a process that died and was restarted by Kubernetes.",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          },
+          "noValue": "0 — no restarts"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=\"default\"}[5m])) > 0",
+          "legendFormat": "{{container}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Logins per minute",
+      "description": "POST /api/v1/auth/login by result. Failed = bad credentials (401) or any other non-2xx.",
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "axisLabel": "logins / min"
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "successful"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "60 * (sum(rate(http_server_requests_seconds_count{uri=\"/api/v1/auth/login\", outcome=\"SUCCESS\"}[$__rate_interval])) or vector(0))",
+          "legendFormat": "successful",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "60 * (sum(rate(http_server_requests_seconds_count{uri=\"/api/v1/auth/login\", outcome!=\"SUCCESS\"}[$__rate_interval])) or vector(0))",
+          "legendFormat": "failed",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}

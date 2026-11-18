@@ -2,7 +2,7 @@
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
     <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="steady-state" enabled="true">
-      <stringProp name="TestPlan.comments">Realistic sustained traffic baseline — see ../docs/testing-strategy.md. Run via ./run.sh steady-state or `jmeter -n -t steady-state.jmx -q config/load-test.properties -e -o results/&lt;dir&gt;`.</stringProp>
+      <stringProp name="TestPlan.comments">Realistic sustained traffic baseline — see ../docs/testing-strategy.md. Load threads act as users loadtest-001..N (seeded by seed-users.sh), wrapping around after loadTestUsers (default 100) -- see common/user-login.jmx. setUp still logs in once as demo, only to provision the meter pool. Run via ./run.sh steady-state or `jmeter -n -t steady-state.jmx -q config/load-test.properties -e -o results/&lt;dir&gt;`.</stringProp>
       <boolProp name="TestPlan.functional_mode">false</boolProp>
       <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
       <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
@@ -49,22 +49,9 @@
         <stringProp name="ThreadGroup.delay">0</stringProp>
       </ThreadGroup>
       <hashTree>
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Auth + Content-Type" enabled="true">
-          <collectionProp name="HeaderManager.headers">
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Content-Type</stringProp>
-              <stringProp name="Header.value">application/json</stringProp>
-            </elementProp>
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Authorization</stringProp>
-              <stringProp name="Header.value">Bearer ${__P(accessToken)}</stringProp>
-            </elementProp>
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Idempotency-Key</stringProp>
-              <stringProp name="Header.value">${__UUID()}</stringProp>
-            </elementProp>
-          </collectionProp>
-        </HeaderManager>
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include user-login (threads act as loadtest-NNN users)" enabled="true">
+          <stringProp name="IncludeController.includepath">common/user-login.jmx</stringProp>
+        </IncludeController>
         <hashTree/>
         <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="meter pool" enabled="true">
           <stringProp name="filename">${__P(meterCsvPath,results/meter-pool.csv)}</stringProp>
@@ -107,6 +94,23 @@
           <stringProp name="HTTPSampler.response_timeout"></stringProp>
         </HTTPSamplerProxy>
         <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Auth (this thread's own user) + Content-Type" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${userToken}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Idempotency-Key</stringProp>
+                  <stringProp name="Header.value">${__UUID()}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
           <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Reading ingested (201)" enabled="true">
             <collectionProp name="Asserion.test_strings">
               <stringProp name="49690">201</stringProp>
@@ -116,6 +120,20 @@
             <boolProp name="Assertion.assume_success">false</boolProp>
             <intProp name="Assertion.test_type">8</intProp>
           </ResponseAssertion>
+          <hashTree/>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Shed by the edge (429)? Back off" enabled="true">
+          <stringProp name="TestPlan.comments">A well-behaved client backs off when shed instead of retrying at once. Without this, a 429 comes back in under a millisecond and the thread immediately sends again: on 2026-11-18, 600 threads with no backoff sent ~14,900 shed requests/s at Traefik and successful throughput fell from ~3,370/s (300 threads) to ~790/s. -Jbackoff429Ms=0 reproduces that retry storm.</stringProp>
+          <stringProp name="IfController.condition">${__groovy(prev != null &amp;&amp; prev.getResponseCode() == '429',)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Pause backoff429Ms (default 1000)" enabled="true">
+            <intProp name="ActionProcessor.action">1</intProp>
+            <intProp name="ActionProcessor.target">0</intProp>
+            <stringProp name="ActionProcessor.duration">${__P(backoff429Ms,1000)}</stringProp>
+          </TestAction>
           <hashTree/>
         </hashTree>
       </hashTree>

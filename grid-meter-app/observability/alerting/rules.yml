@@ -1,8 +1,12 @@
 apiVersion: 1
 
+# One rule group per dashboard (observability/dashboards/), so each group's alert list fits one
+# screen next to the dashboard it belongs to. Each rule's __dashboardUid__/__panelId__ annotations
+# link it to the panel showing the same signal: Grafana draws the alert's state on that panel and
+# the rule's page links straight to it.
 groups:
   - orgId: 1
-    name: grid-meter-alerts
+    name: golden-signals
     folder: grid-meter-app
     interval: 30s
     rules:
@@ -19,6 +23,8 @@ groups:
           severity: critical
           alert_class: incident
         annotations:
+          __dashboardUid__: grid-meter-golden-signals
+          __panelId__: "2"
           summary: "Prometheus cannot scrape grid-meter-api -- the API is unreachable."
         data:
           - refId: A
@@ -48,6 +54,8 @@ groups:
           severity: warning
           alert_class: incident
         annotations:
+          __dashboardUid__: grid-meter-golden-signals
+          __panelId__: "3"
           summary: "HTTP error rate has exceeded 5% for 30s."
         data:
           - refId: A
@@ -90,6 +98,8 @@ groups:
           severity: warning
           alert_class: incident
         annotations:
+          __dashboardUid__: grid-meter-golden-signals
+          __panelId__: "3"
           summary: "Traefik's 5xx rate for the api service has exceeded 5% for 30s."
         data:
           - refId: A
@@ -97,7 +107,7 @@ groups:
             relativeTimeRange: { from: 300, to: 0 }
             model:
               refId: A
-              expr: '100 * (sum(rate(traefik_service_requests_total{service="grid-meter-api-edge", code=~"5.."}[5m])) or vector(0)) / sum(rate(traefik_service_requests_total{service="grid-meter-api-edge"}[5m]))'
+              expr: '100 * (sum(rate(traefik_router_requests_total{service="grid-meter-api-edge", code=~"5.."}[5m])) or vector(0)) / sum(rate(traefik_router_requests_total{service="grid-meter-api-edge"}[5m]))'
               instant: true
           - refId: C
             datasourceUid: __expr__
@@ -109,6 +119,47 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [5] }
 
+      # Fires while the edge is refusing api requests over its in-flight cap (the api-shed
+      # Middleware, k8s/ingressroute.yaml) -- offered load is above measured capacity. Shedding
+      # is the system protecting itself, so a warning, not critical; the SLO burn-rate alerts
+      # decide whether it has cost too much (they count shed requests as failures). Never fires
+      # on Compose, which has no shedding middleware (no 429s, so the query stays at 0).
+      - uid: load-shedding-active
+        title: Edge is shedding load
+        condition: C
+        for: 1m
+        noDataState: OK
+        labels:
+          severity: warning
+          alert_class: incident
+        annotations:
+          __dashboardUid__: grid-meter-golden-signals
+          __panelId__: "2"
+          summary: "Traefik has been refusing api requests with 429 for 1m: offered load is above capacity ({{ $values.A.Value }} req/s shed)."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: 'sum(rate(traefik_router_requests_total{service="grid-meter-api-edge", code="429"}[1m])) or vector(0)'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+
+  - orgId: 1
+    name: api-process
+    folder: grid-meter-app
+    interval: 30s
+    rules:
       # Fires when Tomcat's thread pool is under real saturation pressure (see
       # load-tests/README.md's spike profile, which deliberately drives this).
       - uid: tomcat-threads-saturated
@@ -119,6 +170,8 @@ groups:
           severity: warning
           alert_class: incident
         annotations:
+          __dashboardUid__: grid-meter-api-process
+          __panelId__: "11"
           summary: "Tomcat busy threads have exceeded 80% of the configured max for 30s."
         data:
           - refId: A
@@ -138,18 +191,6 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [80] }
 
-      # Fires on ANY increase, not a threshold/percentage like the other rules -- a single
-      # occurrence is a real reading permanently lost (confirmed via the 150s Kafka quorum-loss
-      # test, load-tests/kafka-ha-demo.sh: without this, a delivery failure had no other path back
-      # to the caller, since POST /readings already returned 201 before Kafka ever acknowledged).
-      # A transactional-outbox pattern was built and load-tested as a durable fix, then
-      # deliberately retired (docs/resilience-scope.md): a lost simulated meter reading has no
-      # real downstream consequence (no billing, no regulatory record, nothing to redo).
-      #
-      # Classified as a NOTICE (docs/observability-taxonomy.md §3), not an incident, per the same
-      # redo-path reasoning that retired the outbox: "permanently lost" doesn't imply "worth
-      # interrupting someone about" when the lost thing has no real downstream consequence. The
-      # counter/log/this rule together are a durable record to consult if anyone asks, not a page.
       # Resource-capacity trend alert (docs/observability-taxonomy.md §2), not an incident --
       # alert_class/severity below deliberately don't page anyone. Built for
       # docs/testing-expansion-scope.md §1.3: soak.jmx's own header comment used to just say
@@ -179,6 +220,8 @@ groups:
           severity: info
           alert_class: trend
         annotations:
+          __dashboardUid__: grid-meter-api-process
+          __panelId__: "13"
           summary: "Old-gen heap size after major GC is on a slope that would reach 80% of capacity within 7 days at the current rate -- a candidate slow leak, not an active incident. Record-only, not paged -- see docs/observability-taxonomy.md and docs/testing-expansion-scope.md §1.3."
         data:
           - refId: A
@@ -198,6 +241,24 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [80] }
 
+
+  - orgId: 1
+    name: dependencies
+    folder: grid-meter-app
+    interval: 30s
+    rules:
+      # Fires on ANY increase, not a threshold/percentage like the other rules -- a single
+      # occurrence is a real reading permanently lost (confirmed via the 150s Kafka quorum-loss
+      # test, load-tests/kafka-ha-demo.sh: without this, a delivery failure had no other path back
+      # to the caller, since POST /readings already returned 201 before Kafka ever acknowledged).
+      # A transactional-outbox pattern was built and load-tested as a durable fix, then
+      # deliberately retired (docs/resilience-scope.md): a lost simulated meter reading has no
+      # real downstream consequence (no billing, no regulatory record, nothing to redo).
+      #
+      # Classified as a NOTICE (docs/observability-taxonomy.md §3), not an incident, per the same
+      # redo-path reasoning that retired the outbox: "permanently lost" doesn't imply "worth
+      # interrupting someone about" when the lost thing has no real downstream consequence. The
+      # counter/log/this rule together are a durable record to consult if anyone asks, not a page.
       - uid: reading-delivery-failures
         title: Reading delivery failures
         condition: C
@@ -206,6 +267,8 @@ groups:
           severity: info
           alert_class: notice
         annotations:
+          __dashboardUid__: grid-meter-dependencies
+          __panelId__: "21"
           summary: "At least one reading failed to publish to Kafka after client-side retries were exhausted -- it is permanently lost (accepted per docs/resilience-scope.md's redo-path scope decision, not a recoverable delay). Record-only, not paged -- see docs/observability-taxonomy.md."
         data:
           - refId: A
@@ -214,6 +277,242 @@ groups:
             model:
               refId: A
               expr: 'increase(reading_delivery_failures_total[5m]) or vector(0)'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+  # Basic service health from kube-state-metrics: is each workload running, and is anything
+  # crashing. Kubernetes only -- Compose has no equivalent exporter, so noDataState: OK keeps these
+  # rules quiet there instead of firing a "no data" alert for a metric that can't exist.
+  - orgId: 1
+    name: service-health
+    folder: grid-meter-app
+    interval: 30s
+    rules:
+      # A workload with zero ready replicas is down outright -- the single most basic SRE alert.
+      - uid: service-down
+        title: Service down
+        condition: C
+        for: 30s
+        noDataState: OK
+        labels:
+          severity: critical
+          alert_class: incident
+        annotations:
+          summary: "{{ $labels.workload }} has no ready replicas."
+          __dashboardUid__: grid-meter-service-health
+          __panelId__: "31"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: 'max by (workload) (label_replace(kube_deployment_status_replicas_available{namespace="default"}, "workload", "$1", "deployment", "(.*)") or label_replace(kube_statefulset_status_replicas_ready{namespace="default"}, "workload", "$1", "statefulset", "(.*)"))'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # Some but not all replicas ready (e.g. one of three Kafka brokers gone). within_range is
+      # exclusive at both ends, so a fully-down workload (0) is left to service-down above rather
+      # than firing both rules. The 2m wait rides out a normal rolling update.
+      - uid: service-degraded
+        title: Service degraded
+        condition: C
+        for: 2m
+        noDataState: OK
+        labels:
+          severity: warning
+          alert_class: incident
+        annotations:
+          summary: "{{ $labels.workload }} is running with fewer ready replicas than desired."
+          __dashboardUid__: grid-meter-service-health
+          __panelId__: "31"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              expr: 'max by (workload) (label_replace(kube_deployment_status_replicas_available{namespace="default"} / kube_deployment_spec_replicas{namespace="default"}, "workload", "$1", "deployment", "(.*)") or label_replace(kube_statefulset_status_replicas_ready{namespace="default"} / kube_statefulset_replicas{namespace="default"}, "workload", "$1", "statefulset", "(.*)"))'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: within_range, params: [0, 1] }
+
+      # Any container restart in the last 10 minutes -- a process died, whether or not Kubernetes
+      # has brought it back yet. Fires per container, so the alert names what crashed.
+      - uid: container-restarted
+        title: Service crashed and restarted
+        condition: C
+        for: 0s
+        noDataState: OK
+        labels:
+          severity: warning
+          alert_class: incident
+        annotations:
+          summary: "{{ $labels.container }} restarted {{ $values.A.Value }} time(s) in the last 10 minutes."
+          __dashboardUid__: grid-meter-service-health
+          __panelId__: "32"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: 'sum by (container) (increase(kube_pod_container_status_restarts_total{namespace="default"}[10m]))'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+  # SLO burn-rate alerts (Grid Meter — SLOs dashboard). Targets: availability 99.5% of API requests
+  # not 5xx at the Traefik edge; latency 99% of API requests under 500ms at the app (health checks
+  # excluded); 7-day rolling window.
+  #
+  # Multiwindow, multi-burn-rate alerting (Google SRE Workbook, "Alerting on SLOs"): a burn rate of
+  # 1x spends exactly the whole budget over the window. Fast burn (14.4x over 1h, confirmed by the
+  # last 5m) means a real outage now; slow burn (6x over 6h, confirmed by the last 30m) means a
+  # sustained degradation that will exhaust the budget early. The short window stops an alert
+  # firing for a spike that has already ended. The minimum request count stops a single failed
+  # request on this low-traffic demo from reading as a 100% error rate. Each expression returns the
+  # long-window error ratio when firing, else 0.
+  - orgId: 1
+    name: slo
+    folder: grid-meter-app
+    interval: 1m
+    rules:
+      - uid: slo-availability-fast-burn
+        title: "Availability SLO: fast error-budget burn"
+        condition: C
+        for: 2m
+        labels:
+          severity: critical
+          alert_class: incident
+        annotations:
+          summary: "Failed api requests at the edge (5xx, plus 429s shed under overload) are burning the 99.5% availability budget at 14.4x or faster (1h and 5m windows) -- the 7-day budget will be gone in under half a day."
+          __dashboardUid__: grid-meter-slos
+          __panelId__: "47"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 3600, to: 0 }
+            model:
+              refId: A
+              expr: '(((sum(increase(traefik_router_requests_total{service="grid-meter-api-edge", code=~"5..|429"}[1h])) or vector(0)) / sum(increase(traefik_router_requests_total{service="grid-meter-api-edge"}[1h]))) > 0.072) and on() (((sum(increase(traefik_router_requests_total{service="grid-meter-api-edge", code=~"5..|429"}[5m])) or vector(0)) / sum(increase(traefik_router_requests_total{service="grid-meter-api-edge"}[5m]))) > 0.072) and on() (sum(increase(traefik_router_requests_total{service="grid-meter-api-edge"}[1h])) >= 60) or vector(0)'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: slo-availability-slow-burn
+        title: "Availability SLO: slow error-budget burn"
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+          alert_class: incident
+        annotations:
+          summary: "Failed api requests at the edge (5xx, plus 429s shed under overload) are burning the 99.5% availability budget at 6x or faster (6h and 30m windows) -- the 7-day budget will run out in about a day."
+          __dashboardUid__: grid-meter-slos
+          __panelId__: "47"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 21600, to: 0 }
+            model:
+              refId: A
+              expr: '(((sum(increase(traefik_router_requests_total{service="grid-meter-api-edge", code=~"5..|429"}[6h])) or vector(0)) / sum(increase(traefik_router_requests_total{service="grid-meter-api-edge"}[6h]))) > 0.03) and on() (((sum(increase(traefik_router_requests_total{service="grid-meter-api-edge", code=~"5..|429"}[30m])) or vector(0)) / sum(increase(traefik_router_requests_total{service="grid-meter-api-edge"}[30m]))) > 0.03) and on() (sum(increase(traefik_router_requests_total{service="grid-meter-api-edge"}[6h])) >= 360) or vector(0)'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: slo-latency-fast-burn
+        title: "Latency SLO: fast error-budget burn"
+        condition: C
+        for: 2m
+        labels:
+          severity: critical
+          alert_class: incident
+        annotations:
+          summary: "Requests slower than 500ms are burning the 99% latency budget at 14.4x or faster (1h and 5m windows)."
+          __dashboardUid__: grid-meter-slos
+          __panelId__: "47"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 3600, to: 0 }
+            model:
+              refId: A
+              expr: '((1 - sum(increase(http_server_requests_seconds_bucket{le="0.5", uri!~"/actuator.*"}[1h])) / sum(increase(http_server_requests_seconds_count{uri!~"/actuator.*"}[1h]))) > 0.144) and on() ((1 - sum(increase(http_server_requests_seconds_bucket{le="0.5", uri!~"/actuator.*"}[5m])) / sum(increase(http_server_requests_seconds_count{uri!~"/actuator.*"}[5m]))) > 0.144) and on() (sum(increase(http_server_requests_seconds_count{uri!~"/actuator.*"}[1h])) >= 60) or vector(0)'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            relativeTimeRange: { from: 0, to: 0 }
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: slo-latency-slow-burn
+        title: "Latency SLO: slow error-budget burn"
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+          alert_class: incident
+        annotations:
+          summary: "Requests slower than 500ms are burning the 99% latency budget at 6x or faster (6h and 30m windows)."
+          __dashboardUid__: grid-meter-slos
+          __panelId__: "47"
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 21600, to: 0 }
+            model:
+              refId: A
+              expr: '((1 - sum(increase(http_server_requests_seconds_bucket{le="0.5", uri!~"/actuator.*"}[6h])) / sum(increase(http_server_requests_seconds_count{uri!~"/actuator.*"}[6h]))) > 0.06) and on() ((1 - sum(increase(http_server_requests_seconds_bucket{le="0.5", uri!~"/actuator.*"}[30m])) / sum(increase(http_server_requests_seconds_count{uri!~"/actuator.*"}[30m]))) > 0.06) and on() (sum(increase(http_server_requests_seconds_count{uri!~"/actuator.*"}[6h])) >= 360) or vector(0)'
               instant: true
           - refId: C
             datasourceUid: __expr__

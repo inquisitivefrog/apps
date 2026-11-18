@@ -27,7 +27,14 @@ spec:
             - name: http
               containerPort: 3100
           resources:
+            # Peaked at 4.9 cores in the 2026-11-18 rapid-spike runs (no CPU limit, the one
+            # observability piece left uncapped after Alloy and Tempo), halving the api's throughput.
+            # Same treatment as alloy.yaml/tempo.yaml: logs and queries may lag under a spike rather
+            # than starve the request path.
+            requests:
+              cpu: 100m
             limits:
+              cpu: "1"
               memory: 256Mi
 ---
 apiVersion: v1

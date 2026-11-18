@@ -350,7 +350,12 @@ Spring Boot 4 project specifically.
   stashes the access token as a **JMeter Property** (`props`, via a
   JSR223 PostProcessor) rather than a Variable. Variables are per-Thread-
   Group; Properties are the only thing shared across the separate setUp
-  Thread Group and the main load-generating Thread Group.
+  Thread Group and the main load-generating Thread Group. Since
+  2026-11-18 the five profiles' main Thread Groups authenticate per user
+  instead (see `common/user-login.jmx` below), so in those this demo login
+  only serves the setUp group's meter provisioning. The demo scripts'
+  plans (`kafka-outage-concurrent.jmx`, `misconfigured-burst.jmx`) still
+  use it for everything.
 - **`common/provision-meters.jmx`** — shared Test Fragment: creates a pool
   of meters via `POST /meters` (size: `meterPoolSize`, default 10) and
   writes each returned id to a CSV file (`meterCsvPath`, default
@@ -380,9 +385,38 @@ Spring Boot 4 project specifically.
   only works within a single tree — Include Controller is what lets five
   separate `.jmx` files share one login/provisioning/warm-up sequence
   without copy-pasting it five times and letting them drift).
+- **`common/user-login.jmx`** + **`seed-users.sh`** — many users instead of
+  one. `seed-users.sh [count]` (default 100; `run.sh` calls it automatically
+  for any profile that includes the fragment) inserts `loadtest-001` …
+  `loadtest-NNN` straight into Postgres on kind or Compose — idempotent, and
+  deliberately not a Flyway migration, so test accounts never reach the cloud
+  environments. The fragment sits first in the main Thread Group of every
+  profile: thread N acts as `loadtest-NNN` (password `LoadTest!2026`,
+  override with `-JloadTestPassword`), wrapping around after
+  `LOAD_TEST_USERS` (default 100) — with 600 threads, each user has 6
+  concurrent sessions, like one person on several devices. Only the first
+  thread for each user logs in; its other threads wait (up to 15s) for that
+  token and reuse it, so a profile makes about one login per user whatever
+  its thread count, and a 600-thread spike stays a spike of readings rather
+  than 600 simultaneous bcrypt checks. Tokens are re-acquired once 55
+  minutes old, ahead of the 60-minute JWT expiry. So the Service Health
+  dashboard's Active users and the Logins dashboard show the smaller of the
+  thread count and `LOAD_TEST_USERS` (`LOAD_TEST_USERS=200 ./run.sh …` seeds
+  more, up to 999). The setUp group still logs in once as `demo`, only to
+  provision the meter pool.
+- **`clear-idempotency-keys.sh`** — `run.sh` calls it before every run so
+  each run starts clean: it deletes the `idempotency:*` keys (and only
+  those) from the current Redis master. Each `POST /readings` keeps its
+  key for 24h (`docs/idempotency-scope.md`), about 100 bytes each, so
+  memory needed ≈ write rate × TTL × 100 bytes. At load-test rates
+  (~4,000/s) that outgrows the 128Mi Redis pods within a few runs: on
+  2026-11-18, ~1.7M keys left over from earlier runs OOMKilled all three
+  Redis pods in the middle of a 300-thread run that had passed an hour
+  before.
 - The main Thread Group then runs `POST /readings` — the endpoint JMeter
-  hammers per `docs/api-and-data-model.md` — using the Authorization header
-  set from the login fragment's Property, a `meterId` drawn from the CSV
+  hammers per `docs/api-and-data-model.md` — with `Authorization: Bearer
+  ${userToken}` (the thread's user's token, from `common/user-login.jmx`)
+  set by a Header Manager scoped under the sampler, a `meterId` drawn from the CSV
   pool, and a fresh `Idempotency-Key: ${__UUID()}` per request (see
   `docs/idempotency-scope.md`) — `${__UUID()}` re-evaluates on every
   sample the same way `${__Random(...)}`/`${__time(...)}` already do in
@@ -448,7 +482,53 @@ test for the first time, not a defect in the app or the test. Decided
 (2026-08-24) to document this rather than add mid-run re-authentication to
 `soak.jmx` — keeps the test's purpose (leak/exhaustion detection) separate
 from re-exercising a tradeoff that's already covered by the auth test
-suite.
+suite. **Superseded (2026-11-18):** every profile now runs as many users
+via `common/user-login.jmx`, which re-acquires each user's token once it's
+55 minutes old, so a soak past the hour no longer ends in this 401 burst.
+The table above is the earlier run, kept as recorded.
+
+## Capacity and load shedding on kind (2026-11-18)
+
+`rapid-spike` at 100, 300 and 600 threads (`-Jduration=120`) against the
+kind cluster: one node (Docker VM, 8 CPUs, 13.6GB), 2 `api` replicas,
+Traefik's `inFlightReq` cap of 300 concurrent `/api` requests
+(`k8s/ingressroute.yaml`), every run starting from a clean Redis
+(`clear-idempotency-keys.sh`).
+
+| Threads | Samples | Errors | p95 | Successful/s | Notes |
+|---|---|---|---|---|---|
+| 100 | 320,967 | 2 (0.0006%) | 56ms | 2,649 | |
+| 300 | 408,575 | 0 | 197ms | 3,368 | **Measured capacity**: the highest load that passes the gates |
+| 600, no backoff | 1,802,887 | 95.3% (all 429) | 202ms | ~790 | Retry storm, see below |
+| 600, 1s backoff after 429 | 596,906 | 5.6% (all 429) | 149ms | ~4,650 | Load shedding working as intended |
+
+The 100 and 300 runs used 100% trace sampling; the 600 runs used 10%
+(`k8s/configmap.yaml`), after Tempo was OOMKilled at 100%.
+
+**600 threads with backoff is the load-shedding demonstration.** Traefik
+admits 300 requests at a time and answers the rest with an immediate 429
+instead of letting them queue: no pod restarts, no OOMKills, no 5xx, p95
+under the 300-thread run's. The 5.6% error rate fails `check-thresholds.sh`'s
+1% gate, as it should: a shed request is a failed request from the client's
+point of view, and the availability SLO counts it that way too. In Grafana:
+"Edge is shedding load" fires after 1 minute, the SHED series (red) appears on
+Golden Signals, and the availability SLO's burn-rate alerts fire. Successful
+throughput came out higher than at 300 threads; that wasn't investigated.
+
+**600 threads without backoff is a retry storm.** Before the backoff existed,
+each shed thread sent its next request immediately. A 429 comes back in under
+a millisecond, so the 300 surplus threads became ~14,900 shed requests/s at
+Traefik (1.44 cores, its highest of the day) and successful throughput fell
+to ~790/s, under a quarter of the 300-thread run's. The app stayed up, but
+shedding only protects the service if clients back off. Each profile now
+pauses `backoff429Ms` (default 1000ms) after a 429, the way a well-behaved
+client would. `-Jbackoff429Ms=0` reproduces the storm:
+
+    ./run.sh rapid-spike -Jthreads=600 -Jduration=120 -Jbackoff429Ms=0
+
+Before load shedding (four 600-thread runs earlier the same day), the same
+load ended in api OOMKills, a wedged Traefik, Traefik OOMKills, and 405s from
+requests falling through to the frontend while no api pod was ready.
 
 ## Kafka HA demo (`kafka-ha-demo.sh`)
 
