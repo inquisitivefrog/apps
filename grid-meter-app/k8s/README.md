@@ -245,7 +245,7 @@ real benefit here.
 
 `deploy-observability.sh` generates ConfigMaps directly from
 `observability/tempo.yml`, `observability/alerting/rules.yml`, and
-`observability/dashboards/grid-meter-overview.json` at deploy time
+every dashboard in `observability/dashboards/` at deploy time
 (`kubectl create configmap --from-file=...`), so k8s and Compose share one
 source of truth instead of two YAML/JSON copies drifting apart. The
 dashboard ConfigMap is labeled `grafana_dashboard: "1"` for the chart's

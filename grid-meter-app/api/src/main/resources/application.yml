@@ -50,6 +50,18 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Redis command timeout, declared rather than left at Lettuce's 60s default (another instance of
+  # CLAUDE.md's undeclared-defaults pattern). 2026-11-18 on kind: all 3 Redis pods were OOMKilled,
+  # every Redis call then hung 60s, all 200 Tomcat threads per replica blocked, the liveness probe
+  # (served by the same pool) timed out and Kubernetes killed both api pods -- a Redis outage
+  # cascaded into an api outage. At 2s a Redis failure costs a request a fast 503
+  # (GlobalExceptionHandler maps the resulting DataAccessException) and the threads keep cycling.
+  # Tradeoff: during a Sentinel failover (~5-10s, docs/redis-ha-scope.md) Redis-dependent requests
+  # now fail fast instead of waiting it out. Applies to every profile (Sentinel, cloud, test).
+  data:
+    redis:
+      timeout: 2s
+
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -215,6 +227,12 @@ management:
         # series histogram_quantile() needs — no p95/p99 latency panel is possible without it.
         # Scoped to this one meter (not global) to avoid unbounded cardinality/memory cost.
         http.server.requests: true
+      # Adds an exact le="0.5" bucket for the latency SLO (99% of requests under 500ms, see the
+      # Grid Meter — SLOs dashboard and observability/alerting/rules.yml's slo group). The automatic
+      # histogram buckets above land at ~0.447s and ~0.537s, never exactly 0.5s, so without this the
+      # SLI could only be approximated. One extra series per existing uri/status combination.
+      slo:
+        http.server.requests: 500ms
   opentelemetry:
     tracing:
       export:

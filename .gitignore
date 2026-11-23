@@ -42,3 +42,9 @@ jmeter.log
 *.tfstate.*
 tfplan
 *.tfplan
+
+# Personal scratch note (AuthN reference, not project docs) - deliberately untracked.
+grid-meter-app/README.demo.md
+
+# Grafana alert email: Gmail SMTP app password and the recipient address - never commit (public repo).
+grid-meter-app/.alert-email.env

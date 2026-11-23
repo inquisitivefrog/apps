@@ -49,22 +49,9 @@
         <stringProp name="ThreadGroup.delay">0</stringProp>
       </ThreadGroup>
       <hashTree>
-        <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Auth + Content-Type" enabled="true">
-          <collectionProp name="HeaderManager.headers">
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Content-Type</stringProp>
-              <stringProp name="Header.value">application/json</stringProp>
-            </elementProp>
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Authorization</stringProp>
-              <stringProp name="Header.value">Bearer ${__P(accessToken)}</stringProp>
-            </elementProp>
-            <elementProp name="" elementType="Header">
-              <stringProp name="Header.name">Idempotency-Key</stringProp>
-              <stringProp name="Header.value">${__UUID()}</stringProp>
-            </elementProp>
-          </collectionProp>
-        </HeaderManager>
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include user-login (threads act as loadtest-NNN users)" enabled="true">
+          <stringProp name="IncludeController.includepath">common/user-login.jmx</stringProp>
+        </IncludeController>
         <hashTree/>
         <CSVDataSet guiclass="TestBeanGUI" testclass="CSVDataSet" testname="meter pool" enabled="true">
           <stringProp name="filename">${__P(meterCsvPath,results/meter-pool.csv)}</stringProp>
@@ -107,6 +94,23 @@
           <stringProp name="HTTPSampler.response_timeout"></stringProp>
         </HTTPSamplerProxy>
         <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Auth (this thread's own user) + Content-Type" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${userToken}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Idempotency-Key</stringProp>
+                  <stringProp name="Header.value">${__UUID()}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
           <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Reading ingested (201)" enabled="true">
             <collectionProp name="Asserion.test_strings">
               <stringProp name="49690">201</stringProp>
@@ -118,9 +122,23 @@
           </ResponseAssertion>
           <hashTree/>
         </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Shed by the edge (429)? Back off" enabled="true">
+          <stringProp name="TestPlan.comments">A well-behaved client backs off when shed instead of retrying at once. Without this, a 429 comes back in under a millisecond and the thread immediately sends again: on 2026-11-18, 600 threads with no backoff sent ~14,900 shed requests/s at Traefik and successful throughput fell from ~3,370/s (300 threads) to ~790/s. -Jbackoff429Ms=0 reproduces that retry storm.</stringProp>
+          <stringProp name="IfController.condition">${__groovy(prev != null &amp;&amp; prev.getResponseCode() == '429',)}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Pause backoff429Ms (default 1000)" enabled="true">
+            <intProp name="ActionProcessor.action">1</intProp>
+            <intProp name="ActionProcessor.target">0</intProp>
+            <stringProp name="ActionProcessor.duration">${__P(backoff429Ms,1000)}</stringProp>
+          </TestAction>
+          <hashTree/>
+        </hashTree>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="token refresh" enabled="true">
-        <stringProp name="TestPlan.comments">testing-expansion-scope.md §1.1 -- a single background thread that re-runs the shared login fragment (common/login.jmx) every reauthIntervalMs (default 45 min, comfortably under the JWT's 60-minute TTL), overwriting the SAME "accessToken" JMeter Property the setUp login already wrote. "soak load"'s HeaderManager reads that property via ${__P(accessToken)}, a function reference re-evaluated fresh on every single request -- not a value baked in once -- so every one of the 35 worker threads automatically starts using the refreshed token on its very next request with no per-thread token-passing needed. Runs for the same duration as "soak load" (${__P(duration,3600)}) so it stops cleanly at the same time, and requires TestPlan.serialize_threadgroups=false above to actually run concurrently with "soak load" rather than after it.</stringProp>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="token refresh" enabled="false">
+        <stringProp name="TestPlan.comments">DISABLED 2026-11-18: superseded by common/user-login.jmx, which re-acquires each user's token at 55 minutes. "soak load" no longer reads the shared demo token this group refreshed (only the setUp group uses demo, once, to provision meters), so leaving it on would just add a demo login every 45 minutes. Kept rather than deleted as the record of how the 60-minute 401 burst was first fixed. Original note: testing-expansion-scope.md §1.1 -- a single background thread that re-runs the shared login fragment (common/login.jmx) every reauthIntervalMs (default 45 min, comfortably under the JWT's 60-minute TTL), overwriting the SAME "accessToken" JMeter Property the setUp login already wrote. "soak load"'s HeaderManager reads that property via ${__P(accessToken)}, a function reference re-evaluated fresh on every single request -- not a value baked in once -- so every one of the 35 worker threads automatically starts using the refreshed token on its very next request with no per-thread token-passing needed. Runs for the same duration as "soak load" (${__P(duration,3600)}) so it stops cleanly at the same time, and requires TestPlan.serialize_threadgroups=false above to actually run concurrently with "soak load" rather than after it.</stringProp>
         <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
           <boolProp name="LoopController.continue_forever">true</boolProp>

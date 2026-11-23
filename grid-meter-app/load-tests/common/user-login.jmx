@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="user-login (fragment)" enabled="true">
+      <stringProp name="TestPlan.comments">Per-user login fragment: include it as the FIRST child of a load Thread Group so the run looks like many distinct users instead of one. Thread N (1-based) acts as user loadtest-NNN, wrapping around after loadTestUsers (default 100; run.sh passes LOAD_TEST_USERS and seeds that many via ../seed-users.sh): with 600 threads and 100 users, each user has 6 concurrent "sessions", like one person with several tabs or devices. Only the first thread for each user actually logs in; the others wait (up to 15s) for that token and reuse it. That keeps a profile's logins at about one per user regardless of thread count, so a 600-thread spike stays a spike of readings rather than turning into 600 simultaneous bcrypt password checks. Tokens are re-acquired once 55 minutes old, ahead of the API's 60-minute JWT expiry, so soak doesn't hit a wall of 401s at the hour mark. Samplers that need auth send "Authorization: Bearer ${userToken}" from their OWN Header Manager scoped under the sampler, so the login request itself never carries a stale or empty bearer header. See ../README.md.</stringProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+        <collectionProp name="Arguments.arguments"/>
+      </elementProp>
+      <stringProp name="TestPlan.user_define_classpath"></stringProp>
+    </TestPlan>
+    <hashTree>
+      <TestFragmentController guiclass="TestFragmentControllerGui" testclass="TestFragmentController" testname="user-login" enabled="true"/>
+      <hashTree>
+        <TestAction guiclass="TestActionGui" testclass="TestAction" testname="Pick this thread's user and token (no sample recorded)" enabled="true">
+          <intProp name="ActionProcessor.action">1</intProp>
+          <intProp name="ActionProcessor.target">0</intProp>
+          <stringProp name="ActionProcessor.duration">0</stringProp>
+        </TestAction>
+        <hashTree>
+          <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="Reuse a fresh token, or decide this thread must log in" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">def users = (props.getProperty('loadTestUsers') ?: '100') as int
+def user = 'loadtest-' + String.format('%03d', ctx.getThreadNum() % users + 1)
+vars.put('loadTestUser', user)
+
+def maxAgeMs = 55L * 60 * 1000
+def fresh = { loginAt -&gt; loginAt != null &amp;&amp; System.currentTimeMillis() - (loginAt as long) &lt; maxAgeMs }
+def useShared = {
+    def shared = props.get('loadTestToken.' + user)   // [token, loginAtMillis]
+    if (shared != null &amp;&amp; fresh(shared[1])) {
+        vars.put('userToken', shared[0])
+        vars.put('userLoginAt', String.valueOf(shared[1]))
+        return true
+    }
+    return false
+}
+
+if (vars.get('userToken') != null &amp;&amp; fresh(vars.get('userLoginAt'))) { vars.put('needLogin', 'false'); return }
+if (useShared()) { vars.put('needLogin', 'false'); return }
+
+// First thread to claim this user's lock logs in; the rest wait for its token.
+if (props.putIfAbsent('loadTestLoginLock.' + user, ctx.getThread().getThreadName()) == null) {
+    vars.put('needLogin', 'true')
+    return
+}
+for (int i = 0; i &lt; 150; i++) {
+    Thread.sleep(100)
+    if (useShared()) { vars.put('needLogin', 'false'); return }
+}
+// The other thread never produced a token (its login failed or is stuck): try ourselves.
+vars.put('needLogin', 'true')</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223PreProcessor>
+          <hashTree/>
+        </hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="Log in if this thread was chosen to" enabled="true">
+          <stringProp name="IfController.condition">${needLogin}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /auth/login (per user)" enabled="true">
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{"username":"${loadTestUser}","password":"${__P(loadTestPassword,LoadTest!2026)}"}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+            <stringProp name="HTTPSampler.domain">${__P(host,localhost)}</stringProp>
+            <stringProp name="HTTPSampler.port">${__P(port,80)}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">${__P(basePath,/api/v1)}/auth/login</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+            <stringProp name="HTTPSampler.embedded_url_re"></stringProp>
+            <stringProp name="HTTPSampler.connect_timeout"></stringProp>
+            <stringProp name="HTTPSampler.response_timeout"></stringProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Content-Type" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Content-Type</stringProp>
+                  <stringProp name="Header.value">application/json</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Login succeeded (200)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="49586">200</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message"></stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_code</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">8</intProp>
+            </ResponseAssertion>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Share the token with this user's other threads, release the lock" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">def user = vars.get('loadTestUser')
+if (prev.getResponseCode() == '200') {
+    def token = new groovy.json.JsonSlurper().parseText(prev.getResponseDataAsString()).accessToken
+    def loginAt = System.currentTimeMillis()
+    vars.put('userToken', token)
+    vars.put('userLoginAt', String.valueOf(loginAt))
+    props.put('loadTestToken.' + user, [token, loginAt])
+} else {
+    vars.remove('userToken')
+}
+props.remove('loadTestLoginLock.' + user)</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

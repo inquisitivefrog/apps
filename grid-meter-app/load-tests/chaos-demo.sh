@@ -15,7 +15,7 @@
 #   - Playwright's Chromium downloaded once: npx --yes playwright install chromium
 #     (the `playwright` npm module itself is bootstrapped automatically into
 #     load-tests/node_modules on first run -- see below)
-#   - The grid-meter-overview dashboard AND the grid-meter-alerts alert rules provisioned
+#   - The grid-meter-golden-signals dashboard AND the golden-signals alert rules provisioned
 #     (observability/dashboards/, observability/alerting/, wired into docker-compose.yml's grafana
 #     service volumes -- already the case if grafana started clean).
 #
@@ -57,7 +57,7 @@ RECOVERY_SECONDS="${RECOVERY_SECONDS:-20}"
 # folded in here where every other entry means "one node of a clustered service" -- not built
 # unless actually wanted.
 LINKS=(traefik api kafka-1 patroni-1 redis)
-export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-overview/grid-meter-api-overview?kiosk&refresh=15s"
+export GRAFANA_URL="http://localhost:3001/grafana/d/grid-meter-golden-signals/grid-meter-golden-signals?kiosk&refresh=15s"
 export ALERTING_URL="http://localhost:3001/grafana/alerting/list"
 RUN_DIR="$(pwd)/load-tests/screenshots/chaos-demo-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"

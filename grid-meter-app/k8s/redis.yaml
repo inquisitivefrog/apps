@@ -60,6 +60,9 @@ spec:
       containers:
         - name: redis
           image: redis:8.10
+          # Redis's default log level (notice), not debug: debug logged every client connection,
+          # and under load-test traffic that volume went through Alloy into Loki, which became
+          # the node's top CPU user (2026-11-18). Same change for Sentinel and Compose.
           command: ["sh", "-c"]
           args:
             - |
@@ -69,7 +72,7 @@ spec:
                 export FALLBACK_REPLICAOF_HOST="redis-0.redis-headless"
                 export FALLBACK_REPLICAOF_PORT="6379"
               fi
-              exec sh /scripts/redis-entrypoint.sh --min-replicas-to-write 1 --min-replicas-max-lag 10 --loglevel debug
+              exec sh /scripts/redis-entrypoint.sh --min-replicas-to-write 1 --min-replicas-max-lag 10
           env:
             - name: POD_NAME
               valueFrom:

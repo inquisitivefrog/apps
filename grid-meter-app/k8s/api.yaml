@@ -95,8 +95,19 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
           resources:
+            # Guaranteed CPU share under node contention (see traefik.yaml's note on the
+            # 2026-11-18 spike runs); no CPU limit, so it can still burst.
+            requests:
+              cpu: 500m
             limits:
-              memory: 512Mi
+              # Matches docker-compose.yml's api limit (raised 512m -> 768m there 2026-08-26): with
+              # -Xmx384m (configmap.yaml), 512Mi left ~128MB for metaspace, JIT code cache and up to
+              # 200 Tomcat thread stacks. Never carried over to kind until the first 600-thread
+              # rapid-spike here (2026-11-18) OOMKilled both replicas within 5s of the spike.
+              # 768Mi then OOMKilled too at 600 threads once the node had CPU to spare: measured
+              # peak heap 288 + non-heap 218 + ~240 thread stacks (239 live threads, Tomcat at its
+              # 200 max) = ~746MiB. 1Gi matches api-gcp.yaml/api-azure.yaml.
+              memory: 1Gi
 ---
 apiVersion: v1
 kind: Service

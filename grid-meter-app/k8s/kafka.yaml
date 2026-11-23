@@ -181,6 +181,13 @@ spec:
               value: /var/lib/kafka/data
             - name: KAFKA_LOG_RETENTION_HOURS
               value: "72"
+            # Declared, not the image default: kafka-server-start.sh uses -Xmx1G -Xms1G when this is
+            # unset, a heap bigger than the 768Mi container limit below, so a busy broker was always
+            # going to be OOMKilled (kafka-1 was, 2026-11-18, in a 100-thread spike). 512m leaves
+            # ~256Mi for metaspace, threads, and direct buffers; Kafka leans on the OS page cache
+            # for log data rather than heap.
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xmx512m -Xms512m"
           ports:
             - containerPort: 9092
             - containerPort: 9093

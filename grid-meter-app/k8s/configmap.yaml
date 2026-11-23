@@ -23,7 +23,11 @@ data:
   # either.
   SPRING_REDIS_SENTINEL_MASTER: mymaster
   SPRING_REDIS_SENTINEL_NODES: sentinel-0.sentinel-headless:26379,sentinel-1.sentinel-headless:26379,sentinel-2.sentinel-headless:26379
-  GRID_METER_TRACING_SAMPLING_PROBABILITY: "1.0"
+  # 10% head sampling, not application.yml's 100% default: tracing every request at load-test
+  # rates (~2,600/s) OOMKilled Tempo twice at 512Mi (2026-11-18). Common production range is
+  # 1-10%. SLOs and alerts read Prometheus metrics, never traces, so this does not affect them.
+  # Compose stays at 100% for local debugging (docker-compose.yml, env-overridable).
+  GRID_METER_TRACING_SAMPLING_PROBABILITY: "0.1"
   JAVA_TOOL_OPTIONS: "-Xmx384m"
   MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"
   POSTGRES_DB: gridmeter

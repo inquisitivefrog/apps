@@ -6,8 +6,8 @@ const grafana = UI_SERVICES.find((s) => s.name === 'Grafana')!;
 // No login step here — see ui-services.ts's credentialsNote: anonymous Admin access is
 // deliberate config, not an oversight, so this navigates directly rather than logging in.
 test('Grafana dashboard loads and renders live data', async ({ page }) => {
-  await page.goto(`${grafana.baseUrl}/grafana/d/grid-meter-overview/grid-meter-api-overview`);
-  await expect(page.getByText('Grid Meter API — Overview')).toBeVisible();
+  await page.goto(`${grafana.baseUrl}/grafana/d/grid-meter-api-process/grid-meter-api-process`);
+  await expect(page.getByText('Grid Meter — API Process')).toBeVisible();
 
   // The chart itself renders to <canvas> (uPlot) — its axis labels aren't real DOM text
   // Playwright can read, so scraping a byte value off it isn't viable. Instead: confirm
